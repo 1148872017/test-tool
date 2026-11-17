@@ -111,8 +111,8 @@ function check(name, cond, extra) {
   results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });
 }
 
-const CASE_A = { filePath: '商家门户重构/TC_商家门户重构.md', caseTitle: '工作台快捷操作区渲染 9 入口', caseIndex: 1 };
-const CASE_B = { filePath: 'TC_回归测试_极简链路用例.md', caseTitle: '余额洗车核心回归链', caseIndex: 1 };
+const CASE_A = { filePath: '模块A重构/TC_模块A重构.md', caseTitle: '工作台快捷操作区渲染 9 入口', caseIndex: 1 };
+const CASE_B = { filePath: 'TC_回归测试_极简链路用例.md', caseTitle: '余额核销核心回归链', caseIndex: 1 };
 
 (async () => {
   // ================= 1. IPC 层 =================

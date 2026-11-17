@@ -14,11 +14,12 @@ check('扫到至少 2 个 jmx', res.totalFiles >= 2, res.totalFiles);
 check('没有扫描错误', res.errors.length === 0, res.errors);
 
 const byName = (part) => res.files.find((f) => f.file === part);
+// 按特征找，不写死文件名：jmx 目录会持续新增脚本
 const plan = byName('测试计划.jmx');
-const chy = byName('chy测试计划.jmx');
+const demo = res.files.find((f) => f.file !== '测试计划.jmx' && /测试计划\.jmx$/.test(f.file));
 
 check('找到 测试计划.jmx', !!plan);
-check('找到 chy测试计划.jmx', !!chy);
+check('找到第二个测试计划脚本', !!demo, res.files.map((f) => f.file));
 
 if (plan) {
   check('识别 JMeter 版本 5.4.3', plan.jmeterVersion === '5.4.3', plan.jmeterVersion);
@@ -72,10 +73,10 @@ if (plan) {
   for (const i of plan.health.issues) console.log(`  [${i.level}] ${i.title}  ${i.detail}`);
 }
 
-if (chy) {
-  check('chy 解析出 12 个采样器', chy.samplers.length === 12, chy.samplers.length);
-  check('chy 解析出 2 个 CSV', chy.csvs.length === 2, chy.csvs.length);
-  check('chy 变量 test_environment 有值', chy.variables.some((v) => v.vars.some((x) => x.name === 'test_environment' && x.value)), chy.variables);
+if (demo) {
+  check('demo 解析出 12 个采样器', demo.samplers.length === 12, demo.samplers.length);
+  check('demo 解析出 2 个 CSV', demo.csvs.length === 2, demo.csvs.length);
+  check('demo 变量 test_environment 有值', demo.variables.some((v) => v.vars.some((x) => x.name === 'test_environment' && x.value)), demo.variables);
 }
 
 // 容错

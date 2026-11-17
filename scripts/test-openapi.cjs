@@ -109,7 +109,7 @@ function check(name, cond, extra) {
 function baseDoc() {
   return {
     openapi: '3.0.1',
-    info: { title: '商家门户 API', version: '1.4.0' },
+    info: { title: '示例 API', version: '1.4.0' },
     servers: [{ url: 'https://test.merchant.local/' }],
     paths: {
       '/api/v1/refund': {
@@ -475,7 +475,7 @@ function baseDoc() {
 
   const synced = await call('apis:sync', { file: goodFile });
   check('IPC 读文件同步成功', !!(synced && synced.ok) && synced.stats.added === 4, synced && synced.stats);
-  check('IPC 返回文件信息与项目元信息', synced.file === goodFile && synced.doc.title === '商家门户 API' && synced.doc.version === '1.4.0', synced.doc);
+  check('IPC 返回文件信息与项目元信息', synced.file === goodFile && synced.doc.title === '示例 API' && synced.doc.version === '1.4.0', synced.doc);
 
   const again = await call('apis:sync', { file: goodFile });
   check('IPC 重复同步幂等', again.stats.added === 0 && again.stats.skipped === 4, again.stats);

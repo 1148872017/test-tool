@@ -12,7 +12,7 @@ if (res.errors.length) console.log(res.errors.slice(0, 5));
 
 // 按特征找，不写死文件名：用例目录会持续新增文件
 const byName = (re) => res.files.find((f) => re.test(f.name));
-const stdFile = byName(/商家门户重构.*混合.*修正版\.md$/) || byName(/混合.*修正版\.md$/);
+const stdFile = byName(/模块A重构.*混合.*修正版\.md$/) || byName(/混合.*修正版\.md$/);
 const chainFile = byName(/极简链路/);
 check('找到标准 TC 文件', !!stdFile, res.files.map((f) => f.name).slice(0, 5));
 if (stdFile) {
@@ -77,20 +77,20 @@ check('根目录文件归到「（根目录）」而不是空名', (() => {
 })(), buildCaseTree([{ relPath: 'a.md', name: 'a.md', dir: '', cases: [{}] }]));
 check('同一目录下多份文件各自成二级（不合并）', (() => {
   const t = buildCaseTree([
-    { relPath: '洗车卡券/TC_新人券模块_20250109.md', name: 'TC_新人券模块_20250109.md', dir: '洗车卡券', cases: [{}, {}] },
-    { relPath: '洗车卡券/TC_洗车卡券_核销_20250210.md', name: 'TC_洗车卡券_核销_20250210.md', dir: '洗车卡券', cases: [{}] }
+    { relPath: '模块B卡券/TC_模块C券_20250109.md', name: 'TC_模块C券_20250109.md', dir: '模块B卡券', cases: [{}, {}] },
+    { relPath: '模块B卡券/TC_模块B卡券_核销_20250210.md', name: 'TC_模块B卡券_核销_20250210.md', dir: '模块B卡券', cases: [{}] }
   ]);
   const names = t[0].files.map((f) => f.name);
-  return t.length === 1 && t[0].name === '洗车卡券' && t[0].count === 3 && t[0].files.length === 2 &&
-    names.indexOf('TC_新人券模块_20250109.md') >= 0 && names.indexOf('TC_洗车卡券_核销_20250210.md') >= 0;
+  return t.length === 1 && t[0].name === '模块B卡券' && t[0].count === 3 && t[0].files.length === 2 &&
+    names.indexOf('TC_模块C券_20250109.md') >= 0 && names.indexOf('TC_模块B卡券_核销_20250210.md') >= 0;
 })(), buildCaseTree([{ relPath: 'x/y.md', name: 'y.md', dir: 'x', cases: [{}] }]));
 
-const f1 = { relPath: '洗车卡券/TC_新人券模块_20250109.md', dir: '洗车卡券' };
-const f2 = { relPath: '洗车卡券/TC_洗车卡券_核销.md', dir: '洗车卡券' };
+const f1 = { relPath: '模块B卡券/TC_模块C券_20250109.md', dir: '模块B卡券' };
+const f2 = { relPath: '模块B卡券/TC_模块B卡券_核销.md', dir: '模块B卡券' };
 const f3 = { relPath: 'a.md', dir: '' };
 check('不选目录 = 全都要', inScope(f1, '', '') && inScope(f3, '', ''));
-check('选目录 = 整个目录', inScope(f1, '洗车卡券', '') && inScope(f2, '洗车卡券', '') && !inScope(f3, '洗车卡券', ''));
-check('选文件 = 只看那个文件', inScope(f1, '洗车卡券', f1.relPath) && !inScope(f2, '洗车卡券', f1.relPath));
+check('选目录 = 整个目录', inScope(f1, '模块B卡券', '') && inScope(f2, '模块B卡券', '') && !inScope(f3, '模块B卡券', ''));
+check('选文件 = 只看那个文件', inScope(f1, '模块B卡券', f1.relPath) && !inScope(f2, '模块B卡券', f1.relPath));
 check('文件筛选优先于目录（不会自相矛盾）', inScope(f1, '别的目录', f1.relPath) === true);
 check('根目录筛选能命中根文件', inScope(f3, ROOT_LABEL, '') && !inScope(f1, ROOT_LABEL, ''));
 check('空 files / 脏数据不抛异常', (() => {

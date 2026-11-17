@@ -24,10 +24,10 @@ const impactFixture = (at: number) => ({
       ],
       cases: [
         {
-          filePath: '商家门户重构/TC_商家门户重构_第三次迭代_混合_2026_10_08_修正版.md',
+          filePath: '模块A重构/TC_模块A重构_第三次迭代_混合_2026_10_08_修正版.md',
           caseTitle: '工作台快捷操作区渲染 9 入口且「网点」位序正确'
         },
-        { filePath: 'TC_回归测试_极简链路用例_20260701.md', caseTitle: '余额洗车核心回归链' }
+        { filePath: 'TC_回归测试_极简链路用例_20260701.md', caseTitle: '余额核销核心回归链' }
       ]
     },
     {
@@ -37,7 +37,7 @@ const impactFixture = (at: number) => ({
       url: 'https://test.order.local/api/v1/order/{{orderNo}}',
       changes: [{ kind: 'resp-field-add', label: '响应体字段 +2', detail: 'payTime, refundStatus' }],
       cases: [
-        { filePath: '商家门户重构/TC_商家门户重构_第三次迭代_混合_2026_10_08_修正版.md', caseTitle: '仅展示「网点」引导气泡且四功能引导不显示' }
+        { filePath: '模块A重构/TC_模块A重构_第三次迭代_混合_2026_10_08_修正版.md', caseTitle: '仅展示「网点」引导气泡且四功能引导不显示' }
       ]
     },
     {
@@ -63,7 +63,7 @@ const SEED: Record<string, any[]> = {
         env: 'test',
         account: 'admin',
         password: 'Admin@123',
-        note: '入口 /login，测试环境 10.20.3.11'
+        note: '入口 /login，测试环境 10.0.0.1'
       },
       tags: ['核心'],
       favorite: true,
@@ -401,7 +401,7 @@ export function installMockIfNeeded() {
   let locked = false;
 
   // 用例 ↔ 接口关联（预览模式的内存版，和真实 store 的软键一致）
-  const CASE_FILE = '商家门户重构/TC_商家门户重构_第三次迭代_混合_2026_10_08_修正版.md';
+  const CASE_FILE = '模块A重构/TC_模块A重构_第三次迭代_混合_2026_10_08_修正版.md';
   let linkSeq = 10;
   let linkRows: any[] = [
     {
@@ -568,11 +568,11 @@ export function installMockIfNeeded() {
       errors: [],
       files: [
         {
-          relPath: '商家门户重构/TC_新人券模块_20250109.md',
-          name: 'TC_新人券模块_20250109.md',
-          dir: '商家门户重构',
-          fullPath: 'D:\\AI_Workspace\\test_cases\\商家门户重构\\TC_新人券模块_20250109.md',
-          title: '新人券模块',
+          relPath: '模块A重构/TC_模块C券_20250109.md',
+          name: 'TC_模块C券_20250109.md',
+          dir: '模块A重构',
+          fullPath: 'D:\\AI_Workspace\\test_cases\\模块A重构\\TC_模块C券_20250109.md',
+          title: '模块C券',
           meta: ['生成日期: 2025-01-09'],
           kind: 'cases',
           mtime: Date.now() - 86400000 * 9,
@@ -627,11 +627,11 @@ export function installMockIfNeeded() {
           ]
         },
         {
-          relPath: '商家门户重构/TC_洗车卡券_核销_20250210.md',
-          name: 'TC_洗车卡券_核销_20250210.md',
-          dir: '商家门户重构',
-          fullPath: 'D:\\AI_Workspace\\test_cases\\商家门户重构\\TC_洗车卡券_核销_20250210.md',
-          title: '洗车卡券核销',
+          relPath: '模块A重构/TC_模块B卡券_核销_20250210.md',
+          name: 'TC_模块B卡券_核销_20250210.md',
+          dir: '模块A重构',
+          fullPath: 'D:\\AI_Workspace\\test_cases\\模块A重构\\TC_模块B卡券_核销_20250210.md',
+          title: '模块B卡券核销',
           meta: ['生成日期: 2025-02-10'],
           kind: 'cases',
           mtime: Date.now() - 86400000 * 6,
@@ -641,7 +641,7 @@ export function installMockIfNeeded() {
               kind: 'standard',
               index: 1,
               id: '#1',
-              module: '洗车卡券',
+              module: '模块B卡券',
               branch: '核销',
               title: '洗车券核销成功后订单状态变为已完成',
               risk: '🔴高',
@@ -666,7 +666,7 @@ export function installMockIfNeeded() {
               kind: 'standard',
               index: 2,
               id: '#2',
-              module: '洗车卡券',
+              module: '模块B卡券',
               branch: '核销',
               title: '已过期的洗车券核销应失败',
               risk: '🟡中',
@@ -686,11 +686,11 @@ export function installMockIfNeeded() {
           ]
         },
         {
-          relPath: '商家门户重构/TC_商家门户重构_第三次迭代_混合_2026_10_08_修正版.md',
-          name: 'TC_商家门户重构_第三次迭代_混合_2026_10_08_修正版.md',
-          dir: '商家门户重构',
-          fullPath: 'D:\\AI_Workspace\\test_cases\\商家门户重构\\TC_商家门户重构_第三次迭代_混合_2026_10_08_修正版.md',
-          title: '商家门户重构（商家、合伙人）· 第三次迭代测试用例（修正版）',
+          relPath: '模块A重构/TC_模块A重构_第三次迭代_混合_2026_10_08_修正版.md',
+          name: 'TC_模块A重构_第三次迭代_混合_2026_10_08_修正版.md',
+          dir: '模块A重构',
+          fullPath: 'D:\\AI_Workspace\\test_cases\\模块A重构\\TC_模块A重构_第三次迭代_混合_2026_10_08_修正版.md',
+          title: '模块A重构· 第三次迭代测试用例（修正版）',
           meta: ['生成日期: 2026-10-08', '总计: 56用例 (15高+28中+13低)'],
           kind: 'cases',
           mtime: Date.now() - 86400000 * 3,
@@ -709,7 +709,7 @@ export function installMockIfNeeded() {
               tags: ['🟡中', '冒烟'],
               line: 12,
               pre: [
-                { depth: 1, text: '基础前置：商家账号已登录新版商家门户' },
+                { depth: 1, text: '基础前置：商家账号已登录新版模块A' },
                 { depth: 1, text: '环境/规则前置：新版门户为第三次迭代版本（含「网点」入口）' }
               ],
               steps: [{ depth: 0, text: '打开 App 底部「工作台」，核对快捷操作区入口清单与位序' }],
@@ -797,7 +797,7 @@ export function installMockIfNeeded() {
               id: 'C1',
               module: '',
               branch: '',
-              title: '余额洗车核心回归链',
+              title: '余额核销核心回归链',
               risk: '',
               type: '冒烟',
               corePath: false,
@@ -910,7 +910,7 @@ export function installMockIfNeeded() {
       return {
         ok: true,
         file: file || 'D:\\AI_Workspace\\_scratch\\2026-11-02\\openapi.json',
-        doc: { title: '商家门户 API', version: '1.4.0', baseUrl: 'https://test.merchant.local' },
+        doc: { title: '示例 API', version: '1.4.0', baseUrl: 'https://test.merchant.local' },
         stats: {
           total: 128,
           added: 118,
@@ -951,7 +951,7 @@ export function installMockIfNeeded() {
             { type: 'thread', name: '用户模块', enabled: true, numThreads: '10', rampUp: '2', duration: '', loops: '', scheduler: false },
             { type: 'thread', name: '门店模块', enabled: false, numThreads: '1', rampUp: '1', duration: '', loops: '', scheduler: false },
             { type: 'thread', name: '支付模块', enabled: false, numThreads: '1', rampUp: '1', duration: '', loops: '', scheduler: false },
-            { type: 'thread', name: '洗车业务', enabled: false, numThreads: '1', rampUp: '1', duration: '', loops: '', scheduler: false }
+            { type: 'thread', name: '模块B业务', enabled: false, numThreads: '1', rampUp: '1', duration: '', loops: '', scheduler: false }
           ],
           samplers: [
             { name: '查询用户余额', enabled: true, method: 'GET', path: '/api/v1/user/info', domain: '', port: '', protocol: '', args: [] },
@@ -967,14 +967,14 @@ export function installMockIfNeeded() {
               enabled: true,
               vars: [
                 { name: 'test_environment', value: '127.0.0.1', desc: '测试环境' },
-                { name: 'mail', value: '794666918@qq.com', desc: '账号' },
+                { name: 'mail', value: 'test@example.com', desc: '账号' },
                 { name: 'pwd', value: '123456', desc: '密码' }
               ]
             }
           ],
           csvs: [
-            { name: 'CSV 数据文件设置', enabled: true, filename: 'C:/Users/EDY/Desktop/测试用例/压力测试/token.txt', variableNames: 'token_file', delimiter: '||', shareMode: 'shareMode.all' },
-            { name: 'account数据csv', enabled: true, filename: 'C:/Users/EDY/Desktop/测试用例/压力测试/user.csv', variableNames: 'account', delimiter: '||', shareMode: 'shareMode.all' }
+            { name: 'CSV 数据文件设置', enabled: true, filename: 'D:/demo/压测数据/token.txt', variableNames: 'token_file', delimiter: '||', shareMode: 'shareMode.all' },
+            { name: 'account数据csv', enabled: true, filename: 'D:/demo/压测数据/user.csv', variableNames: 'account', delimiter: '||', shareMode: 'shareMode.all' }
           ],
           responseAssertions: [],
           durationAssertions: [],
@@ -994,13 +994,13 @@ export function installMockIfNeeded() {
             level: 'error',
             issues: [
               { level: 'warn', code: 'no-assertion', title: '没有任何断言', detail: '教程第四章：响应断言 + 持续时间断言是常规必备' },
-              { level: 'error', code: 'csv-missing', title: 'CSV 文件不存在：token.txt', detail: 'C:/Users/EDY/Desktop/测试用例/压力测试/token.txt' },
+              { level: 'error', code: 'csv-missing', title: 'CSV 文件不存在：token.txt', detail: 'D:/demo/压测数据/token.txt' },
               {
                 level: 'warn',
                 code: 'csv-absolute-path',
                 title: 'CSV 用了绝对路径：user.csv',
                 detail:
-                  '当前机器上能找到（C:/Users/EDY/Desktop/测试用例/压力测试/user.csv），但换机器/换人必挂。建议改成相对路径（相对 jmx 所在目录）或 ${__P(user.dir)}，让脚本和数据一起搬'
+                  '当前机器上能找到（D:/demo/压测数据/user.csv），但换机器/换人必挂。建议改成相对路径（相对 jmx 所在目录）或 ${__P(user.dir)}，让脚本和数据一起搬'
               },
               { level: 'info', code: 'sampler-inherit', title: '1 个采样器 path 为空（继承 HTTP 请求默认值）', detail: '默认值 domain=${test_environment}' },
               { level: 'info', code: 'partial-groups', title: '4 个线程组只启用了 1 个', detail: '用户模块' }
@@ -1008,12 +1008,12 @@ export function installMockIfNeeded() {
           }
         },
         {
-          file: 'chy测试计划.jmx',
-          relPath: 'chy测试计划.jmx',
+          file: 'demo测试计划.jmx',
+          relPath: 'demo测试计划.jmx',
           dir: '',
-          fullPath: 'D:\\AI_Workspace\\jmx\\chy测试计划.jmx',
+          fullPath: 'D:\\AI_Workspace\\jmx\\demo测试计划.jmx',
           jmeterVersion: '5.4.3',
-          testPlanName: 'chy测试计划',
+          testPlanName: 'demo测试计划',
           mtime: Date.now() - 86400000 * 283,
           size: 47806,
           parseError: '',
@@ -1024,8 +1024,8 @@ export function installMockIfNeeded() {
           ],
           defaults: [{ name: 'HTTP请求默认值', domain: '${test_environment}', port: '8080', protocol: 'http', path: '' }],
           headers: [{ name: 'HTTP信息头管理器', enabled: true, headers: [{ name: 'Content-Type', value: 'application/json' }] }],
-          variables: [{ name: '用户定义的变量', enabled: true, vars: [{ name: 'test_environment', value: 'chehaiyang.mynatapp.cc', desc: '测试环境' }] }],
-          csvs: [{ name: 'CSV 数据文件设置', enabled: true, filename: 'C:/Users/EDY/Desktop/测试用例/压力测试/user.csv', variableNames: 'account', delimiter: '||', shareMode: 'shareMode.all' }],
+          variables: [{ name: '用户定义的变量', enabled: true, vars: [{ name: 'test_environment', value: 'test.example.com', desc: '测试环境' }] }],
+          csvs: [{ name: 'CSV 数据文件设置', enabled: true, filename: 'D:/demo/压测数据/user.csv', variableNames: 'account', delimiter: '||', shareMode: 'shareMode.all' }],
           responseAssertions: [],
           durationAssertions: [],
           beanShell: { pre: [], post: [], assert: [] },
@@ -1066,11 +1066,11 @@ export function installMockIfNeeded() {
       errors: [],
       docs: [
         {
-          relPath: '业务规则沉淀_公告管理.md',
-          name: '业务规则沉淀_公告管理.md',
+          relPath: '业务规则沉淀_模块I公告.md',
+          name: '业务规则沉淀_模块I公告.md',
           dir: '',
-          fullPath: 'D:\\AI_Workspace\\知识库\\业务规则沉淀_公告管理.md',
-          title: '业务规则沉淀_公告管理',
+          fullPath: 'D:\\AI_Workspace\\知识库\\业务规则沉淀_模块I公告.md',
+          title: '业务规则沉淀_模块I公告',
           meta: { updatedAt: '2026-05-27 (新增发布者角色与审批规则)', tags: [] },
           chars: 930,
           lines: 47,
@@ -1102,11 +1102,11 @@ export function installMockIfNeeded() {
           ]
         },
         {
-          relPath: '业务规则沉淀_折扣策略配置.md',
-          name: '业务规则沉淀_折扣策略配置.md',
+          relPath: '业务规则沉淀_模块D配置.md',
+          name: '业务规则沉淀_模块D配置.md',
           dir: '',
-          fullPath: 'D:\\AI_Workspace\\知识库\\业务规则沉淀_折扣策略配置.md',
-          title: '业务规则沉淀_折扣策略配置',
+          fullPath: 'D:\\AI_Workspace\\知识库\\业务规则沉淀_模块D配置.md',
+          title: '业务规则沉淀_模块D配置',
           meta: { updatedAt: '2026-11-03', tags: [] },
           chars: 43824,
           lines: 620,
