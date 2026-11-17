@@ -1,0 +1,31 @@
+# 依赖与构建产物
+node_modules/
+dist/
+release/
+*.log
+.npm-cache/
+
+# ===== 绝对不能提交：本地数据 =====
+# data.db 里有真实密码（DPAPI 加密，但仍是你的凭据）
+data.db
+data.db.tmp
+backups/
+runtime/
+debug.log
+
+# 便携版数据目录（exe 旁边放 portable.marker 时生成）
+data/
+
+# ===== 本地配置 =====
+# 如果你把测试目录/报告目录放在仓库里，别提交它们
+test_cases/
+jmx/
+知识库/
+_scratch/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
