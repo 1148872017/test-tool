@@ -23,6 +23,11 @@ jmx/
 知识库/
 _scratch/
 
+# ===== 文档与截图不进仓库 =====
+# 截图是二进制，可能含真实路径/账号/业务模块名，且每次改 UI 都要重提交。
+# 它们随 Release 的 zip 一起分发（package-zip.ps1 会打包 docs/screens）。
+docs/
+
 # 编辑器
 .vscode/
 .idea/
