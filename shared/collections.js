@@ -1,0 +1,253 @@
+'use strict';
+
+/**
+ * 集合定义 —— 主进程与渲染进程共用（唯一事实源）。
+ * 新增一个集合 = 在这里加一段 JSON，UI 全自动适配。
+ */
+
+const ENV_OPTIONS = [
+  { value: 'test', label: '测试', color: 'green' },
+  { value: 'staging', label: '预发', color: 'gold' },
+  { value: 'prod', label: '生产', color: 'red' },
+  { value: 'other', label: '其他', color: 'default' }
+];
+
+/** 角色 / 权限：默认留空，靠历史数据和用户自己攒（迁移会把老数据里的文本收进来） */
+const ROLE_OPTIONS = [];
+
+/** 标签：默认留空，新增记录时手输的标签会自动加入这里 */
+const TAG_OPTIONS = [];
+
+/**
+ * 可配置选项集（设置页能增删改）。
+ * value 就是存进记录里的值：环境的 value 一旦被记录引用就别改（改的是 label）。
+ */
+const OPTION_SETS = {
+  env: { key: 'env', name: '环境', kind: 'env', defaults: ENV_OPTIONS },
+  role: { key: 'role', name: '角色 / 权限', kind: 'text', defaults: ROLE_OPTIONS },
+  tags: { key: 'tags', name: '标签', kind: 'text', defaults: TAG_OPTIONS }
+};
+
+const METHOD_OPTIONS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((v) => ({
+  value: v,
+  label: v,
+  color: v === 'GET' ? 'green' : v === 'DELETE' ? 'red' : v === 'POST' ? 'blue' : 'purple'
+}));
+
+/** 接口完整度：只做灰字提示，不用红色警告（没描述是常态，不是事故） */
+const COMPLETENESS_OPTIONS = [
+  { value: 'ok', label: '信息齐', color: 'green' },
+  { value: 'missing-desc', label: '缺描述', color: 'default' },
+  { value: 'missing-example', label: '缺示例', color: 'default' }
+];
+
+const SOURCE_OPTIONS = [
+  { value: 'manual', label: '手录', color: 'default' },
+  { value: 'openapi', label: 'Apifox', color: 'blue' }
+];
+
+/** 测试执行：一次跑批 = 一条记录（接口测试 / 压测） */
+const RUN_KIND_OPTIONS = [
+  { value: 'api', label: '接口测试', color: 'blue' },
+  { value: 'perf', label: '压测', color: 'purple' }
+];
+
+/** 结果用「正常 / 异常」而不是「通过 / 失败」：压测说「达标」更自然，两边都能用同一套词 */
+const RUN_RESULT_OPTIONS = [
+  { value: 'ok', label: '正常', color: 'green' },
+  { value: 'bad', label: '异常', color: 'red' },
+  { value: 'unknown', label: '未判定', color: 'default' }
+];
+
+const COLLECTIONS = [
+  {
+    key: 'sites',
+    name: '网站管理',
+    group: '密码库',
+    icon: 'GlobalOutlined',
+    desc: '测试环境地址与登录信息，点开即用',
+    titleField: 'name',
+    titlePlaceholder: '如：资产管理系统-管理后台',
+    listFields: ['env', 'account'],
+    filterField: 'env',
+    noFavorite: true,
+    openField: 'url',
+    actions: ['open'],
+    fields: [
+      { key: 'name', label: '名称', type: 'text', required: true, placeholder: '如：资产管理系统-管理后台' },
+      { key: 'url', label: '地址', type: 'url', placeholder: 'https://test.example.com/admin' },
+      { key: 'env', label: '环境', type: 'multiselect', optionsKey: 'env', default: ['test'] },
+      { key: 'account', label: '账号', type: 'text', placeholder: '登录账号', copyable: true },
+      { key: 'password', label: '密码', type: 'secret', placeholder: '登录密码' },
+      { key: 'note', label: '备注', type: 'textarea', placeholder: '入口路径、注意事项…' }
+    ]
+  },
+  {
+    key: 'accounts',
+    name: '测试账号',
+    group: '密码库',
+    icon: 'UserOutlined',
+    desc: '各系统测试账号，含角色、环境与所属站点',
+    titleField: 'name',
+    titlePlaceholder: '如：运营后台-管理员',
+    listFields: ['env', 'role', 'account'],
+    filterField: 'env',
+    noFavorite: true,
+    actions: [],
+    fields: [
+      { key: 'name', label: '系统 / 用途', type: 'text', required: true, placeholder: '如：运营后台-管理员' },
+      { key: 'env', label: '环境', type: 'multiselect', optionsKey: 'env', default: ['test'] },
+      { key: 'role', label: '角色 / 权限', type: 'multiselect', optionsKey: 'role', placeholder: '可多选，选项在「设置 → 选项配置」里维护' },
+      { key: 'account', label: '账号', type: 'text', placeholder: '登录账号', copyable: true },
+      { key: 'password', label: '密码', type: 'secret', placeholder: '登录密码' },
+      { key: 'site', label: '所属站点', type: 'link', linkTo: 'sites', placeholder: '从「网站管理」里选，会自动带出环境' },
+      { key: 'expire', label: '到期日', type: 'date' },
+      { key: 'note', label: '备注', type: 'textarea', placeholder: '用途说明、限制…' }
+    ]
+  },
+  {
+    key: 'sqls',
+    name: 'SQL 片段',
+    group: '记录',
+    icon: 'ConsoleSqlOutlined',
+    desc: '常用查询与变更语句，变量替换后复制',
+    titleField: 'name',
+    titlePlaceholder: '如：按订单号查退款流水',
+    listFields: ['db'],
+    actions: ['sql'],
+    fields: [
+      { key: 'name', label: '名称', type: 'text', required: true, placeholder: '如：按订单号查退款流水' },
+      { key: 'db', label: '库 / 环境', type: 'text', placeholder: '如：test_order' },
+      { key: 'sql', label: 'SQL', type: 'code', required: true, rows: 10, placeholder: 'select * from t_refund where order_no = {{orderNo}}' },
+      { key: 'vars', label: '变量说明', type: 'text', placeholder: '{{orderNo}} = 订单号；{{today}} = 今天' },
+      { key: 'note', label: '备注', type: 'textarea', placeholder: '索引、坑点…' }
+    ]
+  },
+  {
+    key: 'apis',
+    name: '接口记录',
+    group: '记录',
+    icon: 'ApiOutlined',
+    desc: '常用接口，一键复制成 cURL；可从 Apifox 导出文件同步',
+    titleField: 'name',
+    titlePlaceholder: '如：创建退款单',
+    listFields: ['method', 'url'],
+    actions: ['curl'],
+    sync: 'openapi',
+    fields: [
+      { key: 'name', label: '名称', type: 'text', required: true, placeholder: '如：创建退款单' },
+      { key: 'method', label: '方法', type: 'select', options: METHOD_OPTIONS, default: 'POST' },
+      { key: 'url', label: 'URL', type: 'url', required: true, placeholder: 'https://test.example.com/api/refund' },
+      // ---- 以下为同步镜像字段：详情里只读展示，编辑表单里不出现（formHidden） ----
+      { key: 'module', label: '模块 / 目录', type: 'text', formHidden: true },
+      { key: 'summary', label: '接口描述', type: 'textarea', formHidden: true },
+      { key: 'params', label: '参数摘要', type: 'code', rows: 4, formHidden: true },
+      // 参数的结构化快照：只给「变更 diff」用，界面上不出现
+      { key: 'paramSpec', label: '参数快照', type: 'code', formHidden: true, hideInDetail: true },
+      { key: 'reqSchema', label: '请求 Schema', type: 'code', rows: 8, formHidden: true },
+      { key: 'respSchema', label: '响应 Schema', type: 'code', rows: 8, formHidden: true },
+      { key: 'completeness', label: '完整度', type: 'select', options: COMPLETENESS_OPTIONS, formHidden: true },
+      { key: 'source', label: '来源', type: 'select', options: SOURCE_OPTIONS, default: 'manual', formHidden: true },
+      { key: 'syncedAt', label: '同步于', type: 'datetime', formHidden: true },
+      // 上次同步的变更（只有真变过才有这行，空了整行不显示）
+      { key: 'lastChange', label: '上次同步变更', type: 'change', formHidden: true, hideEmpty: true },
+      // ---- 以下是你自己的，同步永不覆盖 ----
+      { key: 'myNote', label: '我的备注', type: 'textarea', placeholder: '能不能测、坑在哪、要哪个账号 —— 这些 Apifox 里没有' },
+      { key: 'headers', label: 'Headers', type: 'code', rows: 5, placeholder: 'Content-Type: application/json\nAuthorization: Bearer {{token}}' },
+      { key: 'body', label: 'Body', type: 'code', rows: 8, placeholder: '{"orderNo": "{{orderNo}}"}' },
+      { key: 'note', label: '其他备注', type: 'textarea', placeholder: '前置条件、返回字段…' }
+    ]
+  },
+  {
+    key: 'runs',
+    name: '测试执行',
+    group: '记录',
+    icon: 'ThunderboltOutlined',
+    desc: '接口测试 / 压测跑一次记一笔：结果、指标、结论，报告留在 Apifox',
+    titleField: 'name',
+    titlePlaceholder: '如：下单链路 10 并发 1 分钟',
+    listFields: ['apiRef', 'kind', 'result', 'ranAt'],
+    filterField: 'kind',
+    noFavorite: true,
+    fields: [
+      { key: 'name', label: '标题', type: 'text', required: true, placeholder: '如：下单链路 10 并发 1 分钟' },
+      {
+        key: 'kind',
+        label: '类型',
+        type: 'select',
+        options: RUN_KIND_OPTIONS,
+        default: 'api',
+        // 选哪一类，下面的字段就跟哪一类走
+        hint: '接口测试只填通过/失败数；压测填并发、时长和耗时'
+      },
+      { key: 'result', label: '结果', type: 'select', options: RUN_RESULT_OPTIONS, default: 'unknown' },
+      { key: 'ranAt', label: '执行时间', type: 'datetime' },
+      { key: 'apiRef', label: '关联接口', type: 'link', linkTo: 'apis', placeholder: '从「接口记录」里选，接口详情里就能看到这次执行' },
+      { key: 'env', label: '环境', type: 'select', options: ENV_OPTIONS, optionsKey: 'env', default: 'test' },
+      { key: 'scene', label: '场景 / 脚本', type: 'text', placeholder: 'Apifox 测试场景名，或 jmx 文件名' },
+      { key: 'report', label: '报告链接', type: 'url', placeholder: 'Apifox 跑完的报告地址（选填）' },
+      // ---- 接口测试 ----
+      { key: 'passCount', label: '通过', type: 'number', onlyFor: { kind: 'api' }, placeholder: '通过多少条' },
+      { key: 'failCount', label: '失败', type: 'number', onlyFor: { kind: 'api' }, placeholder: '挂了哪些，写结论里' },
+      // ---- 压测 ----
+      { key: 'concurrency', label: '并发', type: 'number', onlyFor: { kind: 'perf' }, placeholder: '虚拟用户数' },
+      { key: 'duration', label: '时长', type: 'text', onlyFor: { kind: 'perf' }, placeholder: '如：60s / 5m' },
+      { key: 'tps', label: 'TPS / 吞吐', type: 'number', onlyFor: { kind: 'perf' }, placeholder: '每秒请求数' },
+      { key: 'p90', label: 'P90 (ms)', type: 'number', onlyFor: { kind: 'perf' }, placeholder: '90% 请求的响应时间' },
+      { key: 'p95', label: 'P95 (ms)', type: 'number', onlyFor: { kind: 'perf' }, placeholder: '95% 请求的响应时间' },
+      { key: 'p99', label: 'P99 (ms)', type: 'number', onlyFor: { kind: 'perf' }, placeholder: '99% 请求的响应时间' },
+      { key: 'errRate', label: '错误率 (%)', type: 'number', onlyFor: { kind: 'perf' }, placeholder: '如：0.2' },
+      { key: 'samples', label: '样本数', type: 'number', onlyFor: { kind: 'perf' }, placeholder: '总请求数（导入报告自动填）' },
+      { key: 'reportDir', label: '报告目录', type: 'text', onlyFor: { kind: 'perf' }, formHidden: true },
+      { key: 'conclusion', label: '结论', type: 'textarea', placeholder: '达标没达标、瓶颈在哪、要不要跟进' }
+    ]
+  },
+  {
+    key: 'notes',
+    name: '测试笔记',
+    group: '记录',
+    icon: 'FileTextOutlined',
+    desc: 'Markdown 笔记，支持全文搜索',
+    titleField: 'name',
+    titlePlaceholder: '如：退款并发问题的复现步骤',
+    listFields: [],
+    actions: [],
+    fields: [
+      { key: 'name', label: '标题', type: 'text', required: true, placeholder: '如：退款并发问题的复现步骤' },
+      { key: 'content', label: '正文', type: 'markdown', rows: 16, placeholder: '# 标题\n\n支持 Markdown。' }
+    ]
+  }
+];
+
+const TOOLS = [
+  { key: 'json', name: 'JSON 转化', icon: 'CodeOutlined', desc: '格式化 / 压缩 / 转义 / 校验' },
+  { key: 'data', name: '测试数据', icon: 'ExperimentOutlined', desc: '手机号 / 身份证 / 银行卡 / 地址…' },
+  { key: 'toolbox', name: '工具箱', icon: 'ToolOutlined', desc: 'Base64 / 时间戳 / 哈希 / UUID' }
+];
+
+const COLLECTION_MAP = COLLECTIONS.reduce((acc, c) => {
+  acc[c.key] = c;
+  return acc;
+}, {});
+
+const SECRET_KEYS = COLLECTIONS.reduce((acc, c) => {
+  const keys = c.fields.filter((f) => f.type === 'secret').map((f) => f.key);
+  if (keys.length) acc[c.key] = keys;
+  return acc;
+}, {});
+
+module.exports = {
+  COLLECTIONS,
+  COLLECTION_MAP,
+  SECRET_KEYS,
+  TOOLS,
+  ENV_OPTIONS,
+  ROLE_OPTIONS,
+  TAG_OPTIONS,
+  OPTION_SETS,
+  METHOD_OPTIONS,
+  COMPLETENESS_OPTIONS,
+  SOURCE_OPTIONS,
+  RUN_KIND_OPTIONS,
+  RUN_RESULT_OPTIONS
+};
