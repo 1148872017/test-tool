@@ -1,0 +1,374 @@
+'use strict';
+
+/**
+ * OpenAPI 3 → 工作台接口记录
+ *
+ * 只做「读文件 → 变成结构化记录」，不联网、不调 Apifox 接口、不写任何文件。
+ * 目的是把开发在 Apifox 里建好的接口搬进本地库，再叠一层自己的备注。
+ *
+ * 约定：
+ *   - 只支持 OpenAPI 3（Apifox 导出的时候选这个）；Swagger 2.0 给明确报错，别让它静默少字段
+ *   - url = servers[0].url + path（servers 里的 {变量} 用 variables 的 default 填）
+ *   - 同一 method+url 只留一条（去重，防导出文件里重复）
+ *   - Schema 超过 MAX_SCHEMA_CHARS 截断并注明，不把几 MB 的 JSON 塞进库
+ */
+
+const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'];
+const MAX_SCHEMA_CHARS = 6000;
+const PARAM_ORDER = { path: 0, query: 1, header: 2, cookie: 3 };
+
+function isObj(v) {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+/** 把 #/components/... 这类本地 $ref 就地展开（限深 + 防循环） */
+function resolveRefs(node, root, depth = 0, seen = new Set()) {
+  if (depth > 12 || node === null || node === undefined) return node;
+  if (Array.isArray(node)) return node.map((n) => resolveRefs(n, root, depth + 1, seen));
+  if (!isObj(node)) return node;
+
+  if (typeof node.$ref === 'string') {
+    const ref = node.$ref;
+    if (ref.charAt(0) !== '#' || seen.has(ref)) return node; // 外部引用/循环：原样留着，不猜
+    const target = ref
+      .slice(1)
+      .split('/')
+      .filter(Boolean)
+      .reduce((acc, seg) => (isObj(acc) || Array.isArray(acc) ? acc[seg] : undefined), root);
+    if (target === undefined) return node;
+    const next = new Set(seen);
+    next.add(ref);
+    return resolveRefs(target, root, depth + 1, next);
+  }
+
+  const out = {};
+  for (const k of Object.keys(node)) out[k] = resolveRefs(node[k], root, depth + 1, seen);
+  return out;
+}
+
+function inlineSchema(schema, root) {
+  if (!schema) return '';
+  let text = '';
+  try {
+    text = JSON.stringify(resolveRefs(schema, root), null, 2);
+  } catch (e) {
+    text = '';
+  }
+  if (!text) return '';
+  if (text.length > MAX_SCHEMA_CHARS) {
+    text = text.slice(0, MAX_SCHEMA_CHARS) + '\n…（Schema 过长，已截断；完整内容看 Apifox）';
+  }
+  return text;
+}
+
+/** servers[] → base url，把 {var} 换成 variables[var].default */
+function joinBase(servers) {
+  if (!Array.isArray(servers) || !servers.length) return '';
+  const s = isObj(servers[0]) ? servers[0] : {};
+  const vars = isObj(s.variables) ? s.variables : {};
+  const url = String(s.url || '').replace(/\{([^}]+)\}/g, (all, name) => {
+    const v = vars[name];
+    return isObj(v) && v.default !== undefined ? String(v.default) : all;
+  });
+  return url.replace(/\/+$/, '');
+}
+
+function buildUrl(base, path) {
+  const p = String(path || '');
+  if (!base) return p;
+  return base + (p === '/' ? '/' : '/' + p.replace(/^\/+/, ''));
+}
+
+/** path 级参数 + operation 级参数合并，同名同位置以 operation 为准 */
+function mergedParams(pathItem, op, root) {
+  const map = new Map();
+  for (const src of [pathItem && pathItem.parameters, op.parameters]) {
+    if (!Array.isArray(src)) continue;
+    for (const raw of src) {
+      const p = resolveRefs(raw, root);
+      if (!isObj(p) || !p.name) continue;
+      map.set(`${p.in || 'query'}:${p.name}`, p);
+    }
+  }
+  return Array.from(map.values());
+}
+
+function paramLines(params) {
+  return params
+    .slice()
+    .sort((a, b) => (PARAM_ORDER[a.in] === undefined ? 9 : PARAM_ORDER[a.in]) - (PARAM_ORDER[b.in] === undefined ? 9 : PARAM_ORDER[b.in]))
+    .map((p) => {
+      const schema = isObj(p.schema) ? p.schema : {};
+      const type = schema.type || (schema.$ref ? 'ref' : '—');
+      const desc = String(p.description || '').replace(/\s+/g, ' ').trim();
+      return `${p.in || 'query'}: ${p.name}${p.required ? '*' : ''} (${type})${desc ? ' ' + desc : ''}`;
+    });
+}
+
+/** schema 树里有没有 example / examples / default（判断「缺示例」） */
+function hasExample(node, depth = 0) {
+  if (!node || depth > 10) return false;
+  if (Array.isArray(node)) return node.some((n) => hasExample(n, depth + 1));
+  if (!isObj(node)) return false;
+  if (node.example !== undefined || node.examples !== undefined || node.default !== undefined) return true;
+  for (const k of ['properties', 'items', 'allOf', 'oneOf', 'anyOf', 'schema', 'additionalProperties']) {
+    if (node[k] && hasExample(node[k], depth + 1)) return true;
+  }
+  return false;
+}
+
+/** 在 content 里挑一个媒体类型（优先 application/json） */
+function pickContent(node, root) {
+  const content = node && node.content;
+  if (!isObj(content)) return null;
+  const types = Object.keys(content);
+  if (!types.length) return null;
+  const type = types.indexOf('application/json') >= 0 ? 'application/json' : types[0];
+  const media = resolveRefs(content[type], root);
+  if (!isObj(media)) return null;
+  return { type, schema: media.schema, hasExample: hasExample(media) };
+}
+
+function pickResponse(op, root) {
+  const responses = op.responses;
+  if (!isObj(responses)) return null;
+  const codes = Object.keys(responses);
+  const code = codes.indexOf('200') >= 0 ? '200' : codes.filter((c) => /^2\d\d$/.test(c)).sort()[0] || (codes.indexOf('default') >= 0 ? 'default' : '');
+  if (!code) return null;
+  return pickContent(resolveRefs(responses[code], root), root);
+}
+
+function apiKey(method, url) {
+  const m = String(method || '').trim().toUpperCase();
+  const u = String(url || '').trim().replace(/\/+$/, '');
+  return m && u ? `${m} ${u}` : '';
+}
+
+/* ------------------------------ 变更 diff ------------------------------ *
+ * 只回答一个问题：这次同步里，哪些变化会让已经写好的用例失效？
+ * 所以只挑「参数 / 请求体 / 响应体」的结构变化；描述文案改了不算（那是噪音）。
+ * 老记录没有镜像字段（手写接口第一次同步）时一律不算变更，避免虚报。
+ * -------------------------------------------------------------------- */
+
+const KIND_ORDER = [
+  'req-param-add',
+  'req-required-add',
+  'param-type',
+  'req-param-remove',
+  'req-required-remove',
+  'param-add',
+  'param-remove',
+  'req-field-type',
+  'req-field-add',
+  'req-field-remove',
+  'resp-field-type',
+  'resp-field-add',
+  'resp-field-remove'
+];
+
+function asJson(text) {
+  if (!text || typeof text !== 'string') return null;
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return null;
+  }
+}
+
+/** schema 的「形状」：顶层字段名 → 类型，加必填清单（数组 schema 往里钻一层） */
+function schemaShape(text) {
+  let obj = asJson(text);
+  if (obj && obj.type === 'array' && obj.items) obj = obj.items;
+  if (!obj || typeof obj !== 'object') return null;
+  const props = obj.properties && typeof obj.properties === 'object' ? obj.properties : {};
+  const fields = {};
+  for (const key of Object.keys(props)) {
+    const p = props[key] || {};
+    fields[key] = String(p.type || (p.$ref ? 'ref' : '') || (p.enum ? 'enum' : '') || 'any');
+  }
+  return { fields, required: Array.isArray(obj.required) ? obj.required.slice() : [] };
+}
+
+function diffParamList(before, after) {
+  const index = (list) => {
+    const m = new Map();
+    for (const p of list || []) {
+      if (!p || !p.name) continue;
+      m.set(`${p.in || 'query'}:${p.name}`, p);
+    }
+    return m;
+  };
+  const b = index(before);
+  const a = index(after);
+  const addReq = [];
+  const addOpt = [];
+  const delReq = [];
+  const delOpt = [];
+  const typed = [];
+
+  for (const [key, p] of a) {
+    const old = b.get(key);
+    if (!old) {
+      (p.required ? addReq : addOpt).push(p.name);
+      continue;
+    }
+    if (String(old.type || '') !== String(p.type || '')) {
+      typed.push(`${p.name}: ${old.type || '?'}→${p.type || '?'}`);
+    } else if (!old.required && p.required) {
+      addReq.push(p.name); // 可选变必填：最容易让老用例直接挂，排最前
+    } else if (old.required && !p.required) {
+      delReq.push(p.name);
+    }
+  }
+  for (const [key, p] of b) if (!a.has(key)) (p.required ? delReq : delOpt).push(p.name);
+
+  const out = [];
+  if (addReq.length) out.push({ kind: 'req-param-add', label: `必填参数 +${addReq.length}`, detail: addReq.join(', ') });
+  if (delReq.length) out.push({ kind: 'req-param-remove', label: `必填参数 -${delReq.length}`, detail: delReq.join(', ') });
+  if (typed.length) out.push({ kind: 'param-type', label: `参数类型变 ${typed.length}`, detail: typed.join(', ') });
+  if (addOpt.length) out.push({ kind: 'param-add', label: `参数 +${addOpt.length}`, detail: addOpt.join(', ') });
+  if (delOpt.length) out.push({ kind: 'param-remove', label: `参数 -${delOpt.length}`, detail: delOpt.join(', ') });
+  return out;
+}
+
+function diffSchemaPair(beforeText, afterText, which) {
+  const b = schemaShape(beforeText);
+  const a = schemaShape(afterText);
+  if (!b || !a) return [];
+
+  const prefix = which === 'req' ? 'req' : 'resp';
+  const name = which === 'req' ? '请求体' : '响应体';
+  const addFields = [];
+  const delFields = [];
+  const typed = [];
+
+  for (const key of Object.keys(a.fields)) {
+    if (b.fields[key] === undefined) addFields.push(key);
+    else if (b.fields[key] !== a.fields[key]) typed.push(`${key}: ${b.fields[key]}→${a.fields[key]}`);
+  }
+  for (const key of Object.keys(b.fields)) if (a.fields[key] === undefined) delFields.push(key);
+
+  const addReq = a.required.filter((k) => b.required.indexOf(k) < 0);
+  const delReq = b.required.filter((k) => a.required.indexOf(k) < 0);
+
+  const out = [];
+  if (addReq.length) out.push({ kind: `${prefix}-required-add`, label: `${name}必填字段 +${addReq.length}`, detail: addReq.join(', ') });
+  if (delReq.length) out.push({ kind: `${prefix}-required-remove`, label: `${name}必填字段 -${delReq.length}`, detail: delReq.join(', ') });
+  if (typed.length) out.push({ kind: `${prefix}-field-type`, label: `${name}字段类型变 ${typed.length}`, detail: typed.join(', ') });
+  if (addFields.length) out.push({ kind: `${prefix}-field-add`, label: `${name}字段 +${addFields.length}`, detail: addFields.join(', ') });
+  if (delFields.length) out.push({ kind: `${prefix}-field-remove`, label: `${name}字段 -${delFields.length}`, detail: delFields.join(', ') });
+  return out;
+}
+
+/**
+ * 比对库里旧记录与这次解析出来的新条目，只返回影响面相关的变更。
+ * @param {object} before records.data（可能没有镜像字段）
+ * @param {object} after  解析出来的新 item
+ * @returns {{kind:string,label:string,detail?:string}[]}
+ */
+function diffApi(before, after) {
+  if (!before || !after) return [];
+  const changes = [];
+  const beforeParams = asJson(before.paramSpec);
+  const afterParams = asJson(after.paramSpec);
+  if (Array.isArray(beforeParams) && Array.isArray(afterParams)) {
+    changes.push(...diffParamList(beforeParams, afterParams));
+  }
+  changes.push(...diffSchemaPair(before.reqSchema, after.reqSchema, 'req'));
+  changes.push(...diffSchemaPair(before.respSchema, after.respSchema, 'resp'));
+
+  const rank = (c) => {
+    const i = KIND_ORDER.indexOf(c.kind);
+    return i < 0 ? 99 : i;
+  };
+  changes.sort((x, y) => rank(x) - rank(y));
+  return changes.slice(0, 8);
+}
+
+/**
+ * @param {object} doc   JSON.parse 之后的 OpenAPI 文档
+ * @returns {{items: object[], stats: object, doc: object}}
+ */
+function parseOpenApi(doc) {
+  if (!isObj(doc)) throw new Error('不是合法的 JSON 对象');
+  if (doc.swagger) throw new Error('这是 Swagger 2.0，请在 Apifox 里重新导出为 OpenAPI 3');
+  if (!String(doc.openapi || '').startsWith('3')) {
+    throw new Error(`只支持 OpenAPI 3（文件里的 openapi 字段是「${doc.openapi || '空'}」）`);
+  }
+  if (!isObj(doc.paths) || !Object.keys(doc.paths).length) {
+    throw new Error('文档里没有 paths，可能是空项目导出的');
+  }
+
+  const items = [];
+  const seen = new Set();
+  let dup = 0;
+
+  for (const path of Object.keys(doc.paths)) {
+    const pathItem = resolveRefs(doc.paths[path], doc);
+    if (!isObj(pathItem)) continue;
+    for (const m of HTTP_METHODS) {
+      const op = pathItem[m];
+      if (!isObj(op)) continue;
+
+      const method = m.toUpperCase();
+      const base = joinBase(op.servers) || joinBase(pathItem.servers) || joinBase(doc.servers);
+      const url = buildUrl(base, path);
+      const desc = String(op.description || '').trim();
+      const summary = String(op.summary || '').trim();
+      const name = summary || desc.split('\n')[0].trim() || String(op.operationId || '').trim() || `${method} ${path}`;
+      const tags = Array.isArray(op.tags) ? op.tags.filter((t) => typeof t === 'string' && t.trim()) : [];
+      const module = (tags[0] || '未分组').trim();
+
+      const paramList = mergedParams(pathItem, op, doc);
+      const params = paramLines(paramList);
+      const req = pickContent(op.requestBody, doc);
+      const resp = pickResponse(op, doc);
+      const hasEx = !!((req && req.hasExample) || (resp && resp.hasExample));
+
+      const key = apiKey(method, url);
+      if (!key) continue;
+      if (seen.has(key)) {
+        dup++;
+        continue;
+      }
+      seen.add(key);
+
+      items.push({
+        name,
+        method,
+        url,
+        module,
+        summary: desc,
+        params: params.join('\n'),
+        // 给 diff 用的机器可读快照（params 那行是给人看的）
+        paramSpec: JSON.stringify(
+          paramList.map((p) => ({
+            in: p.in || 'query',
+            name: p.name,
+            required: !!p.required,
+            type: (isObj(p.schema) && p.schema.type) || (isObj(p.schema) && p.schema.$ref ? 'ref' : '')
+          }))
+        ),
+        reqSchema: req ? inlineSchema(req.schema, doc) : '',
+        respSchema: resp ? inlineSchema(resp.schema, doc) : '',
+        completeness: !summary && !desc ? 'missing-desc' : hasEx ? 'ok' : 'missing-example',
+        source: 'openapi'
+      });
+    }
+  }
+
+  if (!items.length) throw new Error('文档里一个接口都没解析出来（paths 里没有 GET/POST/PUT/PATCH/DELETE）');
+
+  const info = isObj(doc.info) ? doc.info : {};
+  return {
+    items,
+    stats: { total: items.length, dup },
+    doc: {
+      title: String(info.title || ''),
+      version: String(info.version || ''),
+      baseUrl: joinBase(doc.servers)
+    }
+  };
+}
+
+module.exports = { parseOpenApi, apiKey, joinBase, buildUrl, diffApi, MAX_SCHEMA_CHARS };
