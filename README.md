@@ -245,21 +245,65 @@ runtime\    Chromium 运行时缓存
 npm install            # 依赖（无原生模块，不需要编译工具链）
 npm run build:renderer # esbuild 打包渲染层 → dist/
 npm start              # 构建 + 启动 Electron
-npm test               # 六个套件全跑（97 + 20 + 42 + 78 + 48 + 39 = 324 项）
-npm run test:main      # 主进程冒烟测试（97 项，用 stub 顶掉 electron，无需 GUI）
+npm test               # 九个套件全跑（488 项）
+npm run test:main      # 主进程冒烟测试（117 项，用 stub 顶掉 electron，无需 GUI）
 npm run test:migrate   # 数据结构升级测试（20 项：老库迁移、环境回填、备份、未知字段保留）
-npm run test:cases     # 用例解析 + 目录树测试（42 项，跑真实 D:\AI_Workspace\test_cases）
+npm run test:cases     # 用例解析 + 目录树测试（42 项，跑真实用例目录）
 npm run test:links     # 用例↔接口关联测试（48 项：IPC / 软键 / 失效清理 / 迁移）
-npm run test:openapi   # 接口镜像 + 变更 diff 测试（78 项：OpenAPI 解析 / 幂等 upsert / 不覆盖用户字段 / diff 规则 / 坏文件）
-npm run test:jmx       # jmx 解析 + 健康检查测试（39 项，跑真实 D:\AI_Workspace\jmx）
-npm run dist           # 打包单文件 portable exe
-npm run package:zip    # 打成便携 zip（含本 README 和 docs/screens 截图）
+npm run test:openapi   # 接口镜像 + 变更 diff 测试（78 项）
+npm run test:jmx       # jmx 解析 + 健康检查测试（45 项，跑真实 jmx 目录）
+npm run test:jtl       # 压测报告解析测试（27 项：jtl / statistics.json / 20 万行性能）
+npm run test:templates # 脚本模板质量测试（93 项：字段完整 / 带注释 / 无 macOS 路径）
+npm run test:knowledge # 知识库解析测试（18 项，跑真实知识库目录）
+npm run dist:portable  # 打包单文件 portable exe（约 104 MB，双击即用）
+npm run package:zip    # 打成便携 zip（约 152 MB，含 README 和 docs/screens 截图）
 ```
 
-> **踩过的坑都记在 [docs/踩坑笔记.md](docs/踩坑笔记.md)**：打包依赖、清除数据、DPAPI、esbuild、测试脆弱性、jmx 解析等 18 条，每条都有「现象 / 根因 / 怎么防 / 怎么验证」。改代码前值得翻一遍。
+> **踩过的坑都记在 `docs/踩坑笔记.md`**（不进仓库，随 Release 的 zip 分发）：
+> 打包依赖、清除数据、DPAPI、esbuild、测试脆弱性、jmx 解析等 22 条，每条都有「现象 / 根因 / 怎么防 / 怎么验证」。
 
 没有 Electron 环境时也能看界面：`dist/index.html` 走任意静态服务器打开，会自动落到内存 mock
 （`src/mockApi.ts`，带一份示例数据），适合改 UI 时快速预览。
+
+### 发版流程
+
+**每次发版必须升版本号**，否则会覆盖同名产物、Release 上分不清新旧。
+
+```bash
+# 1. 升版本号（三处要一致：package.json / README 引用 / git tag）
+#    改 package.json 的 version，例如 0.21.1 → 0.22.0
+
+# 2. 跑测试
+npm test
+
+# 3. 打两个产物
+npm run dist:portable   # → release/test-tool-X.Y.Z-x64.exe（约 104 MB）
+npm run package:zip     # → release/test-tool-X.Y.Z-win64.zip（约 152 MB）
+
+# 4. 提交 + 打 tag
+git add -A && git commit -m "chore: 版本 X.Y.Z"
+git tag -a vX.Y.Z -m "vX.Y.Z: 一句话说明"
+git push origin main
+git push origin vX.Y.Z
+
+# 5. 上传到 GitHub Release
+#    网页：Releases → Draft a new release → 选 tag → 拖入两个文件
+#    或 gh CLI：gh release create vX.Y.Z release/*.exe release/*.zip
+```
+
+**产物说明**：
+
+| 文件 | 大小 | 特点 |
+|---|---|---|
+| `test-tool-X.Y.Z-x64.exe` | 104 MB | 单文件便携版，双击即用；**首次启动 3-8 秒**（自解压，有 splash 提示图） |
+| `test-tool-X.Y.Z-win64.zip` | 152 MB | 解压即用，启动快；含 README 和界面截图 |
+
+**为什么产物名是英文**：GitHub Release 上传中文文件名会被截断
+（实测 `测试工作台-0.21.0-win64.zip` → `-0.21.0-win64.zip`）。
+exe 内部的 `ProductName` 仍是「测试工作台」，用户看到的应用名不变。
+
+**数据位置**：默认 `%APPDATA%\测试工作台\`，升级只需替换程序，数据不受影响。
+想让数据跟着 exe 走（U 盘便携），在 exe 同目录建一个空文件 `portable.marker`。
 
 ### 目录
 
