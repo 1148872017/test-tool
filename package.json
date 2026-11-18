@@ -55,7 +55,8 @@
       "dist/**/*",
       "build/tray.png",
       "build/icon.ico",
-      "package.json"
+      "package.json",
+      "build/splash.bmp"
     ],
     "asar": true,
     "npmRebuild": false,
@@ -75,6 +76,9 @@
         }
       ],
       "icon": "build/icon.ico"
+    },
+    "portable": {
+      "splashImage": "build/splash.bmp"
     }
   }
 }
