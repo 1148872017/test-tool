@@ -22,7 +22,8 @@
     "package:zip": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-zip.ps1",
     "test:jtl": "node scripts/test-jtl.cjs",
     "test:templates": "node scripts/test-templates.cjs",
-    "test:knowledge": "node scripts/test-knowledge.cjs"
+    "test:knowledge": "node scripts/test-knowledge.cjs",
+    "dist:portable": "npm run build:renderer && electron-builder --win portable --x64"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.8.15",
@@ -44,7 +45,7 @@
   "build": {
     "appId": "com.testtool.workbench",
     "productName": "测试工作台",
-    "artifactName": "测试工作台-${version}.${ext}",
+    "artifactName": "test-tool-${version}-${arch}.${ext}",
     "directories": {
       "output": "release"
     },

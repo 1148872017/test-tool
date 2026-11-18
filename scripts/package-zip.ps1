@@ -34,7 +34,8 @@ function Find-7za {
   return $null
 }
 
-$zip = Join-Path $root ("release\测试工作台-{0}-win64.zip" -f $Version)
+# 产物名用 ASCII：GitHub Release 上传中文名会被截断（实测 测试工作台-0.21.0-win64.zip → -0.21.0-win64.zip）
+$zip = Join-Path $root ("release\test-tool-{0}-win64.zip" -f $Version)
 if (Test-Path $zip) { Remove-Item $zip -Force }
 
 $sevenZip = Find-7za
