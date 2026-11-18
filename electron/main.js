@@ -442,14 +442,19 @@ function registerIpc() {
    */
   ipcMain.handle('data:import', async (e, { collection } = {}) => {
     const conf = collection ? COLLECTION_MAP[collection] : null;
+    // 按集合导入只认 JSON：.db 是整库覆盖，不能只导一个集合，
+    // 所以过滤器里也不该出现它（否则用户选了才被告知不行）
+    const filters = conf
+      ? [{ name: 'JSON', extensions: ['json'] }]
+      : [
+          { name: 'JSON 或数据库备份', extensions: ['json', 'db'] },
+          { name: 'JSON', extensions: ['json'] },
+          { name: '数据库备份', extensions: ['db'] }
+        ];
     const result = await dialog.showOpenDialog(win, {
       title: conf ? `导入到「${conf.name}」` : '导入数据',
       properties: ['openFile'],
-      filters: [
-        { name: 'JSON 或数据库备份', extensions: ['json', 'db'] },
-        { name: 'JSON', extensions: ['json'] },
-        { name: '数据库备份', extensions: ['db'] }
-      ]
+      filters
     });
     if (result.canceled || !result.filePaths.length) return { ok: false };
     const file = result.filePaths[0];

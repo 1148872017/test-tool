@@ -148,6 +148,13 @@ export default function ImportReportModal({ open, onClose, onImport }: Props) {
       maskClosable={false}
     >
       <div className="report-import">
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 10 }}
+          message="选目录，不是选文件"
+          description="一次跑批 = 一个目录，里面要有 result.jtl 或 html-report/statistics.json。平台会自己找文件并解析。"
+        />
         <div className="report-toolbar">
           <span className="muted" style={{ fontSize: 12 }}>
             报告目录：{scan && scan.root ? scan.root : '未配置'}

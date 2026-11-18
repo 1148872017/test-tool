@@ -500,7 +500,7 @@ export default function CollectionPage({
             </Button>
           ) : null}
           <Button icon={<UploadOutlined />} onClick={doImport} loading={busyIO}>
-            导入
+            导入备份
           </Button>
           <Button icon={<DownloadOutlined />} onClick={doExport} loading={busyIO}>
             导出

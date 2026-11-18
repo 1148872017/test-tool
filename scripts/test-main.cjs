@@ -438,6 +438,14 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   const kbBad = await call('kb:reveal', { file: 'D:\\不存在的知识库' });
   check('知识库打开不存在路径返回失败', kbBad && kbBad.ok === false, kbBad);
 
+  // ---- 导入过滤器：按集合只认 JSON，整库才认 .db ----
+  // 直接读 main.js 的源码确认逻辑（避免在测试里重复实现一遍）
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+  const importBlock = mainSrc.slice(mainSrc.indexOf("ipcMain.handle('data:import'"), mainSrc.indexOf("ipcMain.handle('backup:restore'"));
+  check('按集合导入的过滤器只含 json', /conf\s*\?\s*\[\{\s*name:\s*'JSON',\s*extensions:\s*\['json'\]\s*\}\]/.test(importBlock), importBlock.slice(0, 300));
+  check('整库导入的过滤器含 db', /extensions:\s*\['json',\s*'db'\]/.test(importBlock), importBlock.slice(0, 300));
+  check('按集合选了 .db 会明确拒绝', /不能只导入某个集合/.test(importBlock));
+
   // ---- 清除数据（破坏性操作，重点验证「清了不会自己回来」）----
   await call('records:save', { collection: 'notes', data: { title: '清除前留一条', content: 'x' } });
   await new Promise((r) => setTimeout(r, 500));
