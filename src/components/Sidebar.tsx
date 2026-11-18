@@ -14,11 +14,12 @@ export default function Sidebar({ route, onNavigate, counts, onLock }: Props) {
   const caseItem = { key: 'cases', name: '测试用例', icon: 'ProfileOutlined', isCase: true };
   const jmxItem = { key: 'jmx', name: '压测脚本', icon: 'DashboardOutlined', isJmx: true };
   const kbItem = { key: 'kb', name: '知识库', icon: 'BookOutlined', isKb: true };
+  const notesItem = { key: 'notes', name: '测试笔记', icon: 'FileTextOutlined', isNotes: true };
   const groups = [
     { label: '密码库', items: COLLECTIONS.filter((c: any) => c.group === '密码库') },
     {
       label: '记录',
-      items: [caseItem, ...COLLECTIONS.filter((c: any) => c.group === '记录'), jmxItem, kbItem]
+      items: [caseItem, ...COLLECTIONS.filter((c: any) => c.group === '记录'), jmxItem, kbItem, notesItem]
     },
     { label: '工具', items: TOOLS.map((t: any) => ({ key: t.key, name: t.name, icon: t.icon, isTool: true })) }
   ];
@@ -28,6 +29,7 @@ export default function Sidebar({ route, onNavigate, counts, onLock }: Props) {
     if (item.isCase) return route.type === 'cases';
     if (item.isJmx) return route.type === 'jmx';
     if (item.isKb) return route.type === 'kb';
+    if (item.isNotes) return route.type === 'notes';
     return route.type === 'collection' && route.key === item.key;
   };
 
@@ -36,6 +38,7 @@ export default function Sidebar({ route, onNavigate, counts, onLock }: Props) {
     else if (item.isCase) onNavigate({ type: 'cases' });
     else if (item.isJmx) onNavigate({ type: 'jmx' });
     else if (item.isKb) onNavigate({ type: 'kb' });
+    else if (item.isNotes) onNavigate({ type: 'notes' });
     else onNavigate({ type: 'collection', key: item.key });
   };
 
@@ -65,7 +68,7 @@ export default function Sidebar({ route, onNavigate, counts, onLock }: Props) {
                   <Icon name={item.icon} />
                 </span>
                 <span className="nav-name">{item.name}</span>
-                {!item.isTool && !item.isCase && !item.isJmx && !item.isKb && counts[item.key] ? (
+                {!item.isTool && !item.isCase && !item.isJmx && !item.isKb && !item.isNotes && counts[item.key] ? (
                   <span className="nav-count">{counts[item.key]}</span>
                 ) : null}
               </div>

@@ -58,6 +58,13 @@ contextBridge.exposeInMainWorld('api', {
   kbReveal: (file) => invoke('kb:reveal', { file }),
   kbPickDir: () => invoke('kb:pickDir'),
 
+  notesScan: (root) => invoke('notes:scan', { root }),
+  notesOpenFile: (file) => invoke('notes:openFile', { file }),
+  notesReveal: (file) => invoke('notes:reveal', { file }),
+  notesPickDir: () => invoke('notes:pickDir'),
+  notesPickImport: () => invoke('notes:pickImport'),
+  notesImport: (files, onConflict) => invoke('notes:import', { files, onConflict }),
+
   syncOpenApi: (file) => invoke('apis:sync', { file }),
   lastSyncChanges: () => invoke('apis:lastSync'),
 

@@ -10,6 +10,7 @@ const caseIndex = require('./cases');
 const jmxIndex = require('./jmx');
 const jtlReport = require('./jtl');
 const knowledge = require('./knowledge');
+const notesIndex = require('./notes');
 const openapi = require('./openapi');
 const security = require('./security');
 const { TOOLS, COLLECTION_MAP } = require('../shared/collections');
@@ -50,6 +51,7 @@ const DEFAULT_SETTINGS = {
   jmxDir: '',
   reportDir: '',
   kbDir: '',
+  notesDir: '',
   jmeterPath: '',
   pin: null
 };
@@ -103,6 +105,7 @@ function loadSettings() {
     fill('jmxDir', 'jmx');
     fill('reportDir', path.join('jmx', '压测结果'));
     fill('kbDir', '知识库');
+    fill('notesDir', 'notes');
   }
 
   locked = !!settings.pin;
@@ -118,6 +121,7 @@ function publicSettings() {
     jmxDir: settings.jmxDir || '',
     reportDir: settings.reportDir || '',
     kbDir: settings.kbDir || '',
+    notesDir: settings.notesDir || '',
     jmeterPath: settings.jmeterPath || '',
     hasPin: !!settings.pin
   };
@@ -312,7 +316,7 @@ function registerIpc() {
   ipcMain.handle('settings:get', async () => publicSettings());
 
   ipcMain.handle('settings:set', async (e, patch) => {
-    const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'kbDir'];
+    const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'kbDir', 'notesDir'];
     for (const key of allowed) {
       if (patch && patch[key] !== undefined) settings[key] = patch[key];
     }
@@ -805,6 +809,79 @@ function registerIpc() {
     settings.kbDir = result.filePaths[0];
     saveSettings();
     return { ok: true, dir: settings.kbDir };
+  });
+
+  // ---- 笔记索引（只读）+ 导入 md ----
+  ipcMain.handle('notes:scan', async (e, { root } = {}) => {
+    assertUnlocked();
+    const dir = (root && String(root).trim()) || settings.notesDir;
+    return notesIndex.scanNotes(dir);
+  });
+
+  ipcMain.handle('notes:openFile', async (e, { file }) => {
+    assertUnlocked();
+    if (!file) return { ok: false, message: '缺少文件路径' };
+    const err = await shell.openPath(String(file));
+    return { ok: !err, message: err || '' };
+  });
+
+  ipcMain.handle('notes:reveal', async (e, { file }) => {
+    assertUnlocked();
+    if (!file) return { ok: false };
+    const target = String(file);
+    if (!fs.existsSync(target)) return { ok: false, message: '路径不存在：' + target };
+    if (fs.statSync(target).isDirectory()) {
+      const err = await shell.openPath(target);
+      return { ok: !err, message: err || '', dir: target };
+    }
+    shell.showItemInFolder(target);
+    return { ok: true, dir: path.dirname(target) };
+  });
+
+  ipcMain.handle('notes:pickDir', async () => {
+    assertUnlocked();
+    const result = await dialog.showOpenDialog(win, {
+      title: '选择笔记目录',
+      properties: ['openDirectory']
+    });
+    if (result.canceled || !result.filePaths.length) return { ok: false };
+    settings.notesDir = result.filePaths[0];
+    saveSettings();
+    return { ok: true, dir: settings.notesDir };
+  });
+
+  /**
+   * 导入 md：选文件 → 移动到笔记目录。
+   * 先返回待确认清单（含冲突情况），界面确认后才真正移动。
+   */
+  ipcMain.handle('notes:pickImport', async () => {
+    assertUnlocked();
+    const result = await dialog.showOpenDialog(win, {
+      title: '选择要导入的 markdown 文件（会移动到笔记目录）',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }]
+    });
+    if (result.canceled || !result.filePaths.length) return { ok: false };
+
+    const root = settings.notesDir;
+    const items = result.filePaths.map((f) => {
+      const baseName = path.basename(f);
+      const target = path.join(root, baseName);
+      return {
+        from: f,
+        name: baseName,
+        target,
+        conflict: fs.existsSync(target),
+        samePlace: path.resolve(f) === path.resolve(target)
+      };
+    });
+    return { ok: true, root, items };
+  });
+
+  ipcMain.handle('notes:import', async (e, { files, onConflict } = {}) => {
+    assertUnlocked();
+    const res = notesIndex.importNotes(files, settings.notesDir, onConflict);
+    return Object.assign({ ok: true, dir: settings.notesDir }, res);
   });
 
   // ---- 接口只读镜像：Apifox 导出的 openapi.json → 幂等 upsert ----

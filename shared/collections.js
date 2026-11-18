@@ -201,22 +201,9 @@ const COLLECTIONS = [
       { key: 'reportDir', label: '报告目录', type: 'text', onlyFor: { kind: 'perf' }, formHidden: true },
       { key: 'conclusion', label: '结论', type: 'textarea', placeholder: '达标没达标、瓶颈在哪、要不要跟进' }
     ]
-  },
-  {
-    key: 'notes',
-    name: '测试笔记',
-    group: '记录',
-    icon: 'FileTextOutlined',
-    desc: 'Markdown 笔记，支持全文搜索',
-    titleField: 'name',
-    titlePlaceholder: '如：退款并发问题的复现步骤',
-    listFields: [],
-    actions: [],
-    fields: [
-      { key: 'name', label: '标题', type: 'text', required: true, placeholder: '如：退款并发问题的复现步骤' },
-      { key: 'content', label: '正文', type: 'markdown', rows: 16, placeholder: '# 标题\n\n支持 Markdown。' }
-    ]
   }
+  // 测试笔记已改成 md 只读索引（见 electron/notes.js + src/pages/NotesPage.tsx），
+  // 不再作为数据库集合存在。旧的 notes 记录如果出现在备份 JSON 里，导入时会被跳过。
 ];
 
 const TOOLS = [

@@ -294,22 +294,6 @@ const SEED: Record<string, any[]> = {
       created_at: now() - 3500000,
       updated_at: now() - 3500000
     }
-  ],
-  notes: [
-    {
-      id: 'n1',
-      collection: 'notes',
-      title: '退款并发问题的复现步骤',
-      data: {
-        name: '退款并发问题的复现步骤',
-        content:
-          '# 退款并发复现\n\n## 前置\n- 订单状态 `PAID`\n- 退款金额 = 订单金额\n\n## 步骤\n1. 用同一个 `X-Request-Id` 并发发起 2 次退款\n2. 观察 `t_refund` 是否出现两条记录\n3. 查支付网关流水，确认是否重复扣款\n\n## 结论\n- 幂等键只在网关生效，业务库没加唯一索引 → 建议加 `(order_no, refund_no)` 唯一索引\n\n> 2026-10 回归：已修复，需验证高并发场景。'
-      },
-      tags: ['退款', '并发'],
-      favorite: true,
-      created_at: now() - 86400000 * 2,
-      updated_at: now() - 900000
-    }
   ]
 };
 
@@ -396,7 +380,8 @@ export function installMockIfNeeded() {
     jmxDir: 'D:\\AI_Workspace\\jmx',
     jmeterPath: 'D:\\apache-jmeter-5.4.3\\bin\\jmeter.bat',
     reportDir: 'D:\\AI_Workspace\\jmx\\压测结果',
-    kbDir: 'D:\\AI_Workspace\\知识库'
+    kbDir: 'D:\\AI_Workspace\\知识库',
+    notesDir: 'D:\\AI_Workspace\\notes'
   };
   let locked = false;
 
@@ -437,7 +422,8 @@ export function installMockIfNeeded() {
         jmxDir: settings.jmxDir,
         jmeterPath: settings.jmeterPath,
         reportDir: settings.reportDir,
-        kbDir: settings.kbDir
+        kbDir: settings.kbDir,
+        notesDir: settings.notesDir
       }
     }),
     lock: async () => {
@@ -1120,6 +1106,51 @@ export function installMockIfNeeded() {
     kbOpenFile: async () => ({ ok: true }),
     kbReveal: async () => ({ ok: true }),
     kbPickDir: async () => ({ ok: false, message: '预览模式请直接编辑输入框' }),
+
+    notesScan: async () => ({
+      root: 'D:\\AI_Workspace\\notes（预览模式模拟）',
+      totalNotes: 2,
+      errors: [],
+      notes: [
+        {
+          relPath: '退款并发问题的复现步骤.md',
+          name: '退款并发问题的复现步骤.md',
+          dir: '',
+          fullPath: 'D:\\AI_Workspace\\notes\\退款并发问题的复现步骤.md',
+          title: '退款并发问题的复现步骤',
+          meta: { updatedAt: '2026-10-15', tags: [] },
+          chars: 320,
+          lines: 18,
+          mtime: Date.now() - 86400000 * 2,
+          size: 1200,
+          body: '## 前置\n- 订单状态 PAID\n\n## 步骤\n1. 并发发起 2 次退款\n\n## 结论\n- 建议加唯一索引',
+          sections: [
+            { title: '前置', line: 3, text: '- 订单状态 `PAID`\n- 退款金额 = 订单金额', children: [] },
+            { title: '步骤', line: 7, text: '1. 用同一个 `X-Request-Id` 并发发起 2 次退款\n2. 观察 `t_refund` 是否出现两条记录', children: [] },
+            { title: '结论', line: 12, text: '- 幂等键只在网关生效，业务库没加唯一索引', children: [] }
+          ]
+        },
+        {
+          relPath: '接口联调记录.md',
+          name: '接口联调记录.md',
+          dir: '',
+          fullPath: 'D:\\AI_Workspace\\notes\\接口联调记录.md',
+          title: '接口联调记录',
+          meta: { updatedAt: '2026-11-10', tags: [] },
+          chars: 180,
+          lines: 10,
+          mtime: Date.now() - 86400000 * 8,
+          size: 800,
+          body: '## 联调环境\n- 测试环境 10.0.0.1\n\n## 问题\n- 返回 500',
+          sections: [{ title: '联调环境', line: 3, text: '- 测试环境 10.0.0.1', children: [] }]
+        }
+      ]
+    }),
+    notesOpenFile: async () => ({ ok: true }),
+    notesReveal: async () => ({ ok: true }),
+    notesPickDir: async () => ({ ok: false, message: '预览模式请直接编辑输入框' }),
+    notesPickImport: async () => ({ ok: false, message: '预览模式不支持导入' }),
+    notesImport: async () => ({ ok: false, message: '预览模式不支持导入' }),
 
     exportData: async (includeSecrets?: boolean, collection?: string) => {
       const lists: any[] = collection ? db[collection] || [] : Object.keys(db).reduce((acc: any[], k) => acc.concat(db[k]), []);

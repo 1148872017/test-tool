@@ -12,6 +12,7 @@ import SettingsPage from './pages/SettingsPage';
 import CasePage from './pages/CasePage';
 import JmxPage from './pages/JmxPage';
 import KnowledgePage from './pages/KnowledgePage';
+import NotesPage from './pages/NotesPage';
 import { COLLECTIONS } from '../shared/collections';
 
 export default function App() {
@@ -176,6 +177,7 @@ export default function App() {
         ) : null}
         {route.type === 'jmx' ? <JmxPage /> : null}
         {route.type === 'kb' ? <KnowledgePage /> : null}
+        {route.type === 'notes' ? <NotesPage /> : null}
         {route.type === 'tool' && route.key === 'json' ? <JsonTool /> : null}
         {route.type === 'tool' && route.key === 'data' ? <DataTool /> : null}
         {route.type === 'tool' && route.key === 'toolbox' ? <Toolbox /> : null}

@@ -14,7 +14,8 @@ import {
   DashboardOutlined,
   CheckCircleOutlined,
   WarningOutlined,
-  BookOutlined
+  BookOutlined,
+  FileTextOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
@@ -39,6 +40,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
   const [jmeterVersion, setJmeterVersion] = useState('');
   const [reportDir, setReportDir] = useState('');
   const [kbDir, setKbDir] = useState('');
+  const [notesDir, setNotesDir] = useState('');
   const [clearTarget, setClearTarget] = useState<string | undefined>(undefined);
   const [clearOpen, setClearOpen] = useState(false);
   const [clearCountdown, setClearCountdown] = useState(0);
@@ -55,7 +57,21 @@ export default function SettingsPage({ boot, onChanged }: Props) {
     setJmeterPath(settings.jmeterPath || '');
     setReportDir(settings.reportDir || '');
     setKbDir(settings.kbDir || '');
-  }, [settings.casesDir, settings.jmxDir, settings.jmeterPath, settings.reportDir, settings.kbDir]);
+    setNotesDir(settings.notesDir || '');
+  }, [settings.casesDir, settings.jmxDir, settings.jmeterPath, settings.reportDir, settings.kbDir, settings.notesDir]);
+
+  const doPickNotesDir = async () => {
+    try {
+      const res = await api.notesPickDir();
+      if (res && res.ok) {
+        setNotesDir(res.dir || '');
+        toast('笔记目录已更新');
+        onChanged();
+      }
+    } catch (e: any) {
+      toast('选择失败：' + (e && e.message ? e.message : e), 'error');
+    }
+  };
 
   const doPickKbDir = async () => {
     try {
@@ -412,6 +428,32 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         </div>
         <div className="muted" style={{ fontSize: 12, paddingLeft: 134 }}>
           只读索引 markdown（业务规则沉淀等），自动跳过 _archive / _review 归档目录
+        </div>
+      </div>
+
+      <div className="tool-card" style={{ marginBottom: 14 }}>
+        <div className="tool-card-title">
+          <FileTextOutlined /> 测试笔记
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '6px 0' }}>
+          <div style={{ width: 120 }} className="muted">
+            笔记目录
+          </div>
+          <Input
+            style={{ flex: 1, maxWidth: 560 }}
+            value={notesDir}
+            placeholder="例如 D:\你的目录\notes"
+            onChange={(e) => setNotesDir(e.target.value)}
+            onBlur={() => {
+              if (notesDir !== (settings.notesDir || '')) saveSettings({ notesDir });
+            }}
+          />
+          <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickNotesDir}>
+            选择…
+          </Button>
+        </div>
+        <div className="muted" style={{ fontSize: 12, paddingLeft: 134 }}>
+          只读索引 markdown 笔记；用 Typora 等专业编辑器改，平台只读。「导入 md」会把外部文件移动到这里
         </div>
       </div>
 

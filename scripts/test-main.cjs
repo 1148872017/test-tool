@@ -208,7 +208,7 @@ const call = (channel, payload) => handlers[channel]({}, payload);
     version: 1,
     records: [
       { collection: 'sites', data: { name: '导入站', env: 'test' }, tags: [] },
-      { collection: 'notes', data: { name: '导入笔记', content: 'x' }, tags: [] }
+      { collection: 'sqls', data: { name: '导入片段', sql: 'select 1' }, tags: [] }
     ]
   };
   const impOnly = storeMod.importAll(mixed, 'sites');
@@ -312,7 +312,7 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   }
   check('未知选项集报错而不是静默吞掉', optThrew);
 
-  await call('records:save', { collection: 'notes', data: { title: '带新标签', content: '' }, tags: ['全新标签', '超管'] });
+  await call('records:save', { collection: 'sqls', data: { name: '带新标签', sql: 'select 1' }, tags: ['全新标签', '超管'] });
   const opt1 = await call('options:get');
   check('新标签随保存自动加入配置', opt1.tags.indexOf('全新标签') >= 0, opt1.tags);
   check('已存在的标签不重复加', opt1.tags.filter((t) => t === '超管').length === 1, opt1.tags);
@@ -332,7 +332,7 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   check('整库导出带关联', Array.isArray(payload.links) && payload.links.length >= 1, payload.links && payload.links.length);
   check('整库导出带选项配置', !!payload.options && Array.isArray(payload.options.env), payload.options && Object.keys(payload.options));
   check('按集合导出不带关联和选项', (() => {
-    const p = storeMod2.exportAll(true, 'notes');
+    const p = storeMod2.exportAll(true, 'sqls');
     return !p.links && !p.options;
   })());
 
@@ -364,11 +364,11 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   }
   check('不是数据库的文件会被拒绝', inspectThrew);
 
-  await call('records:save', { collection: 'notes', data: { title: '恢复前标记', content: '' } });
+  await call('records:save', { collection: 'sqls', data: { name: '恢复前标记', sql: 'select 1' } });
   await new Promise((r) => setTimeout(r, 500));
   const bkBeforeRestore = await call('backup:now');
   const notesBeforeRestore = (await call('records:counts')).notes;
-  await call('records:save', { collection: 'notes', data: { title: '备份之后才会出现', content: '' } });
+  await call('records:save', { collection: 'sqls', data: { name: '备份之后才会出现', sql: 'select 1' } });
   const restored = await call('backup:restore', { file: path.basename(bkBeforeRestore.file) });
   check('恢复备份成功并报出记录数', restored.ok && restored.recordCount > 0, restored);
   check('恢复带密码的备份后会重新上锁', restored.locked === true && restored.settings.hasPin === true, {
@@ -447,7 +447,7 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   check('按集合选了 .db 会明确拒绝', /不能只导入某个集合/.test(importBlock));
 
   // ---- 清除数据（破坏性操作，重点验证「清了不会自己回来」）----
-  await call('records:save', { collection: 'notes', data: { title: '清除前留一条', content: 'x' } });
+  await call('records:save', { collection: 'sqls', data: { name: '清除前留一条', sql: 'select 1' } });
   await new Promise((r) => setTimeout(r, 500));
   const bk = await call('backup:now');
   check('清除前能生成备份', !!bk.file, bk);
