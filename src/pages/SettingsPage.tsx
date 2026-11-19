@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Select, Input, Modal, Tag, Popconfirm, Space, Alert, Switch } from 'antd';
+import { Button, Select, Input, Modal, Tag, Popconfirm, Space, Alert, Switch, Segmented } from 'antd';
 import {
   LockOutlined,
   FolderOpenOutlined,
@@ -553,6 +553,26 @@ export default function SettingsPage({ boot, onChanged }: Props) {
           />
           <span className="muted" style={{ fontSize: 12 }}>
             浏览器不允许程序直接填表，所以打开的同时把密码放剪贴板，Ctrl+V 即可
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '6px 0', borderTop: '1px solid #f0f2f8' }}>
+          <div style={{ width: 120 }} className="muted">
+            点关闭按钮时
+          </div>
+          <Segmented
+            size="small"
+            value={settings.closeAction === 'quit' ? 'quit' : 'tray'}
+            onChange={(v) => saveSettings({ closeAction: String(v) })}
+            options={[
+              { label: '缩到托盘', value: 'tray' },
+              { label: '退出程序', value: 'quit' }
+            ]}
+          />
+          <span className="muted" style={{ fontSize: 12 }}>
+            {settings.closeAction === 'quit'
+              ? '点 X 直接退出；下次启动重新加载'
+              : '点 X 隐藏到托盘，按 Ctrl+Alt+T 或双击托盘图标唤回'}
           </span>
         </div>
 

@@ -186,6 +186,14 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   const st = await call('settings:set', { autoLockMinutes: 30, clipboardClearSeconds: 15 });
   check('设置保存', st.autoLockMinutes === 30 && st.clipboardClearSeconds === 15, st);
 
+  // 点 X 的行为：默认 tray，可切 quit，非法值回落到 tray
+  check('closeAction 默认 tray', st.closeAction === 'tray', st.closeAction);
+  const stQuit = await call('settings:set', { closeAction: 'quit' });
+  check('closeAction 可切 quit', stQuit.closeAction === 'quit', stQuit.closeAction);
+  const stBad = await call('settings:set', { closeAction: 'nonsense' });
+  check('closeAction 非法值回落 tray', stBad.closeAction === 'tray', stBad.closeAction);
+  await call('settings:set', { closeAction: 'tray' });
+
   const info = await call('app:info');
   check('备份目录存在且有备份', info.backups && info.backups.length >= 1, info.backups);
 

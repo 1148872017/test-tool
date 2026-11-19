@@ -374,6 +374,7 @@ export function installMockIfNeeded() {
     autoLockMinutes: 10,
     clipboardClearSeconds: 30,
     openCopyPassword: true,
+  closeAction: 'tray',
     hasPin: false,
     pin: '',
     casesDir: 'D:\\AI_Workspace\\test_cases',
@@ -416,7 +417,7 @@ export function installMockIfNeeded() {
       settings: {
         autoLockMinutes: settings.autoLockMinutes,
         clipboardClearSeconds: settings.clipboardClearSeconds,
-        openCopyPassword: settings.openCopyPassword,
+        openCopyPassword: settings.openCopyPassword, closeAction: settings.closeAction,
         hasPin: settings.hasPin,
         casesDir: settings.casesDir,
         jmxDir: settings.jmxDir,
@@ -450,10 +451,10 @@ export function installMockIfNeeded() {
       settings.pin = '';
       return { ok: true };
     },
-    settings: async () => ({ autoLockMinutes: settings.autoLockMinutes, clipboardClearSeconds: settings.clipboardClearSeconds, openCopyPassword: settings.openCopyPassword, hasPin: settings.hasPin }),
+    settings: async () => ({ autoLockMinutes: settings.autoLockMinutes, clipboardClearSeconds: settings.clipboardClearSeconds, openCopyPassword: settings.openCopyPassword, closeAction: settings.closeAction, hasPin: settings.hasPin }),
     saveSettings: async (patch: any) => {
       settings = { ...settings, ...patch };
-      return { autoLockMinutes: settings.autoLockMinutes, clipboardClearSeconds: settings.clipboardClearSeconds, openCopyPassword: settings.openCopyPassword, hasPin: settings.hasPin };
+      return { autoLockMinutes: settings.autoLockMinutes, clipboardClearSeconds: settings.clipboardClearSeconds, openCopyPassword: settings.openCopyPassword, closeAction: settings.closeAction, hasPin: settings.hasPin };
     },
     records: async (collection: string) => clone(findCollection(collection)),
     record: async (id: string) => {

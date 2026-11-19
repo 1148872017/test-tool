@@ -46,6 +46,8 @@ const DEFAULT_SETTINGS = {
   autoLockMinutes: 10,
   clipboardClearSeconds: 30,
   openCopyPassword: true,
+  // 点 X 时的行为：'tray' 缩到托盘（默认）/ 'quit' 直接退出
+  closeAction: 'tray',
   // 空字符串 = 首次启动时按 defaultWorkspaceDir() 算，见 loadSettings()
   casesDir: '',
   jmxDir: '',
@@ -141,6 +143,7 @@ function publicSettings() {
     autoLockMinutes: settings.autoLockMinutes,
     clipboardClearSeconds: settings.clipboardClearSeconds,
     openCopyPassword: settings.openCopyPassword !== false,
+    closeAction: settings.closeAction === 'quit' ? 'quit' : 'tray',
     casesDir: settings.casesDir || '',
     jmxDir: settings.jmxDir || '',
     reportDir: settings.reportDir || '',
@@ -277,6 +280,21 @@ function createWindow() {
     win = null;
   });
 
+  /**
+   * 点 X 时的行为，由设置 closeAction 决定：
+   *   'tray'  → 隐藏到托盘（程序继续跑，热键/托盘能唤回）
+   *   'quit'  → 直接退出程序
+   * 默认 'tray'：本地工具常驻托盘更顺手（热键 Ctrl+Alt+T 随时唤）。
+   */
+  win.on('close', (e) => {
+    const action = settings.closeAction === 'quit' ? 'quit' : 'tray';
+    if (action === 'quit') return; // 走默认关闭流程
+    if (app.isQuitting) return; // 托盘菜单「退出」时放行
+    e.preventDefault();
+    win.hide();
+    logStartup('window hidden to tray');
+  });
+
   if (DEBUG) {
     win.webContents.on('before-input-event', (event, input) => {
       if (input.key === 'F12') win.webContents.toggleDevTools();
@@ -376,7 +394,7 @@ function registerIpc() {
   ipcMain.handle('settings:get', async () => publicSettings());
 
   ipcMain.handle('settings:set', async (e, patch) => {
-    const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'kbDir', 'notesDir'];
+    const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'closeAction', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'kbDir', 'notesDir'];
     for (const key of allowed) {
       if (patch && patch[key] !== undefined) settings[key] = patch[key];
     }
