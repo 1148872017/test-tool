@@ -77,10 +77,23 @@
     "「${PRODUCT_NAME}」正在运行。$\r$\n$\r$\n安装前需要先关闭它，否则文件会被占用。$\r$\n点「确定」自动关闭并继续安装，点「取消」退出。" \
     IDOK +2
   Quit
-  ; 用户点确定 → 结束进程
-  nsExec::ExecToLog 'taskkill /f /im ${APP_EXECUTABLE_FILENAME}'
+  ; 用户点确定 → 结束进程，并**循环确认真的退出了**
+  ; （只 Sleep 一次不够，Electron 有多个子进程，退出需要时间）
+  nsExec::ExecToLog 'taskkill /f /im ${APP_EXECUTABLE_FILENAME} /t'
   Pop $R2
-  Sleep 1500
+  StrCpy $R6 "0"
+  checkLoop:
+    IntOp $R6 $R6 + 1
+    Sleep 500
+    nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /NH'
+    Pop $R2
+    Pop $R3
+    StrCmp $R3 "信息: 没有运行的任务匹配指定标准。" checkDone
+    StrCmp $R3 "INFO: No tasks are running which match the specified criteria." checkDone
+    StrCmp $R3 "" checkDone
+    ; 还在跑，最多等 10 次（5 秒）
+    IntCmp $R6 10 checkDone checkLoop checkDone
+  checkDone:
 
   notRunning:
 
@@ -113,10 +126,9 @@
   DetailPrint "正在创建快捷方式..."
 
   ; 1. 复制图标到安装目录（文件名带版本号，缓存自然失效）
-  ;    注意：icon.ico 由 electron-builder 打进安装包（build.files 里有）
-  ;    这里用 File 指令从安装包解压一份到安装目录
-  !ifdef APP_VERSION
-    StrCpy $R5 "app-${APP_VERSION}.ico"
+  ;    注意：electron-builder 定义的变量是 VERSION（不是 APP_VERSION）
+  !ifdef VERSION
+    StrCpy $R5 "app-${VERSION}.ico"
   !else
     StrCpy $R5 "app.ico"
   !endif
