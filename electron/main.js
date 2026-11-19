@@ -79,7 +79,31 @@ const DATA_DIR = (() => {
   }
 })();
 
+/**
+ * 启动诊断日志：无条件写（不依赖 TT_DEBUG）。
+ * 出问题时看 %APPDATA%\测试工作台\startup.log 就知道卡在哪一步。
+ */
+function logStartup(msg) {
+  try {
+    fs.appendFileSync(path.join(DATA_DIR, 'startup.log'), `[${new Date().toISOString()}] ${msg}\n`);
+  } catch (e) {
+    /* 写不了就算了，不能因为日志影响启动 */
+  }
+}
+
 if (!app.requestSingleInstanceLock()) {
+  // 锁失败时给明确提示：首次用户不知道有托盘，会以为启动失败
+  try {
+    dialog.showMessageBoxSync({
+      type: 'info',
+      title: '测试工作台已在运行',
+      message: '程序已经在运行了',
+      detail: '如果没看到窗口，请检查系统托盘（右下角），或按 Ctrl+Alt+T 唤起。',
+      buttons: ['知道了']
+    });
+  } catch (e) {
+    /* 弹框失败也要退出 */
+  }
   app.quit();
 } else {
   app.on('second-instance', () => {
@@ -212,7 +236,43 @@ function createWindow() {
   Menu.setApplicationMenu(null);
   win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
 
-  win.once('ready-to-show', () => win.show());
+  /**
+   * 窗口显示的三重保险。
+   *
+   * 原来只有 `ready-to-show` 一个触发点，如果它没触发（渲染进程加载失败、
+   * GPU 崩溃、事件在监听器绑定前就发了），窗口永远不出现——但进程活着、
+   * 托盘有图标，用户会以为启动失败。
+   */
+  let shown = false;
+  const showOnce = (reason) => {
+    if (shown || !win) return;
+    shown = true;
+    logStartup('window shown (' + reason + ')');
+    win.show();
+  };
+
+  win.once('ready-to-show', () => showOnce('ready-to-show'));
+
+  // 保险 1：加载失败也要显示，让用户看到错误而不是黑屏
+  win.webContents.on('did-fail-load', (e, code, desc, url) => {
+    logStartup('did-fail-load code=' + code + ' desc=' + desc + ' url=' + url);
+    showOnce('did-fail-load');
+  });
+
+  // 保险 2：渲染进程崩溃也要显示
+  win.webContents.on('render-process-gone', (e, details) => {
+    logStartup('render-process-gone reason=' + (details && details.reason));
+    showOnce('render-process-gone');
+  });
+
+  // 保险 3：3 秒还没 ready 就强制显示（宁可白屏也别让用户以为没启动）
+  setTimeout(() => {
+    if (!shown) {
+      logStartup('3s timeout, forcing show');
+      showOnce('timeout');
+    }
+  }, 3000);
+
   win.on('closed', () => {
     win = null;
   });
@@ -962,12 +1022,18 @@ function registerIpc() {
 }
 
 app.whenReady().then(async () => {
+  logStartup('=== app ready, version=' + app.getVersion() + ' ===');
   try {
     await store.init(DATA_DIR);
+    logStartup('store init ok, db=' + store.dbPath);
     loadSettings();
+    logStartup('settings loaded, casesDir=' + settings.casesDir);
     registerIpc();
+    logStartup('ipc registered');
     createWindow();
+    logStartup('window created');
     createTray();
+    logStartup('tray created');
     try {
       globalShortcut.register('Control+Alt+T', () => {
         if (!win) createWindow();
@@ -980,6 +1046,7 @@ app.whenReady().then(async () => {
       /* 热键被占用时忽略 */
     }
     initialized = true;
+    logStartup('startup complete');
     if (DEBUG) {
       try {
         fs.appendFileSync(path.join(DATA_DIR, 'debug.log'), `[${new Date().toISOString()}] ready, db=${store.dbPath}\n`);
@@ -988,6 +1055,7 @@ app.whenReady().then(async () => {
       }
     }
   } catch (err) {
+    logStartup('FATAL ' + ((err && err.stack) || err));
     try {
       fs.appendFileSync(path.join(DATA_DIR, 'debug.log'), `[${new Date().toISOString()}] FATAL ${(err && err.stack) || err}\n`);
     } catch (e) {

@@ -9,7 +9,8 @@ import {
   CopyOutlined,
   UnorderedListOutlined,
   ImportOutlined,
-  WarningOutlined
+  WarningOutlined,
+  ReadOutlined
 } from '@ant-design/icons';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -403,17 +404,36 @@ export default function NotesPage() {
               </div>
             </div>
 
+            {detail.sections.length ? (
+              <div className="kb-readall">
+                <Button
+                  size="small"
+                  type={activeSection === '' ? 'primary' : 'default'}
+                  icon={<ReadOutlined />}
+                  onClick={() => setActiveSection('')}
+                >
+                  阅读全文
+                </Button>
+                <span className="muted" style={{ fontSize: 12 }}>
+                  {activeSection === ''
+                    ? `正在显示全部 ${detail.sections.length} 章`
+                    : '当前只显示一章，点这里展开全文'}
+                </span>
+              </div>
+            ) : null}
+
             <div className="kb-content">
               {detail.sections.length ? (
                 detail.sections.map((s: any, i: number) => {
-                  const show = activeSection === `s${i}` || activeSection.startsWith(`s${i}-`);
+                  const show = activeSection === '' || activeSection === `s${i}` || activeSection.startsWith(`s${i}-`);
                   if (!show) return null;
                   return (
                     <section className="kb-section" key={i}>
                       <h3>{s.title}</h3>
                       {s.text ? renderSection(s) : null}
                       {s.children.map((c: any, j: number) => {
-                        const showSub = activeSection === `s${i}` || activeSection === `s${i}-${j}`;
+                        const showSub =
+                          activeSection === '' || activeSection === `s${i}` || activeSection === `s${i}-${j}`;
                         if (!showSub) return null;
                         return (
                           <div className="kb-subsection" key={j}>
