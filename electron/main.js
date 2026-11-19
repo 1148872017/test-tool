@@ -21,7 +21,7 @@ if (DEBUG) app.commandLine.appendSwitch('remote-debugging-port', '9222');
 
 const APP_NAME = '测试工作台';
 app.setName(APP_NAME);
-app.setAppUserModelId('com.edy.testtool');
+app.setAppUserModelId('com.testtool.workbench');
 
 let win = null;
 let tray = null;

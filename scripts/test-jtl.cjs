@@ -1,5 +1,6 @@
-/* jtl / statistics.json 解析测试：跑真实 D:\AI_Workspace\jmx\压测结果 */
+/* jtl / statistics.json 解析测试：跑真实压测报告目录（REPORT_ROOT 环境变量） */
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const {
   parseJtl,
@@ -10,7 +11,7 @@ const {
   scanReportRoot
 } = require('../electron/jtl.js');
 
-const ROOT = process.env.REPORT_ROOT || 'D:\\AI_Workspace\\jmx\\压测结果';
+const ROOT = process.env.REPORT_ROOT || path.join(os.homedir(), 'Documents', '测试工作台', 'jmx', '压测结果');
 const results = [];
 const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });
 
@@ -96,7 +97,7 @@ check('扫描根目录能识别出报告', scan.reports.length >= 1, scan.report
 check('扫描结果带目录名', scan.reports[0] && !!scan.reports[0].name, scan.reports[0] && scan.reports[0].name);
 
 /* ---------- 6. 大文件性能 ---------- */
-const BIG = 'D:\\AI_Workspace\\_scratch\\2026-11-17\\big.jtl';
+const BIG = process.env.BIG_JTL || path.join(os.tmpdir(), 'test-tool-big.jtl');
 if (fs.existsSync(BIG)) {
   const t0 = Date.now();
   const big = parseJtl(fs.readFileSync(BIG, 'utf8'));

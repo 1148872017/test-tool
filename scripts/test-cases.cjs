@@ -1,7 +1,9 @@
+const path = require('path');
+const os = require('os');
 /* 用例解析冒烟测试：直接跑真实用例目录，检查两种格式解析结果 */
 const { scanCases } = require('../electron/cases.js');
 
-const ROOT = process.env.CASES_ROOT || 'D:\\AI_Workspace\\test_cases';
+const ROOT = process.env.CASES_ROOT || path.join(os.homedir(), 'Documents', '测试工作台', 'test_cases');
 const res = scanCases(ROOT, {});
 const results = [];
 const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });

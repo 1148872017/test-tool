@@ -225,7 +225,8 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   check('不传集合时全部导入', impAll.imported === 2 && impAll.skipped === 0, impAll);
 
   // 用例索引：走 IPC 读真实目录
-  const scanned = await call('cases:scan', { root: 'D:\\AI_Workspace\\test_cases' });
+  const CASES_ROOT = process.env.CASES_ROOT || path.join(os.homedir(), 'Documents', '测试工作台', 'test_cases');
+  const scanned = await call('cases:scan', { root: CASES_ROOT });
   check('用例扫描读到真实用例', scanned && scanned.totalCases > 500, scanned && scanned.totalCases);
   check('用例扫描无解析错误', scanned && scanned.errors && scanned.errors.length === 0, scanned && scanned.errors);
   const sample = scanned && scanned.files && scanned.files[0] && scanned.files[0].cases[0];
@@ -390,9 +391,9 @@ const call = (channel, payload) => handlers[channel]({}, payload);
 
   // ---- jmx 索引（走 IPC 读真实目录）----
   // 默认目录现在指向「文档\测试工作台」，测试要显式传真实路径
-  const REAL_JMX = 'D:\\AI_Workspace\\jmx';
-  const REAL_REPORT = 'D:\\AI_Workspace\\jmx\\压测结果';
-  const REAL_KB = 'D:\\AI_Workspace\\知识库';
+  const REAL_JMX = process.env.JMX_ROOT || path.join(os.homedir(), 'Documents', '测试工作台', 'jmx');
+  const REAL_REPORT = process.env.REPORT_ROOT || path.join(os.homedir(), 'Documents', '测试工作台', 'jmx', '压测结果');
+  const REAL_KB = process.env.KB_ROOT || path.join(os.homedir(), 'Documents', '测试工作台', '知识库');
 
   const jmxRes = await call('jmx:scan', { root: REAL_JMX });
   check('jmx 扫描读到真实脚本', jmxRes && jmxRes.totalFiles >= 2, jmxRes && jmxRes.totalFiles);
@@ -418,7 +419,7 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   const initAfter = await call('app:init');
   check('自动探测的 jmeterPath 已写回设置', initAfter && initAfter.settings.jmeterPath && initAfter.settings.jmeterPath.includes('jmeter.bat'), initAfter && initAfter.settings.jmeterPath);
 
-  const guiOk = await call('jmx:openGui', { file: 'D:\\AI_Workspace\\jmx\\测试计划.jmx' });
+  const guiOk = await call('jmx:openGui', { file: path.join(REAL_JMX, '测试计划.jmx') });
   check('用 JMeter 打开指定脚本成功', guiOk && guiOk.ok === true, guiOk);
   check('打开脚本的命令带 -t 和脚本路径', guiOk && guiOk.command && guiOk.command.includes('-t') && guiOk.command.includes('测试计划.jmx'), guiOk && guiOk.command);
   const guiNoFile = await call('jmx:openGui', {});

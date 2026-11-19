@@ -1,7 +1,9 @@
-/* jmx 解析冒烟测试：跑真实 D:\AI_Workspace\jmx */
+const path = require('path');
+const os = require('os');
+/* jmx 解析冒烟测试：跑真实 jmx 目录（JMX_ROOT 环境变量） */
 const { scanJmx, parseJmx, checkHealth } = require('../electron/jmx.js');
 
-const ROOT = process.env.JMX_ROOT || 'D:\\AI_Workspace\\jmx';
+const ROOT = process.env.JMX_ROOT || path.join(os.homedir(), 'Documents', '测试工作台', 'jmx');
 const results = [];
 const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });
 

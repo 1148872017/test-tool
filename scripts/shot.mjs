@@ -1,6 +1,8 @@
+const path = require('path');
+const os = require('os');
 import { chromium } from 'playwright-core';
 
-const outPath = process.argv[2] || 'D:/AI_Workspace/_scratch/2026-10-28/app.png';
+const outPath = process.argv[2] || path.join(os.tmpdir(), 'test-tool-shot.png');
 
 const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
 const contexts = browser.contexts();
