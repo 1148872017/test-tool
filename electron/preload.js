@@ -65,6 +65,15 @@ contextBridge.exposeInMainWorld('api', {
   notesPickImport: () => invoke('notes:pickImport'),
   notesImport: (files, onConflict) => invoke('notes:import', { files, onConflict }),
 
+  updateCheck: () => invoke('update:check'),
+  updateDownload: (asset) => invoke('update:download', { asset }),
+  updateInstall: (file) => invoke('update:install', { file }),
+  onUpdateProgress: (cb) => {
+    const handler = (_e, data) => cb(data);
+    ipcRenderer.on('update:progress', handler);
+    return () => ipcRenderer.removeListener('update:progress', handler);
+  },
+
   syncOpenApi: (file) => invoke('apis:sync', { file }),
   lastSyncChanges: () => invoke('apis:lastSync'),
 

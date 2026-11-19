@@ -11,6 +11,7 @@ const jmxIndex = require('./jmx');
 const jtlReport = require('./jtl');
 const knowledge = require('./knowledge');
 const notesIndex = require('./notes');
+const updater = require('./updater');
 const openapi = require('./openapi');
 const security = require('./security');
 const { TOOLS, COLLECTION_MAP } = require('../shared/collections');
@@ -960,6 +961,34 @@ function registerIpc() {
     assertUnlocked();
     const res = notesIndex.importNotes(files, settings.notesDir, onConflict);
     return Object.assign({ ok: true, dir: settings.notesDir }, res);
+  });
+
+  // ---- 应用内更新（检查 / 下载 / 安装）----
+  ipcMain.handle('update:check', async () => updater.checkUpdate());
+
+  ipcMain.handle('update:download', async (e, { asset } = {}) => {
+    const res = await updater.download(asset, (pct, received, total) => {
+      // 进度推给渲染层（窗口可能已隐藏，send 失败不影响下载）
+      try {
+        if (win && !win.isDestroyed()) win.webContents.send('update:progress', { pct, received, total });
+      } catch (err) {
+        /* ignore */
+      }
+    });
+    return res;
+  });
+
+  ipcMain.handle('update:install', async (e, { file } = {}) => {
+    const res = await updater.install(file);
+    if (res.ok) {
+      // 安装器已启动，自己退出让出文件占用
+      logStartup('update install started, quitting');
+      setTimeout(() => {
+        app.isQuitting = true;
+        app.quit();
+      }, 600);
+    }
+    return res;
   });
 
   // ---- 接口只读镜像：Apifox 导出的 openapi.json → 幂等 upsert ----

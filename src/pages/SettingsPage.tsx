@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Select, Input, Modal, Tag, Popconfirm, Space, Alert, Switch, Segmented } from 'antd';
+import { Button, Select, Input, Modal, Tag, Popconfirm, Space, Alert, Switch, Segmented, Progress } from 'antd';
 import {
   LockOutlined,
   FolderOpenOutlined,
@@ -15,7 +15,8 @@ import {
   CheckCircleOutlined,
   WarningOutlined,
   BookOutlined,
-  FileTextOutlined
+  FileTextOutlined,
+  CloudDownloadOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
@@ -41,6 +42,13 @@ export default function SettingsPage({ boot, onChanged }: Props) {
   const [reportDir, setReportDir] = useState('');
   const [kbDir, setKbDir] = useState('');
   const [notesDir, setNotesDir] = useState('');
+
+  // 应用内更新
+  const [updating, setUpdating] = useState(false);
+  const [updateState, setUpdateState] = useState<'idle' | 'latest' | 'found' | 'downloading' | 'ready'>('idle');
+  const [updateInfo, setUpdateInfo] = useState<any>(null);
+  const [updatePct, setUpdatePct] = useState(0);
+  const [updateFile, setUpdateFile] = useState('');
   const [clearTarget, setClearTarget] = useState<string | undefined>(undefined);
   const [clearOpen, setClearOpen] = useState(false);
   const [clearCountdown, setClearCountdown] = useState(0);
@@ -60,8 +68,89 @@ export default function SettingsPage({ boot, onChanged }: Props) {
     setNotesDir(settings.notesDir || '');
   }, [settings.casesDir, settings.jmxDir, settings.jmeterPath, settings.reportDir, settings.kbDir, settings.notesDir]);
 
-  const doPickNotesDir = async () => {
+  /** 检查更新 */
+  const doCheckUpdate = async () => {
+    setUpdating(true);
+    setUpdateState('idle');
     try {
+      const res = await api.updateCheck();
+      if (!res || !res.ok) {
+        toast((res && res.message) || '检查更新失败', 'error');
+        return;
+      }
+      setUpdateInfo(res);
+      if (res.hasNew) {
+        setUpdateState('found');
+        toast(`发现新版本 v${res.latest}`);
+      } else {
+        setUpdateState('latest');
+        toast('已是最新版本');
+      }
+    } catch (e: any) {
+      toast('检查更新失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  /** 下载安装包 */
+  const doDownloadUpdate = async () => {
+    if (!updateInfo || !updateInfo.asset) {
+      toast('没有可下载的安装包', 'error');
+      return;
+    }
+    setUpdateState('downloading');
+    setUpdatePct(0);
+    const off = api.onUpdateProgress((d: any) => setUpdatePct(d.pct || 0));
+    try {
+      const res = await api.updateDownload(updateInfo.asset);
+      if (res && res.ok) {
+        setUpdateFile(res.file);
+        setUpdateState('ready');
+        toast('下载完成');
+      } else {
+        setUpdateState('found');
+        toast((res && res.message) || '下载失败', 'error');
+      }
+    } catch (e: any) {
+      setUpdateState('found');
+      toast('下载失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      if (typeof off === 'function') off();
+    }
+  };
+
+  /** 安装：确认后启动安装器，程序自己退出 */
+  const doInstallUpdate = () => {
+    Modal.confirm({
+      title: '安装新版本',
+      content: (
+        <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+          <div>安装程序会启动，当前程序将自动退出。</div>
+          <div style={{ marginTop: 8, color: '#8a90a2' }}>
+            安装时可能弹出 UAC 确认框，点「是」即可。
+            <br />
+            你的数据（密码库、用例、笔记）不受影响。
+          </div>
+        </div>
+      ),
+      okText: '退出并安装',
+      cancelText: '稍后',
+      onOk: async () => {
+        try {
+          const res = await api.updateInstall(updateFile);
+          if (!res || !res.ok) {
+            toast((res && res.message) || '启动安装器失败', 'error');
+          }
+          // 成功时程序会自己退出，这里不用做别的
+        } catch (e: any) {
+          toast('启动安装器失败：' + (e && e.message ? e.message : e), 'error');
+        }
+      }
+    });
+  };
+
+  const doPickNotesDir = async () => {    try {
       const res = await api.notesPickDir();
       if (res && res.ok) {
         setNotesDir(res.dir || '');
@@ -718,6 +807,55 @@ export default function SettingsPage({ boot, onChanged }: Props) {
             密码字段 <b>{info && info.encryptionAvailable ? 'Windows DPAPI 加密' : '弱编码（DPAPI 不可用）'}</b>
           </span>
           <span className="muted">热键 Ctrl+Alt+T 唤起窗口</span>
+        </div>
+
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #f0f2f8' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <Button size="small" icon={<CloudDownloadOutlined />} onClick={doCheckUpdate} loading={updating}>
+              检查更新
+            </Button>
+            {updateState === 'latest' ? (
+              <span className="muted" style={{ fontSize: 12 }}>
+                已是最新版本
+              </span>
+            ) : null}
+            {updateState === 'found' && updateInfo ? (
+              <span style={{ fontSize: 12, color: '#6c5ce7' }}>
+                发现新版本 <b>v{updateInfo.latest}</b>（当前 v{updateInfo.current}）
+              </span>
+            ) : null}
+            {updateState === 'downloading' ? (
+              <span className="muted" style={{ fontSize: 12 }}>
+                正在下载… {updatePct}%
+              </span>
+            ) : null}
+            {updateState === 'ready' ? (
+              <span style={{ fontSize: 12, color: '#2e9e5b' }}>
+                下载完成，可以安装了
+              </span>
+            ) : null}
+          </div>
+
+          {updateState === 'downloading' ? (
+            <Progress percent={updatePct} size="small" style={{ marginTop: 10, maxWidth: 420 }} />
+          ) : null}
+
+          {updateState === 'found' && updateInfo ? (
+            <div style={{ marginTop: 10 }}>
+              {updateInfo.notes ? (
+                <div className="update-notes">{updateInfo.notes.slice(0, 600)}</div>
+              ) : null}
+              <Button type="primary" size="small" style={{ marginTop: 8 }} onClick={doDownloadUpdate}>
+                下载 v{updateInfo.latest}
+              </Button>
+            </div>
+          ) : null}
+
+          {updateState === 'ready' ? (
+            <Button type="primary" size="small" style={{ marginTop: 10 }} onClick={doInstallUpdate}>
+              立即安装并重启
+            </Button>
+          ) : null}
         </div>
       </div>
 

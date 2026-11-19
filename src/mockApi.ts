@@ -1108,6 +1108,18 @@ export function installMockIfNeeded() {
     kbReveal: async () => ({ ok: true }),
     kbPickDir: async () => ({ ok: false, message: '预览模式请直接编辑输入框' }),
 
+    updateCheck: async () => ({
+      ok: true,
+      hasNew: true,
+      current: '0.25.0',
+      latest: '0.26.0',
+      asset: { name: 'test-tool-Setup-0.26.0-x64.exe', size: 125000000, url: 'https://example.com/x.exe' },
+      notes: '预览模式：这是模拟的更新说明。',
+      publishedAt: new Date().toISOString()
+    }),
+    updateDownload: async () => ({ ok: false, message: '预览模式不支持下载' }),
+    updateInstall: async () => ({ ok: false, message: '预览模式不支持安装' }),
+    onUpdateProgress: () => () => {},
     notesScan: async () => ({
       root: 'D:\\AI_Workspace\\notes（预览模式模拟）',
       totalNotes: 2,
