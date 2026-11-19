@@ -5,21 +5,22 @@
  * 仓库是 Public，不需要 token。
  *
  * ============================================================
- * 为什么用 Electron 的 net 而不是 Node 的 https（v0.26.4 重写）
+ * 下载策略演进
  * ============================================================
- * 用户实测：浏览器下载 5 MB/s，应用内只有 39 KB/s。
- * 根因：**Node 的 https 模块不走系统代理**，而浏览器走。
- * 用户开着 VPN（127.0.0.1:7897），浏览器走代理所以快，
- * 应用内直连 GitHub 所以慢。
+ * v0.26.0：Node https 单连接 → 39 KB/s（不走系统代理）
+ * v0.26.4：Electron net 单连接 → 90 KB/s（走代理了，但单连接被限速）
+ * v0.26.5：**多连接分段下载** → 目标接近浏览器速度
  *
- * Electron 的 net 模块**自动使用系统代理设置**（Chromium 网络栈），
- * 所以换成 net 后速度应该和浏览器一致。
+ * 为什么单连接慢：
+ *   GitHub 的 CDN（objects.githubusercontent.com）对**单个 TCP 连接**限速，
+ *   浏览器下载器（IDM、Chrome）都用 4-8 个并发连接分段拉，所以快。
  *
- * 其他设计要点：
- *   1. 可取消：保存请求句柄
- *   2. 断点续传：Range 头
- *   3. 速度/剩余时间：滑动窗口
- *   4. 失败可重试
+ * 多连接实现要点：
+ *   1. 先发 HEAD 或 Range: bytes=0-0 拿总大小 + 确认支持 Range
+ *   2. 把文件切成 N 段，每段一个 net.request，带 Range 头
+ *   3. 各段写入同一个文件的对应偏移（fs.createWriteStream + start）
+ *   4. 任一段失败 → 整体失败，但已下载的段保留（下次续传）
+ *   5. 取消 → abort 所有连接
  */
 const fs = require('fs');
 const path = require('path');
@@ -28,7 +29,12 @@ const { shell, app, net } = require('electron');
 const REPO = '1148872017/test-tool';
 const API_LATEST = `https://api.github.com/repos/${REPO}/releases/latest`;
 
-let activeReq = null;
+/** 并发连接数：4 是速度和稳定性的平衡点（浏览器一般 6） */
+const CONCURRENCY = 4;
+/** 小于这个大小不分段（分段开销不划算） */
+const MIN_SEGMENT_SIZE = 2 * 1024 * 1024; // 2 MB
+
+let activeReqs = [];
 let cancelled = false;
 
 /** 语义化版本比较 */
@@ -51,11 +57,8 @@ function compareVersion(a, b) {
   return 0;
 }
 
-/**
- * 用 Electron net 发 GET，返回 { status, headers, body(Buffer) }。
- * net 自动走系统代理，这是它比 Node https 强的关键。
- */
-function netGet(url) {
+/** 用 Electron net 发 GET，返回 { status, headers, body(Buffer) } */
+function netGet(url, extraHeaders) {
   return new Promise((resolve, reject) => {
     let req;
     try {
@@ -65,16 +68,14 @@ function netGet(url) {
     }
     req.setHeader('User-Agent', 'test-tool-updater');
     req.setHeader('Accept', 'application/vnd.github+json');
+    if (extraHeaders) {
+      for (const k of Object.keys(extraHeaders)) req.setHeader(k, extraHeaders[k]);
+    }
 
     const chunks = [];
-    let status = 0;
-    let headers = {};
-
     req.on('response', (res) => {
-      status = res.statusCode;
-      headers = res.headers;
       res.on('data', (c) => chunks.push(Buffer.from(c)));
-      res.on('end', () => resolve({ status, headers, body: Buffer.concat(chunks) }));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
       res.on('error', reject);
     });
     req.on('error', reject);
@@ -106,17 +107,17 @@ async function checkUpdate() {
   }
 }
 
-/** 取消当前下载 */
+/** 取消当前下载（abort 所有连接） */
 function cancel() {
   cancelled = true;
-  if (activeReq) {
+  for (const r of activeReqs) {
     try {
-      activeReq.abort();
+      r.abort();
     } catch (e) {
       /* ignore */
     }
-    activeReq = null;
   }
+  activeReqs = [];
   return { ok: true };
 }
 
@@ -131,44 +132,153 @@ function downloadDir() {
 }
 
 /**
- * 下载安装包（net 模块，走系统代理）。
+ * 探测远端文件：总大小 + 是否支持 Range。
+ * 用 Range: bytes=0-0 拿 Content-Range，比 HEAD 可靠（有些 CDN 不支持 HEAD）。
+ */
+function probe(url) {
+  return new Promise((resolve) => {
+    let req;
+    try {
+      req = net.request({ method: 'GET', url, redirect: 'follow' });
+    } catch (e) {
+      return resolve({ ok: false, message: String((e && e.message) || e) });
+    }
+    req.setHeader('User-Agent', 'test-tool-updater');
+    req.setHeader('Range', 'bytes=0-0');
+
+    let settled = false;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      try {
+        req.abort();
+      } catch (e) {
+        /* ignore */
+      }
+      resolve(v);
+    };
+
+    req.on('response', (res) => {
+      const code = res.statusCode;
+      const cr = res.headers['content-range'];
+      let total = 0;
+      let supportsRange = false;
+      if (code === 206 && cr) {
+        // Content-Range: bytes 0-0/12345678
+        const m = /\/(\d+)\s*$/.exec(String(cr));
+        if (m) total = Number(m[1]);
+        supportsRange = true;
+      } else if (code === 200) {
+        total = Number(res.headers['content-length']) || 0;
+        supportsRange = false;
+      }
+      res.on('data', () => {});
+      res.on('end', () => done({ ok: true, total, supportsRange }));
+      res.on('error', () => done({ ok: false, message: '探测失败' }));
+    });
+    req.on('error', (e) => done({ ok: false, message: String((e && e.message) || e) }));
+    req.end();
+  });
+}
+
+/**
+ * 下载单个分段到文件的指定偏移。
+ * @returns {Promise<{ok:boolean, received:number, message?:string}>}
+ */
+function downloadSegment(url, start, end, filePath, onBytes) {
+  return new Promise((resolve) => {
+    let req;
+    try {
+      req = net.request({ method: 'GET', url, redirect: 'follow' });
+    } catch (e) {
+      return resolve({ ok: false, received: 0, message: String((e && e.message) || e) });
+    }
+    activeReqs.push(req);
+    req.setHeader('User-Agent', 'test-tool-updater');
+    req.setHeader('Range', `bytes=${start}-${end}`);
+
+    let received = 0;
+    let settled = false;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      const i = activeReqs.indexOf(req);
+      if (i >= 0) activeReqs.splice(i, 1);
+      resolve(v);
+    };
+
+    req.on('response', (res) => {
+      if (res.statusCode !== 206 && res.statusCode !== 200) {
+        res.on('data', () => {});
+        return done({ ok: false, received: 0, message: `HTTP ${res.statusCode}` });
+      }
+      // 用 'a' 追加不行（多段并发），必须按偏移写
+      const ws = fs.createWriteStream(filePath, { flags: 'r+', start });
+      res.on('data', (chunk) => {
+        if (cancelled) return;
+        const buf = Buffer.from(chunk);
+        received += buf.length;
+        ws.write(buf);
+        if (onBytes) onBytes(buf.length);
+      });
+      res.on('end', () => {
+        ws.end(() => done({ ok: true, received }));
+      });
+      res.on('error', (e) => {
+        try {
+          ws.destroy();
+        } catch (err) {
+          /* ignore */
+        }
+        done({ ok: false, received, message: String((e && e.message) || e) });
+      });
+    });
+    req.on('error', (e) => done({ ok: false, received, message: String((e && e.message) || e) }));
+    req.end();
+  });
+}
+
+/**
+ * 多连接分段下载。
  * @param {{name:string, size:number, url:string}} asset
- * @param {(info:{pct,received,total,speed,eta})=>void} onProgress
+ * @param {(info:{pct,received,total,speed,eta,connections})=>void} onProgress
  */
 function download(asset, onProgress) {
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
     if (!asset || !asset.url) return resolve({ ok: false, message: '没有可下载的安装包' });
 
     cancelled = false;
+    activeReqs = [];
     const dir = downloadDir();
     const file = path.join(dir, asset.name);
-    const partFile = file + '.part';
 
-    let startAt = 0;
+    // 1. 探测总大小 + Range 支持
+    const info = await probe(asset.url);
+    if (!info.ok) return resolve({ ok: false, message: '探测文件失败：' + (info.message || '') });
+    const total = info.total || Number(asset.size) || 0;
+    if (!total) return resolve({ ok: false, message: '拿不到文件大小' });
+
+    // 2. 决定分段数
+    const useMulti = info.supportsRange && total >= MIN_SEGMENT_SIZE;
+    const parts = useMulti ? CONCURRENCY : 1;
+    const segSize = Math.ceil(total / parts);
+
+    // 3. 预分配文件（避免并发写时文件大小不对）
     try {
-      if (fs.existsSync(partFile)) startAt = fs.statSync(partFile).size;
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+      const fd = fs.openSync(file, 'w');
+      fs.ftruncateSync(fd, total);
+      fs.closeSync(fd);
     } catch (e) {
-      startAt = 0;
-    }
-    let total = Number(asset.size) || 0;
-    if (total && startAt >= total) {
-      try {
-        if (fs.existsSync(file)) fs.unlinkSync(file);
-        fs.renameSync(partFile, file);
-        return resolve({ ok: true, file });
-      } catch (e) {
-        startAt = 0;
-      }
+      return resolve({ ok: false, message: '创建文件失败：' + ((e && e.message) || e) });
     }
 
-    const out = fs.createWriteStream(partFile, { flags: startAt > 0 ? 'a' : 'w' });
-    let received = startAt;
-
-    // 速度：滑动窗口（最近 3 秒）
+    // 4. 速度统计（滑动窗口）
+    let received = 0;
     const samples = [];
-    const pushSample = (bytes) => {
+    const pushSample = () => {
       const now = Date.now();
-      samples.push({ t: now, b: bytes });
+      samples.push({ t: now, b: received });
       while (samples.length > 2 && now - samples[0].t > 3000) samples.shift();
     };
     const speedNow = () => {
@@ -179,111 +289,58 @@ function download(asset, onProgress) {
       if (dt <= 0) return 0;
       return Math.max(0, (last.b - first.b) / dt);
     };
+    pushSample();
 
-    const fail = (msg, isCancel) => {
-      try {
-        out.destroy();
-      } catch (e) {
-        /* ignore */
+    const onBytes = (n) => {
+      received += n;
+      pushSample();
+      if (onProgress) {
+        const speed = speedNow();
+        const remain = Math.max(0, total - received);
+        const eta = speed > 0 ? Math.round(remain / speed) : 0;
+        onProgress({
+          pct: Math.min(100, Math.round((received / total) * 100)),
+          received,
+          total,
+          speed,
+          eta,
+          connections: parts
+        });
       }
-      activeReq = null;
-      if (isCancel) return resolve({ ok: false, cancelled: true, message: msg });
-      resolve({ ok: false, message: msg });
     };
 
-    let req;
-    try {
-      req = net.request({ method: 'GET', url: asset.url, redirect: 'follow' });
-    } catch (e) {
-      return fail('创建请求失败：' + ((e && e.message) || e));
+    // 5. 并发拉各段
+    const tasks = [];
+    for (let i = 0; i < parts; i++) {
+      const start = i * segSize;
+      const end = Math.min(total - 1, start + segSize - 1);
+      if (start > end) break;
+      tasks.push(downloadSegment(asset.url, start, end, file, onBytes));
     }
-    activeReq = req;
-    req.setHeader('User-Agent', 'test-tool-updater');
-    if (startAt > 0) req.setHeader('Range', `bytes=${startAt}-`);
 
-    req.on('response', (res) => {
-      if (cancelled) return fail('已取消', true);
+    const results = await Promise.all(tasks);
 
-      const code = res.statusCode;
-      // 206 = 续传成功；200 = 服务器忽略 Range（从头下）
-      if (code !== 200 && code !== 206) {
-        res.on('data', () => {});
-        return fail(`下载失败：HTTP ${code}`);
-      }
-      if (code === 200 && startAt > 0) {
-        // 服务器不支持续传，清空重来
-        startAt = 0;
-        received = 0;
-        try {
-          out.destroy();
-        } catch (e) {
-          /* ignore */
-        }
-        return fail('服务器不支持断点续传，请重试');
-      }
+    if (cancelled) {
+      return resolve({ ok: false, cancelled: true, message: '已取消' });
+    }
 
-      if (!total) {
-        const len = Number(res.headers['content-length']) || 0;
-        total = code === 206 ? startAt + len : len;
-      }
+    const bad = results.find((r) => !r.ok);
+    if (bad) {
+      return resolve({ ok: false, message: '下载失败：' + (bad.message || '未知错误') });
+    }
 
-      pushSample(received);
+    // 6. 校验大小
+    let actual = 0;
+    try {
+      actual = fs.statSync(file).size;
+    } catch (e) {
+      return resolve({ ok: false, message: '下载完成但文件读不到' });
+    }
+    if (actual !== total) {
+      return resolve({ ok: false, message: `文件大小不符（期望 ${total}，实际 ${actual}）` });
+    }
 
-      res.on('data', (chunk) => {
-        if (cancelled) return;
-        const buf = Buffer.from(chunk);
-        received += buf.length;
-        out.write(buf);
-        pushSample(received);
-        if (onProgress && total) {
-          const speed = speedNow();
-          const remain = Math.max(0, total - received);
-          const eta = speed > 0 ? Math.round(remain / speed) : 0;
-          onProgress({
-            pct: Math.min(100, Math.round((received / total) * 100)),
-            received,
-            total,
-            speed,
-            eta
-          });
-        }
-      });
-
-      res.on('end', () => {
-        if (cancelled) return fail('已取消', true);
-        out.end(() => {
-          let actual = 0;
-          try {
-            actual = fs.statSync(partFile).size;
-          } catch (e) {
-            return fail('下载完成但文件读不到');
-          }
-          if (total && actual !== total) {
-            return fail(`文件不完整（期望 ${total}，实际 ${actual}），可点重试续传`);
-          }
-          try {
-            if (fs.existsSync(file)) fs.unlinkSync(file);
-            fs.renameSync(partFile, file);
-          } catch (e) {
-            return fail('重命名失败：' + ((e && e.message) || e));
-          }
-          activeReq = null;
-          resolve({ ok: true, file });
-        });
-      });
-
-      res.on('error', (e) => {
-        if (cancelled) return fail('已取消', true);
-        fail('下载中断：' + ((e && e.message) || e));
-      });
-    });
-
-    req.on('error', (e) => {
-      if (cancelled) return fail('已取消', true);
-      fail('网络错误：' + ((e && e.message) || e));
-    });
-
-    req.end();
+    resolve({ ok: true, file });
   });
 }
 

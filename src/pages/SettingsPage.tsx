@@ -77,6 +77,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
   const [updatePct, setUpdatePct] = useState(0);
   const [updateSpeed, setUpdateSpeed] = useState(0);
   const [updateEta, setUpdateEta] = useState(0);
+  const [updateConns, setUpdateConns] = useState(0);
   const [updateReceived, setUpdateReceived] = useState(0);
   const [updateTotal, setUpdateTotal] = useState(0);
   const [updateError, setUpdateError] = useState('');
@@ -139,6 +140,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
     setUpdatePct(0);
     setUpdateSpeed(0);
     setUpdateEta(0);
+    setUpdateConns(0);
     setUpdateReceived(0);
     setUpdateTotal(updateInfo.asset.size || 0);
     setUpdateError('');
@@ -146,6 +148,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
       setUpdatePct(d.pct || 0);
       setUpdateSpeed(d.speed || 0);
       setUpdateEta(d.eta || 0);
+      setUpdateConns(d.connections || 0);
       setUpdateReceived(d.received || 0);
       setUpdateTotal(d.total || 0);
     });
@@ -915,6 +918,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
               <Progress percent={updatePct} size="small" status="active" />
               <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
                 {fmtBytes(updateReceived)} / {fmtBytes(updateTotal)}
+                {updateConns > 1 ? ` · ${updateConns} 连接` : ''}
                 {updateSpeed > 0 ? ` · ${fmtSpeed(updateSpeed)}` : ''}
                 {updateEta > 0 ? ` · 剩余 ${fmtEta(updateEta)}` : ''}
               </div>
