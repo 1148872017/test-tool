@@ -1,7 +1,7 @@
 {
   "name": "test-tool",
   "productName": "测试工作台",
-  "version": "0.24.2",
+  "version": "0.24.3",
   "description": "本地测试工作台：密码库 / 测试账号 / SQL 片段 / 接口记录 / 测试笔记",
   "author": "",
   "license": "MIT",
@@ -80,17 +80,14 @@
       "icon": "build/icon.ico"
     },
     "nsis": {
-      "oneClick": false,
+      "oneClick": true,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "allowElevation": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "测试工作台",
       "installerIcon": "build/icon.ico",
       "include": "build/installer.nsh",
       "runAfterFinish": true,
-      "deleteAppDataOnUninstall": false,
       "artifactName": "test-tool-Setup-${version}-${arch}.${ext}",
       "warningsAsErrors": false
     },
