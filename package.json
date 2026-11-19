@@ -23,7 +23,6 @@
     "test:jtl": "node scripts/test-jtl.cjs",
     "test:templates": "node scripts/test-templates.cjs",
     "test:knowledge": "node scripts/test-knowledge.cjs",
-    "dist:portable": "npm run build:renderer && electron-builder --win portable --x64",
     "test:notes": "node scripts/test-notes.cjs",
     "dist:installer": "npm run build:renderer && electron-builder --win nsis --x64"
   },
@@ -76,12 +75,6 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
         }
       ],
       "icon": "build/icon.ico"
@@ -98,7 +91,9 @@
       "uninstallerIcon": "build/icon.ico",
       "include": "build/installer.nsh",
       "runAfterFinish": true,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "test-tool-Setup-${version}-${arch}.${ext}",
+      "warningsAsErrors": false
     }
   }
 }
