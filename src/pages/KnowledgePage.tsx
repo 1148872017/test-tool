@@ -9,7 +9,8 @@ import {
   CopyOutlined,
   BookOutlined,
   UnorderedListOutlined,
-  ReadOutlined
+  ReadOutlined,
+  CompressOutlined
 } from '@ant-design/icons';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -359,10 +360,10 @@ export default function KnowledgePage() {
                 <Button
                   size="small"
                   type={activeSection === '' ? 'primary' : 'default'}
-                  icon={activeSection === '' ? <ReadOutlined /> : <ReadOutlined />}
-                  onClick={() => setActiveSection('')}
+                  icon={activeSection === '' ? <CompressOutlined /> : <ReadOutlined />}
+                  onClick={() => setActiveSection(activeSection === '' ? 's0' : '')}
                 >
-                  阅读全文
+                  {activeSection === '' ? '折叠全文' : '阅读全文'}
                 </Button>
                 <span className="muted" style={{ fontSize: 12 }}>
                   {activeSection === ''

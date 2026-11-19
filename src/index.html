@@ -9,8 +9,87 @@
     <title>测试工作台</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./styles.css" />
+    <style>
+      /* 启动骨架屏：React 挂载前先显示，避免白屏。
+         去掉 portable splash 后，这是唯一的「正在加载」反馈。 */
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: #f4f5fa;
+        font-family: -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+        z-index: 9999;
+      }
+      #boot .boot-icon {
+        width: 64px;
+        height: 64px;
+        border-radius: 18px;
+        background: #6c5ce7;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 8px 24px rgba(108, 92, 231, 0.28);
+      }
+      #boot .boot-icon svg {
+        width: 34px;
+        height: 34px;
+      }
+      #boot .boot-title {
+        font-size: 17px;
+        font-weight: 600;
+        color: #2f3446;
+        letter-spacing: 0.5px;
+      }
+      #boot .boot-tip {
+        font-size: 12.5px;
+        color: #9aa1b4;
+      }
+      #boot .boot-bar {
+        width: 180px;
+        height: 4px;
+        border-radius: 2px;
+        background: #e2e4ee;
+        overflow: hidden;
+      }
+      #boot .boot-bar span {
+        display: block;
+        width: 40%;
+        height: 100%;
+        border-radius: 2px;
+        background: #6c5ce7;
+        animation: boot-slide 1.1s ease-in-out infinite;
+      }
+      @keyframes boot-slide {
+        0% {
+          transform: translateX(-100%);
+        }
+        100% {
+          transform: translateX(350%);
+        }
+      }
+      /* React 挂载后由 app.js 移除 */
+      #boot.done {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.18s ease;
+      }
+    </style>
   </head>
   <body>
+    <div id="boot">
+      <div class="boot-icon">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M13 2L4.5 13.5H11L10 22L19.5 10H13L13 2Z" fill="#fff" />
+        </svg>
+      </div>
+      <div class="boot-title">测试工作台</div>
+      <div class="boot-bar"><span></span></div>
+      <div class="boot-tip">正在加载…</div>
+    </div>
     <div id="root"></div>
     <script src="./app.js"></script>
   </body>

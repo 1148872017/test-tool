@@ -10,7 +10,8 @@ import {
   UnorderedListOutlined,
   ImportOutlined,
   WarningOutlined,
-  ReadOutlined
+  ReadOutlined,
+  CompressOutlined
 } from '@ant-design/icons';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -409,10 +410,10 @@ export default function NotesPage() {
                 <Button
                   size="small"
                   type={activeSection === '' ? 'primary' : 'default'}
-                  icon={<ReadOutlined />}
-                  onClick={() => setActiveSection('')}
+                  icon={activeSection === '' ? <CompressOutlined /> : <ReadOutlined />}
+                  onClick={() => setActiveSection(activeSection === '' ? 's0' : '')}
                 >
-                  阅读全文
+                  {activeSection === '' ? '折叠全文' : '阅读全文'}
                 </Button>
                 <span className="muted" style={{ fontSize: 12 }}>
                   {activeSection === ''

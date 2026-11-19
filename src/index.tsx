@@ -9,6 +9,14 @@ import { themeConfig } from './theme';
 
 dayjs.locale('zh-cn');
 
+/** 移除启动骨架屏（index.html 里的 #boot） */
+function hideBoot() {
+  const boot = document.getElementById('boot');
+  if (!boot) return;
+  boot.classList.add('done');
+  setTimeout(() => boot.remove(), 220);
+}
+
 const root = createRoot(document.getElementById('root') as HTMLElement);
 root.render(
   <ConfigProvider locale={zhCN} theme={themeConfig}>
@@ -17,3 +25,6 @@ root.render(
     </AntApp>
   </ConfigProvider>
 );
+
+// 等首帧渲染完再移除，避免闪一下白屏
+requestAnimationFrame(() => requestAnimationFrame(hideBoot));
