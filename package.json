@@ -1,7 +1,7 @@
 {
   "name": "test-tool",
   "productName": "测试工作台",
-  "version": "0.22.2",
+  "version": "0.23.0",
   "description": "本地测试工作台：密码库 / 测试账号 / SQL 片段 / 接口记录 / 测试笔记",
   "author": "",
   "license": "MIT",
@@ -24,7 +24,8 @@
     "test:templates": "node scripts/test-templates.cjs",
     "test:knowledge": "node scripts/test-knowledge.cjs",
     "dist:portable": "npm run build:renderer && electron-builder --win portable --x64",
-    "test:notes": "node scripts/test-notes.cjs"
+    "test:notes": "node scripts/test-notes.cjs",
+    "dist:installer": "npm run build:renderer && electron-builder --win nsis --x64"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.8.15",
@@ -57,7 +58,8 @@
       "build/tray.png",
       "build/icon.ico",
       "package.json",
-      "build/splash.bmp"
+      "build/splash.bmp",
+      "build/installer.nsh"
     ],
     "asar": true,
     "npmRebuild": false,
@@ -70,6 +72,12 @@
     "win": {
       "target": [
         {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
           "target": "portable",
           "arch": [
             "x64"
@@ -77,6 +85,20 @@
         }
       ],
       "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "测试工作台",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "include": "build/installer.nsh",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
     }
   }
 }
