@@ -1,7 +1,7 @@
 {
   "name": "test-tool",
   "productName": "测试工作台",
-  "version": "0.24.1",
+  "version": "0.24.2",
   "description": "本地测试工作台：密码库 / 测试账号 / SQL 片段 / 接口记录 / 测试笔记",
   "author": "",
   "license": "MIT",
@@ -93,6 +93,7 @@
       "deleteAppDataOnUninstall": false,
       "artifactName": "test-tool-Setup-${version}-${arch}.${ext}",
       "warningsAsErrors": false
-    }
+    },
+    "executableName": "test-tool"
   }
 }
