@@ -29,11 +29,56 @@
 !include "LogicLib.nsh"
 
 ; ---- 安装过程可展开查看 ----
-; electron-builder 的 common.nsh 默认 ShowInstDetails nevershow（隐藏详情），
-; 用户看不到「正在解压哪个文件」。改成 show 后，安装页有「显示详细信息」按钮。
-; 注意：这个指令必须在 Section 之前、且覆盖 common.nsh 的设置。
-ShowInstDetails show
-ShowUninstDetails show
+; electron-builder 的 common.nsh 默认 ShowInstDetails nevershow（隐藏详情）。
+;
+; 关键：这个指令必须在 Section 之前生效，而 installer.nsh 是被 include 到
+; 模板**末尾**的（Section 之后），所以直接写 ShowInstDetails 无效。
+; 必须放进 customHeader 宏——它在 installer.nsi 第 45 行被插入，
+; 早于第 94 行的 Section。
+!macro customHeader
+  ShowInstDetails show
+  ShowUninstDetails show
+!macroend
+
+; ---- 覆盖安装时提示「已安装，将覆盖」 ----
+; electron-builder 的 skipPageIfUpdated 会在升级时跳过欢迎页/目录页，
+; 用户看不到「已安装旧版」的提示，直接进入安装。
+; 这里在目录页之后插一个自定义页，只在「目标目录已有旧版」时显示。
+;
+; 判断方式用「目标目录里有没有主程序 exe」，不依赖 ${isUpdated}
+; （那个宏需要 installUtil.nsh，而 installer.nsh 被 include 的时机可能早于它）。
+!macro customPageAfterChangeDir
+  Page custom CoverPageCreate CoverPageLeave
+!macroend
+
+!ifndef BUILD_UNINSTALLER
+  Function CoverPageCreate
+    ; 目标目录里已有主程序 → 说明是覆盖安装
+    ${IfNot} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+      Abort
+    ${EndIf}
+
+    !insertmacro MUI_HEADER_TEXT "已检测到已安装的版本" "继续将覆盖现有程序，用户数据会保留"
+
+    nsDialogs::Create 1018
+    Pop $0
+    ${If} $0 == error
+      Abort
+    ${EndIf}
+
+    ${NSD_CreateLabel} 0 0 100% 60u "检测到「${PRODUCT_NAME}」已经安装在：$\r$\n$INSTDIR$\r$\n$\r$\n继续安装会：$\r$\n· 覆盖程序文件（旧版会被卸载）$\r$\n· 保留你的数据（密码库、用例索引、笔记等）$\r$\n· 重建桌面和开始菜单快捷方式"
+    Pop $0
+
+    ${NSD_CreateLabel} 0 70u 100% 30u "如果不想覆盖，点「取消」退出安装。"
+    Pop $0
+
+    nsDialogs::Show
+  FunctionEnd
+
+  Function CoverPageLeave
+    ; 无需校验，直接继续
+  FunctionEnd
+!endif
 
 !ifdef BUILD_UNINSTALLER
 
@@ -122,9 +167,14 @@ ShowUninstDetails show
 ; ---- 安装完成后刷新图标缓存 ----
 ; 问题：覆盖安装后 exe 换了图标，但 Windows 图标缓存还显示旧的
 ; （任务栏/托盘已更新，桌面没变）。
-; 修法：调 SHChangeNotify 通知 shell 刷新。
-;   SHCNE_ASSOCCHANGED = 0x08000000，SHCNF_IDLIST = 0
+;
+; 两步走：
+;   1. SHChangeNotify 通知 shell「关联变了」
+;   2. ie4uinit.exe -show 强制刷新图标缓存（比 SHChangeNotify 彻底，且不闪屏）
 !macro customInstall
   DetailPrint "刷新图标缓存..."
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
+  ; ie4uinit 在 Win10+ 才有，失败不影响安装
+  nsExec::ExecToLog 'ie4uinit.exe -show'
+  Pop $0
 !macroend
