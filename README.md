@@ -255,12 +255,14 @@ npm run test:jmx       # jmx 解析 + 健康检查测试（45 项，跑真实 jm
 npm run test:jtl       # 压测报告解析测试（27 项：jtl / statistics.json / 20 万行性能）
 npm run test:templates # 脚本模板质量测试（93 项：字段完整 / 带注释 / 无 macOS 路径）
 npm run test:knowledge # 知识库解析测试（18 项，跑真实知识库目录）
-npm run dist:portable  # 打包单文件 portable exe（约 104 MB，双击即用）
-npm run package:zip    # 打成便携 zip（约 152 MB，含 README 和 docs/screens 截图）
+npm run test:notes     # 笔记索引测试（25 项：解析 / 扫描 / 导入三种冲突模式）
+npm run dist:installer # 打完整安装包（约 119 MB，安装向导）
+npm run package:docs   # 打文档 zip（约 1.2 MB，含 README + 截图 + 交接文档）
 ```
 
-> **踩过的坑都记在 `docs/踩坑笔记.md`**（不进仓库，随 Release 的 zip 分发）：
-> 打包依赖、清除数据、DPAPI、esbuild、测试脆弱性、jmx 解析等 22 条，每条都有「现象 / 根因 / 怎么防 / 怎么验证」。
+> **踩过的坑都记在 `docs/平台规划与进度-*.md` 的 §11.2**（不进仓库，随 `docs.zip` 分发）：
+> 打包依赖、清除数据、DPAPI、esbuild、测试脆弱性、jmx 解析、NSIS 两阶段编译等 34 条，
+> 每条都有「现象 / 根因 / 怎么防 / 怎么验证」。
 
 没有 Electron 环境时也能看界面：`dist/index.html` 走任意静态服务器打开，会自动落到内存 mock
 （`src/mockApi.ts`，带一份示例数据），适合改 UI 时快速预览。
@@ -271,14 +273,14 @@ npm run package:zip    # 打成便携 zip（约 152 MB，含 README 和 docs/scr
 
 ```bash
 # 1. 升版本号（三处要一致：package.json / README 引用 / git tag）
-#    改 package.json 的 version，例如 0.21.1 → 0.22.0
+#    改 package.json 的 version，例如 0.23.0 → 0.24.0
 
 # 2. 跑测试
 npm test
 
 # 3. 打两个产物
-npm run dist:portable   # → release/test-tool-X.Y.Z-x64.exe（约 104 MB）
-npm run package:zip     # → release/test-tool-X.Y.Z-win64.zip（约 152 MB）
+npm run dist:installer  # → release/test-tool-Setup-X.Y.Z-x64.exe（约 119 MB）
+npm run package:docs    # → release/test-tool-docs-X.Y.Z.zip（约 1.2 MB）
 
 # 4. 提交 + 打 tag
 git add -A && git commit -m "chore: 版本 X.Y.Z"
@@ -295,15 +297,27 @@ git push origin vX.Y.Z
 
 | 文件 | 大小 | 特点 |
 |---|---|---|
-| `test-tool-X.Y.Z-x64.exe` | 104 MB | 单文件便携版，双击即用；**首次启动 3-8 秒**（自解压，有 splash 提示图） |
-| `test-tool-X.Y.Z-win64.zip` | 152 MB | 解压即用，启动快；含 README 和界面截图 |
+| `test-tool-Setup-X.Y.Z-x64.exe` | 119 MB | **主下载**：安装向导，per-user 装到 `%LOCALAPPDATA%\Programs`，**不需要管理员**；装完启动 1-2 秒 |
+| `test-tool-docs-X.Y.Z.zip` | 1.2 MB | 文档包：README + 17 张界面截图 + 交接文档（含 34 条踩坑笔记） |
+
+**为什么不再发便携 zip**：便携版每次启动要自解压 350MB 到 `%TEMP%`（3-8 秒），
+而且 splash 图在双显示器 + 高 DPI 环境下会导致启动失败。安装包是「装一次，之后直接跑」，
+没有这些问题。
 
 **为什么产物名是英文**：GitHub Release 上传中文文件名会被截断
 （实测 `测试工作台-0.21.0-win64.zip` → `-0.21.0-win64.zip`）。
 exe 内部的 `ProductName` 仍是「测试工作台」，用户看到的应用名不变。
 
-**数据位置**：默认 `%APPDATA%\测试工作台\`，升级只需替换程序，数据不受影响。
-想让数据跟着 exe 走（U 盘便携），在 exe 同目录建一个空文件 `portable.marker`。
+**数据位置**：
+
+| 内容 | 位置 | 卸载时 |
+|---|---|---|
+| 程序文件 | 安装目录（向导里可选，默认 `%LOCALAPPDATA%\Programs\测试工作台`） | 删 |
+| 数据库 | `%APPDATA%\测试工作台\` | 保留（除非卸载时勾选删除） |
+| 用户资产 | `文档\测试工作台\{test_cases,jmx,压测报告,知识库,notes}` | 保留（除非卸载时勾选删除） |
+
+**卸载时会问你要不要删数据**：卸载向导最后多一页，勾选框「同时删除上述用户数据」，
+**默认不勾选**。勾选后显示红色警告 + 二次确认框，列出会删什么。
 
 ### 目录
 
@@ -314,7 +328,7 @@ electron/security.js    DPAPI 加解密 + PIN scrypt 哈希校验
 electron/migrations.js  数据结构版本号 + 升级脚本（改字段名时在这里加一条）
 electron/openapi.js     OpenAPI 3 → 接口记录（$ref 内联、参数摘要、完整度判定）+ 变更 diff
 electron/preload.js     contextBridge 暴露给渲染层的 API
-shared/collections.js   六个集合的字段定义（唯一事实源，主进程和界面共用）
+shared/collections.js   五个集合的字段定义（唯一事实源，主进程和界面共用）
 shared/runs.js          测试执行的字段裁剪 / 摘要行 / 「某接口最近跑过几次」（纯函数）
 shared/suggest.js       关联用例的灰字候选：关键词抽取 + 打分（纯函数，node 里直接测）
 src/                    React 18 + Ant Design 5
