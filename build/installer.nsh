@@ -28,6 +28,13 @@
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 
+; ---- 安装过程可展开查看 ----
+; electron-builder 的 common.nsh 默认 ShowInstDetails nevershow（隐藏详情），
+; 用户看不到「正在解压哪个文件」。改成 show 后，安装页有「显示详细信息」按钮。
+; 注意：这个指令必须在 Section 之前、且覆盖 common.nsh 的设置。
+ShowInstDetails show
+ShowUninstDetails show
+
 !ifdef BUILD_UNINSTALLER
 
   ; 全局变量（跨函数共享，$0-$9 和 $R0-$R9 是局部的，不能跨函数用）
@@ -111,3 +118,13 @@
   !macroend
 
 !endif
+
+; ---- 安装完成后刷新图标缓存 ----
+; 问题：覆盖安装后 exe 换了图标，但 Windows 图标缓存还显示旧的
+; （任务栏/托盘已更新，桌面没变）。
+; 修法：调 SHChangeNotify 通知 shell 刷新。
+;   SHCNE_ASSOCCHANGED = 0x08000000，SHCNF_IDLIST = 0
+!macro customInstall
+  DetailPrint "刷新图标缓存..."
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
+!macroend

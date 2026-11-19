@@ -1,8 +1,11 @@
-/* 更新模块测试：版本比较 + 真实 GitHub API 检查 */
+/* 更新模块测试：版本比较 + 取消/清理/错误处理
+ *
+ * 注意：真实网络检查需要 Electron 的 net 模块（走系统代理），
+ * 纯 Node 环境跑不了。所以这里只测纯逻辑，真实 API 用单独的脚本验证。
+ */
 const path = require('path');
 const Module = require('module');
 
-// updater.js 依赖 electron 的 app/shell，测试里用 stub 顶掉
 const origResolve = Module._resolveFilename;
 const stubPath = path.join(__dirname, '_stub-electron.cjs');
 Module._resolveFilename = function (request, ...args) {
@@ -27,32 +30,20 @@ check('0.25.0.1 大于 0.25.0', compareVersion('0.25.0.1', '0.25.0') === 1);
 check('空值当 0', compareVersion('', '0.0.0') === 0);
 check('非法值不崩', typeof compareVersion('abc', 'def') === 'number');
 
-/* ---------- 2. 真实 API 检查（仓库已转 Public，匿名可访问）---------- */
 (async () => {
+  /* ---------- 2. 网络失败时优雅降级 ---------- */
   const res = await checkUpdate();
-  check('checkUpdate 返回 ok', res.ok === true, res);
-  if (res.ok) {
-    check('拿到 latest 版本号', /^\d+\.\d+\.\d+/.test(res.latest), res.latest);
-    check('拿到 current 版本号', /^\d+\.\d+\.\d+/.test(res.current), res.current);
-    check('hasNew 是布尔', typeof res.hasNew === 'boolean', res.hasNew);
-    check('找到 Setup 附件', !!res.asset && /Setup/i.test(res.asset.name), res.asset);
-    check('附件有下载链接', !!res.asset && /^https:\/\//.test(res.asset.url), res.asset && res.asset.url);
-    check('附件有大小', !!res.asset && res.asset.size > 0, res.asset && res.asset.size);
-    check('有 release notes', typeof res.notes === 'string', typeof res.notes);
-    // stub 的 app.getVersion() 返回 0.0.1，所以一定有新版
-    check('stub 版本 0.0.1 时 hasNew 为 true', res.hasNew === true, { current: res.current, latest: res.latest });
-  }
+  check('网络失败时返回 ok:false', res.ok === false, res);
+  check('网络失败时有 message', typeof res.message === 'string' && res.message.length > 0, res.message);
 
   /* ---------- 3. 取消 / 清理 ---------- */
-  // 取消：没有进行中的下载时也应该安全返回
   const c1 = cancel();
   check('无下载时取消不报错', c1 && c1.ok === true, c1);
 
-  // 清理：临时目录不存在时也不报错
   const cl = cleanup();
   check('清理不报错', cl && cl.ok === true, cl);
 
-  // 下载：没有 asset 时明确报错
+  /* ---------- 4. 下载参数校验 ---------- */
   const d1 = await download(null, () => {});
   check('无 asset 时下载报错', d1 && d1.ok === false && /没有可下载/.test(d1.message), d1);
 
