@@ -13,7 +13,7 @@ Module._resolveFilename = function (request, ...args) {
 const results = [];
 const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });
 
-const { compareVersion, checkUpdate } = require('../electron/updater.js');
+const { compareVersion, checkUpdate, download, cancel, cleanup } = require('../electron/updater.js');
 
 /* ---------- 1. 版本比较 ---------- */
 check('相同版本返回 0', compareVersion('0.25.0', '0.25.0') === 0);
@@ -42,6 +42,22 @@ check('非法值不崩', typeof compareVersion('abc', 'def') === 'number');
     // stub 的 app.getVersion() 返回 0.0.1，所以一定有新版
     check('stub 版本 0.0.1 时 hasNew 为 true', res.hasNew === true, { current: res.current, latest: res.latest });
   }
+
+  /* ---------- 3. 取消 / 清理 ---------- */
+  // 取消：没有进行中的下载时也应该安全返回
+  const c1 = cancel();
+  check('无下载时取消不报错', c1 && c1.ok === true, c1);
+
+  // 清理：临时目录不存在时也不报错
+  const cl = cleanup();
+  check('清理不报错', cl && cl.ok === true, cl);
+
+  // 下载：没有 asset 时明确报错
+  const d1 = await download(null, () => {});
+  check('无 asset 时下载报错', d1 && d1.ok === false && /没有可下载/.test(d1.message), d1);
+
+  const d2 = await download({ name: 'x.exe', size: 100, url: '' }, () => {});
+  check('空 url 时下载报错', d2 && d2.ok === false, d2);
 
   const failed = results.filter((r) => !r.ok);
   console.log('===== 更新模块测试 =====');

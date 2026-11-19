@@ -67,6 +67,8 @@ contextBridge.exposeInMainWorld('api', {
 
   updateCheck: () => invoke('update:check'),
   updateDownload: (asset) => invoke('update:download', { asset }),
+  updateCancel: () => invoke('update:cancel'),
+  updateCleanup: () => invoke('update:cleanup'),
   updateInstall: (file) => invoke('update:install', { file }),
   onUpdateProgress: (cb) => {
     const handler = (_e, data) => cb(data);

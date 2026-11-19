@@ -21,6 +21,33 @@ import {
 import api from '../api';
 import { toast } from '../msg';
 import { fmtTime } from '../utils';
+
+/** 字节数 → 人类可读（1.2 MB / 850 KB） */
+const fmtBytes = (n: number) => {
+  if (!n || n <= 0) return '0 B';
+  if (n >= 1073741824) return (n / 1073741824).toFixed(2) + ' GB';
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+  if (n >= 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+};
+
+/** 速度 → MB/s */
+const fmtSpeed = (bps: number) => {
+  if (!bps || bps <= 0) return '';
+  if (bps >= 1048576) return (bps / 1048576).toFixed(1) + ' MB/s';
+  return Math.round(bps / 1024) + ' KB/s';
+};
+
+/** 剩余秒数 → 1分20秒 */
+const fmtEta = (sec: number) => {
+  if (!sec || sec <= 0) return '';
+  if (sec < 60) return sec + ' 秒';
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m < 60) return s ? `${m} 分 ${s} 秒` : `${m} 分`;
+  const h = Math.floor(m / 60);
+  return `${h} 小时 ${m % 60} 分`;
+};
 import OptionEditor from '../components/OptionEditor';
 
 type Props = {
@@ -45,9 +72,14 @@ export default function SettingsPage({ boot, onChanged }: Props) {
 
   // 应用内更新
   const [updating, setUpdating] = useState(false);
-  const [updateState, setUpdateState] = useState<'idle' | 'latest' | 'found' | 'downloading' | 'ready'>('idle');
+  const [updateState, setUpdateState] = useState<'idle' | 'latest' | 'found' | 'downloading' | 'ready' | 'failed'>('idle');
   const [updateInfo, setUpdateInfo] = useState<any>(null);
   const [updatePct, setUpdatePct] = useState(0);
+  const [updateSpeed, setUpdateSpeed] = useState(0);
+  const [updateEta, setUpdateEta] = useState(0);
+  const [updateReceived, setUpdateReceived] = useState(0);
+  const [updateTotal, setUpdateTotal] = useState(0);
+  const [updateError, setUpdateError] = useState('');
   const [updateFile, setUpdateFile] = useState('');
   const [clearTarget, setClearTarget] = useState<string | undefined>(undefined);
   const [clearOpen, setClearOpen] = useState(false);
@@ -69,7 +101,11 @@ export default function SettingsPage({ boot, onChanged }: Props) {
   }, [settings.casesDir, settings.jmxDir, settings.jmeterPath, settings.reportDir, settings.kbDir, settings.notesDir]);
 
   /** 检查更新 */
-  const doCheckUpdate = async () => {
+  const doCheckUpdate = async () => {    // 下载中不允许检查更新：否则状态被重置，进度条消失但下载还在跑
+    if (updateState === 'downloading') {
+      toast('正在下载，请先取消或等下载完成');
+      return;
+    }
     setUpdating(true);
     setUpdateState('idle');
     try {
@@ -101,22 +137,47 @@ export default function SettingsPage({ boot, onChanged }: Props) {
     }
     setUpdateState('downloading');
     setUpdatePct(0);
-    const off = api.onUpdateProgress((d: any) => setUpdatePct(d.pct || 0));
+    setUpdateSpeed(0);
+    setUpdateEta(0);
+    setUpdateReceived(0);
+    setUpdateTotal(updateInfo.asset.size || 0);
+    setUpdateError('');
+    const off = api.onUpdateProgress((d: any) => {
+      setUpdatePct(d.pct || 0);
+      setUpdateSpeed(d.speed || 0);
+      setUpdateEta(d.eta || 0);
+      setUpdateReceived(d.received || 0);
+      setUpdateTotal(d.total || 0);
+    });
     try {
       const res = await api.updateDownload(updateInfo.asset);
       if (res && res.ok) {
         setUpdateFile(res.file);
         setUpdateState('ready');
         toast('下载完成');
-      } else {
+      } else if (res && res.cancelled) {
         setUpdateState('found');
+        toast('已取消下载（已下载部分会保留，重试可续传）');
+      } else {
+        setUpdateState('failed');
+        setUpdateError((res && res.message) || '下载失败');
         toast((res && res.message) || '下载失败', 'error');
       }
     } catch (e: any) {
-      setUpdateState('found');
+      setUpdateState('failed');
+      setUpdateError(e && e.message ? e.message : String(e));
       toast('下载失败：' + (e && e.message ? e.message : e), 'error');
     } finally {
       if (typeof off === 'function') off();
+    }
+  };
+
+  /** 取消下载 */
+  const doCancelDownload = async () => {
+    try {
+      await api.updateCancel();
+    } catch (e: any) {
+      toast('取消失败：' + (e && e.message ? e.message : e), 'error');
     }
   };
 
@@ -811,7 +872,13 @@ export default function SettingsPage({ boot, onChanged }: Props) {
 
         <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #f0f2f8' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <Button size="small" icon={<CloudDownloadOutlined />} onClick={doCheckUpdate} loading={updating}>
+            <Button
+              size="small"
+              icon={<CloudDownloadOutlined />}
+              onClick={doCheckUpdate}
+              loading={updating}
+              disabled={updateState === 'downloading'}
+            >
               检查更新
             </Button>
             {updateState === 'latest' ? (
@@ -827,6 +894,8 @@ export default function SettingsPage({ boot, onChanged }: Props) {
             {updateState === 'downloading' ? (
               <span className="muted" style={{ fontSize: 12 }}>
                 正在下载… {updatePct}%
+                {updateSpeed > 0 ? ` · ${fmtSpeed(updateSpeed)}` : ''}
+                {updateEta > 0 ? ` · 剩余 ${fmtEta(updateEta)}` : ''}
               </span>
             ) : null}
             {updateState === 'ready' ? (
@@ -834,20 +903,44 @@ export default function SettingsPage({ boot, onChanged }: Props) {
                 下载完成，可以安装了
               </span>
             ) : null}
+            {updateState === 'failed' ? (
+              <span style={{ fontSize: 12, color: '#e05252' }}>
+                下载失败{updateError ? '：' + updateError : ''}
+              </span>
+            ) : null}
           </div>
 
           {updateState === 'downloading' ? (
-            <Progress percent={updatePct} size="small" style={{ marginTop: 10, maxWidth: 420 }} />
+            <div style={{ marginTop: 10, maxWidth: 460 }}>
+              <Progress percent={updatePct} size="small" status="active" />
+              <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+                {fmtBytes(updateReceived)} / {fmtBytes(updateTotal)}
+                {updateSpeed > 0 ? ` · ${fmtSpeed(updateSpeed)}` : ''}
+                {updateEta > 0 ? ` · 剩余 ${fmtEta(updateEta)}` : ''}
+              </div>
+              <Button size="small" danger style={{ marginTop: 8 }} onClick={doCancelDownload}>
+                取消下载
+              </Button>
+            </div>
           ) : null}
 
           {updateState === 'found' && updateInfo ? (
             <div style={{ marginTop: 10 }}>
-              {updateInfo.notes ? (
-                <div className="update-notes">{updateInfo.notes.slice(0, 600)}</div>
-              ) : null}
+              {updateInfo.notes ? <div className="update-notes">{updateInfo.notes.slice(0, 600)}</div> : null}
               <Button type="primary" size="small" style={{ marginTop: 8 }} onClick={doDownloadUpdate}>
                 下载 v{updateInfo.latest}
               </Button>
+            </div>
+          ) : null}
+
+          {updateState === 'failed' ? (
+            <div style={{ marginTop: 10 }}>
+              <Button type="primary" size="small" onClick={doDownloadUpdate}>
+                重试下载
+              </Button>
+              <span className="muted" style={{ fontSize: 12, marginLeft: 10 }}>
+                已下载的部分会保留，重试时续传
+              </span>
             </div>
           ) : null}
 

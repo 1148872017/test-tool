@@ -1118,6 +1118,8 @@ export function installMockIfNeeded() {
       publishedAt: new Date().toISOString()
     }),
     updateDownload: async () => ({ ok: false, message: '预览模式不支持下载' }),
+    updateCancel: async () => ({ ok: true }),
+    updateCleanup: async () => ({ ok: true }),
     updateInstall: async () => ({ ok: false, message: '预览模式不支持安装' }),
     onUpdateProgress: () => () => {},
     notesScan: async () => ({

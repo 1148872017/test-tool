@@ -967,16 +967,19 @@ function registerIpc() {
   ipcMain.handle('update:check', async () => updater.checkUpdate());
 
   ipcMain.handle('update:download', async (e, { asset } = {}) => {
-    const res = await updater.download(asset, (pct, received, total) => {
-      // 进度推给渲染层（窗口可能已隐藏，send 失败不影响下载）
+    const res = await updater.download(asset, (info) => {
       try {
-        if (win && !win.isDestroyed()) win.webContents.send('update:progress', { pct, received, total });
+        if (win && !win.isDestroyed()) win.webContents.send('update:progress', info);
       } catch (err) {
         /* ignore */
       }
     });
     return res;
   });
+
+  ipcMain.handle('update:cancel', async () => updater.cancel());
+
+  ipcMain.handle('update:cleanup', async () => updater.cleanup());
 
   ipcMain.handle('update:install', async (e, { file } = {}) => {
     const res = await updater.install(file);
