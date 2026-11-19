@@ -964,7 +964,7 @@ function registerIpc() {
   });
 
   // ---- 应用内更新（检查 / 下载 / 安装）----
-  ipcMain.handle('update:check', async () => updater.checkUpdate());
+  ipcMain.handle('update:check', async (e, { force } = {}) => updater.checkUpdate(!!force));
 
   ipcMain.handle('update:download', async (e, { asset } = {}) => {
     const res = await updater.download(asset, (info) => {

@@ -65,7 +65,7 @@ contextBridge.exposeInMainWorld('api', {
   notesPickImport: () => invoke('notes:pickImport'),
   notesImport: (files, onConflict) => invoke('notes:import', { files, onConflict }),
 
-  updateCheck: () => invoke('update:check'),
+  updateCheck: (force) => invoke('update:check', { force }),
   updateDownload: (asset) => invoke('update:download', { asset }),
   updateCancel: () => invoke('update:cancel'),
   updateCleanup: () => invoke('update:cleanup'),

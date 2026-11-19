@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Select, Input, Modal, Tag, Popconfirm, Space, Alert, Switch, Segmented, Progress } from 'antd';
+import { Button, Select, Input, Modal, Tag, Popconfirm, Space, Alert, Switch, Segmented, Progress, Tooltip } from 'antd';
 import {
   LockOutlined,
   FolderOpenOutlined,
@@ -16,7 +16,8 @@ import {
   WarningOutlined,
   BookOutlined,
   FileTextOutlined,
-  CloudDownloadOutlined
+  CloudDownloadOutlined,
+  ReloadOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
@@ -102,7 +103,8 @@ export default function SettingsPage({ boot, onChanged }: Props) {
   }, [settings.casesDir, settings.jmxDir, settings.jmeterPath, settings.reportDir, settings.kbDir, settings.notesDir]);
 
   /** 检查更新 */
-  const doCheckUpdate = async () => {    // 下载中不允许检查更新：否则状态被重置，进度条消失但下载还在跑
+  const doCheckUpdate = async (force?: boolean) => {
+    // 下载中不允许检查更新：否则状态被重置，进度条消失但下载还在跑
     if (updateState === 'downloading') {
       toast('正在下载，请先取消或等下载完成');
       return;
@@ -110,7 +112,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
     setUpdating(true);
     setUpdateState('idle');
     try {
-      const res = await api.updateCheck();
+      const res = await api.updateCheck(!!force);
       if (!res || !res.ok) {
         toast((res && res.message) || '检查更新失败', 'error');
         return;
@@ -118,10 +120,10 @@ export default function SettingsPage({ boot, onChanged }: Props) {
       setUpdateInfo(res);
       if (res.hasNew) {
         setUpdateState('found');
-        toast(`发现新版本 v${res.latest}`);
+        toast(res.cached ? `发现新版本 v${res.latest}（缓存）` : `发现新版本 v${res.latest}`);
       } else {
         setUpdateState('latest');
-        toast('已是最新版本');
+        toast(res.cached ? '已是最新版本（缓存）' : '已是最新版本');
       }
     } catch (e: any) {
       toast('检查更新失败：' + (e && e.message ? e.message : e), 'error');
@@ -878,12 +880,21 @@ export default function SettingsPage({ boot, onChanged }: Props) {
             <Button
               size="small"
               icon={<CloudDownloadOutlined />}
-              onClick={doCheckUpdate}
+              onClick={() => doCheckUpdate(false)}
               loading={updating}
               disabled={updateState === 'downloading'}
             >
               检查更新
             </Button>
+            <Tooltip title="忽略 10 分钟缓存，强制重新检查">
+              <Button
+                size="small"
+                type="text"
+                icon={<ReloadOutlined />}
+                onClick={() => doCheckUpdate(true)}
+                disabled={updating || updateState === 'downloading'}
+              />
+            </Tooltip>
             {updateState === 'latest' ? (
               <span className="muted" style={{ fontSize: 12 }}>
                 已是最新版本

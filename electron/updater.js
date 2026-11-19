@@ -58,12 +58,12 @@ function compareVersion(a, b) {
   return 0;
 }
 
-/** 用 Electron net 发 GET，返回 { status, headers, body } */
-function netGet(url, extraHeaders) {
+/** 用 Electron net 发 GET，返回 { status, headers, body, url } */
+function netGet(url, extraHeaders, redirectMode) {
   return new Promise((resolve, reject) => {
     let req;
     try {
-      req = net.request({ method: 'GET', url, redirect: 'manual' });
+      req = net.request({ method: 'GET', url, redirect: redirectMode || 'follow' });
     } catch (e) {
       return reject(e);
     }
@@ -76,7 +76,14 @@ function netGet(url, extraHeaders) {
     req.on('response', (res) => {
       res.on('data', (c) => chunks.push(Buffer.from(c)));
       res.on('end', () =>
-        resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) })
+        resolve({
+          status: res.statusCode,
+          headers: res.headers,
+          body: Buffer.concat(chunks),
+          // 跟随重定向后的最终 URL（Electron 的 IncomingMessage 没有 url 属性，
+          // 但 response 事件里能拿到 headers，这里用 res.url 兜底）
+          url: res.url || ''
+        })
       );
       res.on('error', reject);
     });
@@ -86,19 +93,29 @@ function netGet(url, extraHeaders) {
 }
 
 /**
- * 方式 1：重定向法（零配额）。
- * 请求 releases/latest 不跟随重定向，从 Location 头拿 tag。
+ * 方式 1：解析 Release 页面（零配额）。
+ *
+ * 为什么不用 `redirect: 'manual'` 读 Location 头：
+ *   Electron 的 net 模块在 manual 模式下实测报 `ERR_CONNECTION_CLOSED`。
+ *
+ * 改用 `redirect: 'follow'` 跟到最终页面，从 HTML 里解析 tag：
+ *   页面里一定有 `<a href="/1148872017/test-tool/releases/tag/v0.26.8">`
  */
 async function checkByRedirect() {
-  const res = await netGet(REDIRECT_LATEST);
-  // 302 的 Location: https://github.com/{repo}/releases/tag/v0.26.6
-  const loc = res.headers && res.headers.location;
-  if (!loc) return { ok: false, message: '没有重定向（可能没有 Release）' };
-  const m = /\/releases\/tag\/(.+)$/.exec(String(loc));
-  if (!m) return { ok: false, message: '重定向地址里没有 tag' };
-  const tag = decodeURIComponent(m[1]);
-  const latest = tag.replace(/^v/i, '');
-  return { ok: true, tag, latest };
+  const res = await netGet(REDIRECT_LATEST, null, 'follow');
+  if (res.status !== 200) {
+    return { ok: false, message: `Release 页面返回 ${res.status}` };
+  }
+  const html = res.body ? res.body.toString('utf8') : '';
+  // 优先找 canonical / og:url 里的 tag
+  let m = /\/releases\/tag\/(v[\d.]+)/.exec(html);
+  if (!m) {
+    // 兜底：找页面标题里的版本号
+    m = /releases\/tag\/([\d.]+)/.exec(html);
+  }
+  if (!m) return { ok: false, message: '页面里找不到版本号' };
+  const tag = m[1].startsWith('v') ? m[1] : 'v' + m[1];
+  return { ok: true, tag, latest: tag.replace(/^v/i, '') };
 }
 
 /**
@@ -125,14 +142,25 @@ async function checkByApi() {
   };
 }
 
+/** 检查结果缓存（避免高频请求） */
+let lastCheck = null;
+/** 缓存有效期：10 分钟 */
+const CACHE_TTL = 10 * 60 * 1000;
+
 /** 检查更新 */
-async function checkUpdate() {
+async function checkUpdate(force) {
   const current = app.getVersion();
+
+  // 缓存命中：10 分钟内重复点「检查更新」直接用上次结果
+  if (!force && lastCheck && Date.now() - lastCheck.at < CACHE_TTL) {
+    return Object.assign({}, lastCheck.data, { cached: true });
+  }
+
   try {
-    // 优先用重定向法（不消耗 API 配额）
+    // 优先用页面解析（不消耗 API 配额）
     let info = await checkByRedirect();
     if (!info.ok) {
-      // 兜底：API
+      // 兜底：API（消耗配额，但只在页面解析失败时用）
       info = await checkByApi();
     }
     if (!info.ok) return { ok: false, message: info.message };
@@ -141,16 +169,15 @@ async function checkUpdate() {
     const tag = info.tag || 'v' + latest;
 
     // 附件名是固定格式：test-tool-Setup-{version}-x64.exe
-    // 如果 API 给了 asset 就用它的，否则按格式拼
     const asset =
       info.asset ||
       {
         name: `test-tool-Setup-${latest}-x64.exe`,
-        size: 0, // 未知，下载时从 Content-Length 拿
+        size: 0,
         url: `${DOWNLOAD_BASE}/${tag}/test-tool-Setup-${latest}-x64.exe`
       };
 
-    return {
+    const result = {
       ok: true,
       hasNew: compareVersion(latest, current) > 0,
       current,
@@ -159,6 +186,9 @@ async function checkUpdate() {
       notes: info.notes || '',
       publishedAt: info.publishedAt || ''
     };
+
+    lastCheck = { at: Date.now(), data: result };
+    return result;
   } catch (e) {
     return { ok: false, message: String((e && e.message) || e) };
   }
