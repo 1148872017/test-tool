@@ -36,11 +36,9 @@
 ; 而 !addplugindir 在 electron-builder 的脚本里、本文件之后才执行。
 ; 进程检测改用 nsExec + tasklist（不依赖插件）。
 ;
-; StrContains 只在安装器阶段用（customInit 里判断进程），
-; 放 !ifndef BUILD_UNINSTALLER 里，否则卸载器阶段报 warning 6010（未引用）。
-!ifndef BUILD_UNINSTALLER
-  !include "StrContains.nsh"
-!endif
+; 也不要 include StrContains.nsh —— assistedInstaller.nsh 第 23 行已经 include 过，
+; 重复 include 会报 `variable "STR_HAYSTACK" already declared`。
+; 我们的 customInit 在模板之后展开，那时 StrContains 宏已可用。
 
 ; ---- 编译期：显示安装详情 ----
 !macro customHeader
@@ -60,22 +58,31 @@
   ;    判断方式：输出里**包含 exe 名**才算在跑。
   ;    不能只判断「输出非空」——tasklist 没找到时会输出
   ;    「信息: 没有运行的任务匹配指定标准。」，那也是非空。
+  ;
+  ;    不用 StrContains 宏（它被 assistedInstaller.nsh 先 include 了，
+  ;    重复 include 会报 STR_HAYSTACK already declared）。
+  ;    改用 StrCmp 对比「没找到」的两种输出。
   nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /NH'
   Pop $R2 ; 退出码
   Pop $R3 ; 输出内容
 
-  ; 用 StrContains 判断（electron-builder 的 StrContains.nsh 已提供）
-  ${StrContains} $R4 "${APP_EXECUTABLE_FILENAME}" "$R3"
-  ${If} $R4 != ""
-    MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION \
-      "「${PRODUCT_NAME}」正在运行。$\r$\n$\r$\n安装前需要先关闭它，否则文件会被占用。$\r$\n点「确定」自动关闭并继续安装，点「取消」退出。" \
-      IDOK +2
-    Quit
-    ; 用户点确定 → 结束进程
-    nsExec::ExecToLog 'taskkill /f /im ${APP_EXECUTABLE_FILENAME}'
-    Pop $R2
-    Sleep 1500
-  ${EndIf}
+  ; 去掉首尾空白和换行，方便比较
+  StrCpy $R4 "$R3"
+  ; 判断是否「没找到」：中文/英文两种提示
+  StrCmp $R4 "信息: 没有运行的任务匹配指定标准。" notRunning
+  StrCmp $R4 "INFO: No tasks are running which match the specified criteria." notRunning
+  StrCmp $R4 "" notRunning
+  ; 其余情况 = 进程在跑
+  MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION \
+    "「${PRODUCT_NAME}」正在运行。$\r$\n$\r$\n安装前需要先关闭它，否则文件会被占用。$\r$\n点「确定」自动关闭并继续安装，点「取消」退出。" \
+    IDOK +2
+  Quit
+  ; 用户点确定 → 结束进程
+  nsExec::ExecToLog 'taskkill /f /im ${APP_EXECUTABLE_FILENAME}'
+  Pop $R2
+  Sleep 1500
+
+  notRunning:
 
   ; 2. 检查是否已安装（覆盖提示）
   ReadRegStr $R0 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" "InstallLocation"
