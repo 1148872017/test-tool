@@ -4,7 +4,7 @@ const Module = require('module');
 
 // updater.js 依赖 electron 的 app/shell，测试里用 stub 顶掉
 const origResolve = Module._resolveFilename;
-const stubPath = path.join(__dirname, '..', '_stub-electron.cjs');
+const stubPath = path.join(__dirname, '_stub-electron.cjs');
 Module._resolveFilename = function (request, ...args) {
   if (request === 'electron') return stubPath;
   return origResolve.call(this, request, ...args);
