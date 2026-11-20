@@ -75,7 +75,8 @@ function jsonToRows(obj) {
         key: `[${i}]`,
         value: shortValue(v),
         title: fullValue(v),
-        complex: isComplex(v)
+        complex: isComplex(v),
+        type: inferType(v)
       });
     });
     return rows;
@@ -88,14 +89,15 @@ function jsonToRows(obj) {
         key: k,
         value: shortValue(v),
         title: fullValue(v),
-        complex: isComplex(v)
+        complex: isComplex(v),
+        type: inferType(v)
       });
     }
     return rows;
   }
 
   // 标量
-  rows.push({ key: '（值）', value: shortValue(obj), title: fullValue(obj), complex: false });
+  rows.push({ key: '（值）', value: shortValue(obj), title: fullValue(obj), complex: false, type: inferType(obj) });
   return rows;
 }
 
@@ -117,10 +119,10 @@ function headersToRows(text) {
       const k = t.slice(0, i).trim();
       const v = t.slice(i + 1).trim();
       // headers 的空值就显示空（不用 shortValue 的「（空字符串）」提示）
-      rows.push({ key: k, value: v, title: v, complex: false });
+      rows.push({ key: k, value: v, title: v, complex: false, type: 'string' });
     } else {
       // 没有冒号，整行当 key
-      rows.push({ key: t, value: '', title: '', complex: false });
+      rows.push({ key: t, value: '', title: '', complex: false, type: 'string' });
     }
   }
   return rows;
@@ -152,6 +154,98 @@ function tryParseJson(text) {
  *   message?: string
  * }}
  */
+/**
+ * 判断一段文本是不是 form-urlencoded（`a=1&b=2`）。
+ * 要求：至少一个 `=`，且不含 JSON 的 `{` `[`。
+ */
+function looksLikeForm(text) {
+  const t = String(text || '').trim();
+  if (!t || t.startsWith('{') || t.startsWith('[')) return false;
+  if (t.indexOf('=') < 0) return false;
+  // 每段都得是 key=value 形式
+  return t.split('&').every((seg) => {
+    const s = seg.trim();
+    if (!s) return true;
+    return s.indexOf('=') > 0;
+  });
+}
+
+/**
+ * form-urlencoded → 表格行
+ * 输入：`name=Hello%20Kitty&status=sold`
+ * 输出：[{key:'name', value:'Hello Kitty', type:'string', ...}]
+ */
+function formToRows(text) {
+  const rows = [];
+  for (const seg of String(text || '').split('&')) {
+    const s = seg.trim();
+    if (!s) continue;
+    const i = s.indexOf('=');
+    if (i <= 0) {
+      rows.push({ key: safeDecode(s), value: '', title: '', complex: false, type: 'string' });
+      continue;
+    }
+    const k = safeDecode(s.slice(0, i));
+    const v = safeDecode(s.slice(i + 1));
+    rows.push({
+      key: k,
+      value: shortValue(v),
+      title: v,
+      complex: false,
+      type: inferType(v)
+    });
+  }
+  return rows;
+}
+
+/** decodeURIComponent 失败时返回原文（不抛异常） */
+function safeDecode(s) {
+  try {
+    return decodeURIComponent(String(s).replace(/\+/g, ' '));
+  } catch (e) {
+    return String(s);
+  }
+}
+
+/**
+ * 从值推断类型（给表格的「类型」列用）。
+ * 只做粗粒度判断，够用即可。
+ */
+function inferType(v) {
+  if (v === null || v === undefined) return 'null';
+  if (typeof v === 'boolean') return 'boolean';
+  if (typeof v === 'number') return Number.isInteger(v) ? 'integer' : 'number';
+  if (Array.isArray(v)) return 'array';
+  if (typeof v === 'object') return 'object';
+  const s = String(v).trim();
+  if (s === '') return 'string';
+  if (s === 'true' || s === 'false') return 'boolean';
+  if (/^-?\d+$/.test(s)) return 'integer';
+  if (/^-?\d*\.\d+$/.test(s)) return 'number';
+  if (/^\[.*\]$/.test(s) || /^\{.*\}$/.test(s)) {
+    try {
+      JSON.parse(s);
+      return s.startsWith('[') ? 'array' : 'object';
+    } catch (e) {
+      /* 不是 JSON */
+    }
+  }
+  return 'string';
+}
+
+/**
+ * 统一入口：把字段内容转成表格数据。
+ *
+ * @param {string} fieldKey 字段名（headers / body / 其他）
+ * @param {string} raw 字段原文
+ * @returns {{
+ *   canTable: boolean,
+ *   rows: {key,value,title,complex,type}[],
+ *   total: number,
+ *   kind?: 'headers'|'json'|'form',
+ *   message?: string
+ * }}
+ */
 function toTable(fieldKey, raw) {
   const text = String(raw || '');
   if (!text.trim()) {
@@ -162,27 +256,36 @@ function toTable(fieldKey, raw) {
   if (fieldKey === 'headers') {
     const rows = headersToRows(text);
     if (!rows.length) return { canTable: false, rows: [], total: 0, message: '没有可解析的请求头' };
-    return { canTable: true, rows, total: rows.length };
+    return { canTable: true, rows, total: rows.length, kind: 'headers' };
   }
 
-  // body 及其他：先试 JSON
+  // body：先试 JSON，再试 form-urlencoded
   const parsed = tryParseJson(text);
-  if (!parsed.ok) {
-    return { canTable: false, rows: [], total: 0, message: parsed.message };
+  if (parsed.ok) {
+    const rows = jsonToRows(parsed.value);
+    if (!rows.length) {
+      return { canTable: false, rows: [], total: 0, message: '没有可展示的字段' };
+    }
+    if (rows.length > MAX_ROWS) {
+      return {
+        canTable: false,
+        rows: [],
+        total: rows.length,
+        message: `字段太多（${rows.length} 行），请用 JSON 视图查看`
+      };
+    }
+    return { canTable: true, rows, total: rows.length, kind: 'json' };
   }
-  const rows = jsonToRows(parsed.value);
-  if (!rows.length) {
-    return { canTable: false, rows: [], total: 0, message: '没有可展示的字段' };
+
+  // 不是 JSON，试 form-urlencoded
+  if (looksLikeForm(text)) {
+    const rows = formToRows(text);
+    if (rows.length && rows.length <= MAX_ROWS) {
+      return { canTable: true, rows, total: rows.length, kind: 'form' };
+    }
   }
-  if (rows.length > MAX_ROWS) {
-    return {
-      canTable: false,
-      rows: [],
-      total: rows.length,
-      message: `字段太多（${rows.length} 行），请用 JSON 视图查看`
-    };
-  }
-  return { canTable: true, rows, total: rows.length };
+
+  return { canTable: false, rows: [], total: 0, message: parsed.message };
 }
 
 module.exports = {

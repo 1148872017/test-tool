@@ -81,6 +81,40 @@ check('undefined 不崩', jsonToRows(undefined).length === 0);
 check('标量不崩', jsonToRows(42).length === 1);
 check('空对象不崩', jsonToRows({}).length === 0);
 
+/* ---------- 11. form-urlencoded ---------- */
+const form1 = toTable('body', 'name=Hello%20Kitty&status=sold');
+check('form：可表格', form1.canTable === true, form1);
+check('form：kind 是 form', form1.kind === 'form', form1.kind);
+check('form：2 行', form1.total === 2, form1.total);
+check('form：URL 解码', form1.rows[0].value === 'Hello Kitty', form1.rows[0].value);
+check('form：key 正确', form1.rows[0].key === 'name' && form1.rows[1].key === 'status', form1.rows.map((r) => r.key));
+
+const form2 = toTable('body', 'a=1&b=2&c=3');
+check('form：数字推断为 integer', form2.rows[0].type === 'integer', form2.rows[0].type);
+
+const form3 = toTable('body', 'flag=true&empty=&n=1.5');
+check('form：true 推断为 boolean', form3.rows[0].type === 'boolean', form3.rows[0].type);
+check('form：空值推断为 string', form3.rows[1].type === 'string', form3.rows[1].type);
+check('form：小数推断为 number', form3.rows[2].type === 'number', form3.rows[2].type);
+
+const form4 = toTable('body', 'a=1&b=2');
+check('form：不是 JSON 也能表格', form4.kind === 'form', form4.kind);
+
+/* ---------- 12. 类型推断 ---------- */
+const typed = jsonToRows({ i: 1, f: 1.5, b: true, s: 'x', n: null, arr: [1], obj: { a: 1 } });
+const typeOf = (k) => typed.find((r) => r.key === k).type;
+check('类型：integer', typeOf('i') === 'integer', typeOf('i'));
+check('类型：number', typeOf('f') === 'number', typeOf('f'));
+check('类型：boolean', typeOf('b') === 'boolean', typeOf('b'));
+check('类型：string', typeOf('s') === 'string', typeOf('s'));
+check('类型：null', typeOf('n') === 'null', typeOf('n'));
+check('类型：array', typeOf('arr') === 'array', typeOf('arr'));
+check('类型：object', typeOf('obj') === 'object', typeOf('obj'));
+
+/* ---------- 13. JSON 优先于 form ---------- */
+const jsonNotForm = toTable('body', '{"a":"b=c"}');
+check('JSON 优先（含 = 也不当 form）', jsonNotForm.kind === 'json', jsonNotForm.kind);
+
 const failed = results.filter((r) => !r.ok);
 console.log('===== JSON 表格测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));

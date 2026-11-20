@@ -1534,3 +1534,14 @@ body {
   border-top: 1px solid var(--line-soft);
   background: #fafbfe;
 }
+/* JSON 表格的类型列 */
+.json-table-type {
+  flex: 0 0 84px;
+  padding: 6px 10px;
+  border-left: 1px solid #f4f5fa;
+  color: #8a90a2;
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

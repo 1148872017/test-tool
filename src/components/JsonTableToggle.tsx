@@ -124,6 +124,9 @@ export default function JsonTableToggle({ fieldKey, raw }: Props) {
   const rows = expanded ? table.rows : table.rows.slice(0, COLLAPSE_AT);
   const needCollapse = table.total > COLLAPSE_AT;
 
+  // body 的类型标签（json / form / 其他）
+  const kindLabel = table.kind === 'form' ? 'form-data' : table.kind === 'json' ? 'JSON' : '';
+
   return (
     <div className="json-table-wrap">
       <div className="json-table-head">
@@ -136,6 +139,11 @@ export default function JsonTableToggle({ fieldKey, raw }: Props) {
             { label: 'JSON', value: 'json' }
           ]}
         />
+        {kindLabel ? (
+          <Tag color={table.kind === 'form' ? 'purple' : 'blue'} style={{ margin: 0 }}>
+            {kindLabel}
+          </Tag>
+        ) : null}
         <span className="muted" style={{ fontSize: 12 }}>
           {table.total} 行
         </span>
@@ -147,6 +155,7 @@ export default function JsonTableToggle({ fieldKey, raw }: Props) {
             <div className="json-table-row json-table-header">
               <div className="json-table-key">参数名</div>
               <div className="json-table-value">参数值</div>
+              <div className="json-table-type">类型</div>
             </div>
             {rows.map((r: any, i: number) => (
               <div className="json-table-row" key={i}>
@@ -164,6 +173,7 @@ export default function JsonTableToggle({ fieldKey, raw }: Props) {
                     </span>
                   )}
                 </div>
+                <div className="json-table-type mono">{r.type || '—'}</div>
               </div>
             ))}
           </div>
