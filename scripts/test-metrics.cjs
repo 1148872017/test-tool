@@ -69,6 +69,18 @@ check('RecordDetail 不再在 body 标签旁渲染 Tag', !/f\.key === 'body' && 
 check('RecordDetail 仍渲染 metrics', /case 'metrics'/.test(detail), 'no metrics case');
 check('RecordDetail 仍渲染 scene', /case 'scene'/.test(detail), 'no scene case');
 
+/* ---------- 5. 参数表格列宽自适应 ---------- */
+const toggle = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'JsonTableToggle.tsx'), 'utf8');
+const css = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
+
+check('参数表格不再用固定 flexBasis 百分比', !/flexBasis: '\d+%'/.test(toggle), 'still has fixed flexBasis');
+check('参数表格用语义化 class', /param-name/.test(toggle) && /param-in/.test(toggle) && /param-type/.test(toggle), 'no semantic class');
+check('位置列按内容自适应', /\.param-in\s*\{[^}]*flex:\s*0 0 auto/.test(css), 'param-in not auto');
+check('类型列按内容自适应', /\.param-type\s*\{[^}]*flex:\s*0 0 auto/.test(css), 'param-type not auto');
+check('位置/类型列不换行', /\.param-in\s*\{[^}]*white-space:\s*nowrap/.test(css) && /\.param-type\s*\{[^}]*white-space:\s*nowrap/.test(css), 'not nowrap');
+check('说明列占满剩余', /\.param-desc\s*\{[^}]*flex:\s*1 1 auto/.test(css), 'param-desc not flex 1');
+check('参数名列有最小宽度', /\.param-name\s*\{[^}]*min-width:\s*120px/.test(css), 'no min-width');
+
 const failed = results.filter((r) => !r.ok);
 console.log('===== 压测指标 + 场景选择器测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));

@@ -48,30 +48,22 @@ function ParamTable({ raw }: { raw: string }) {
       </div>
       <div className="json-table">
         <div className="json-table-row json-table-header">
-          <div className="json-table-key" style={{ flexBasis: '28%' }}>
-            参数名
-          </div>
-          <div className="json-table-value" style={{ flexBasis: '12%', flexGrow: 0 }}>
-            位置
-          </div>
-          <div className="json-table-value" style={{ flexBasis: '14%', flexGrow: 0 }}>
-            类型
-          </div>
-          <div className="json-table-value">说明</div>
+          <div className="json-table-key param-name">参数名</div>
+          <div className="json-table-value param-in">位置</div>
+          <div className="json-table-value param-type">类型</div>
+          <div className="json-table-value param-desc">说明</div>
         </div>
         {shown.map((r: any, i: number) => (
           <div className="json-table-row" key={i}>
-            <div className="json-table-key mono" style={{ flexBasis: '28%' }}>
+            <div className="json-table-key mono param-name">
               {r.name}
               {r.required ? <span style={{ color: '#e5534b' }}> *</span> : null}
             </div>
-            <div className="json-table-value" style={{ flexBasis: '12%', flexGrow: 0 }}>
+            <div className="json-table-value param-in">
               <Tag style={{ margin: 0 }}>{r.in}</Tag>
             </div>
-            <div className="json-table-value mono" style={{ flexBasis: '14%', flexGrow: 0 }}>
-              {r.type || '—'}
-            </div>
-            <div className="json-table-value">
+            <div className="json-table-value mono param-type">{r.type || '—'}</div>
+            <div className="json-table-value param-desc">
               {r.desc || <span className="muted">—</span>}
               {r.example ? (
                 <span className="muted" style={{ marginLeft: 6, fontSize: 11.5 }}>

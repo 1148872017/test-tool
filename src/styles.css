@@ -1641,3 +1641,32 @@ body {
   font-size: 13px;
   font-weight: 600;
 }
+/* ===== 参数表格：位置/类型列按内容自适应 ===== */
+/* 参数名：最小 120px，最多 30%，超出省略 */
+.json-table-row .param-name {
+  flex: 0 1 auto;
+  min-width: 120px;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 位置：按内容（Tag 宽度），不换行 */
+.json-table-row .param-in {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+/* 类型：按内容，不换行 */
+.json-table-row .param-type {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+/* 说明：占满剩余 */
+.json-table-row .param-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+}
