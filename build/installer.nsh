@@ -40,10 +40,16 @@
 ; 重复 include 会报 `variable "STR_HAYSTACK" already declared`。
 ; 我们的 customInit 在模板之后展开，那时 StrContains 宏已可用。
 
-; ---- 编译期：显示安装详情 ----
+; ---- 编译期：隐藏安装详情区 ----
+; 为什么隐藏：
+;   electron-builder 的 installSection.nsh 第 6 行有 `SetDetailsPrint none`，
+;   它在解压**之前**执行，关闭了 DetailPrint 输出。
+;   我们的 customInstall 钩子在解压**之后**，即使 SetDetailsPrint both 也来不及——
+;   解压过程本来就没有逐文件输出（7z 一次性解压）。
+;   所以详情区永远是空白的大白框，不如隐藏，只留进度条，界面更干净。
 !macro customHeader
-  ShowInstDetails show
-  ShowUninstDetails show
+  ShowInstDetails nevershow
+  ShowUninstDetails nevershow
 !macroend
 
 ; ---- 安装开始前：覆盖提示 + 进程检查 ----
@@ -121,6 +127,8 @@
 ; 为什么不用「exe 图标」：electron-builder 的 CreateShortCut 用 `$appExe,0`，
 ; 而 keepShortcuts 机制会 Rename 旧快捷方式（不重建），所以图标永远是旧的。
 !macro customInstall
+  ; 详情区已隐藏（ShowInstDetails nevershow），DetailPrint 不显示，
+  ; 但保留 SetDetailsPrint both 以防将来改回显示。
   SetDetailsPrint both
 
   DetailPrint "正在创建快捷方式..."
@@ -137,17 +145,18 @@
   DetailPrint "图标文件：$INSTDIR\$R5"
 
   ; 2. 重建桌面快捷方式，图标指向独立 ico
+  ;    注意：不要 Delete 再 Create —— 那样会破坏 launchLink（安装完成后
+  ;    「运行程序」用的就是 $newStartMenuLink，删了会导致启动失败）。
+  ;    直接 CreateShortCut 覆盖即可（同名会覆盖）。
   ${If} ${FileExists} "$INSTDIR\$R5"
-    Delete "$DESKTOP\${SHORTCUT_NAME}.lnk"
     CreateShortCut "$DESKTOP\${SHORTCUT_NAME}.lnk" "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "" "$INSTDIR\$R5" 0 "" "" "${APP_DESCRIPTION}"
-    DetailPrint "桌面快捷方式已重建"
+    DetailPrint "桌面快捷方式已更新"
   ${EndIf}
 
-  ; 3. 重建开始菜单快捷方式
+  ; 3. 重建开始菜单快捷方式（同上，不删只覆盖）
   ${If} ${FileExists} "$INSTDIR\$R5"
-    Delete "$SMPROGRAMS\${SHORTCUT_NAME}.lnk"
     CreateShortCut "$SMPROGRAMS\${SHORTCUT_NAME}.lnk" "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "" "$INSTDIR\$R5" 0 "" "" "${APP_DESCRIPTION}"
-    DetailPrint "开始菜单快捷方式已重建"
+    DetailPrint "开始菜单快捷方式已更新"
   ${EndIf}
 
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
