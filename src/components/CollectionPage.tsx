@@ -747,6 +747,7 @@ export default function CollectionPage({
         open={!!varTarget}
         text={varTarget && varTarget.data ? String(varTarget.data.sql || '') : ''}
         title="填充变量并复制 SQL"
+        varsRaw={varTarget && varTarget.data ? String(varTarget.data.vars || '') : ''}
         onClose={() => setVarTarget(null)}
       />
 

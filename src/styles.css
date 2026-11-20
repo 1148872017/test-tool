@@ -1545,3 +1545,64 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* ===== 变量说明表格（可编辑）===== */
+.vars-editor .vars-table td {
+  padding: 4px 6px;
+}
+.vars-editor .vars-table th {
+  padding: 6px 8px;
+}
+
+/* ===== 变量填充弹窗 ===== */
+.var-fill-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: #4a5165;
+  padding: 2px 0 10px;
+}
+.var-name-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--primary-soft);
+  color: var(--primary-deep);
+  font-size: 11.5px;
+}
+.var-preview-head {
+  margin: 14px 0 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #4a5165;
+}
+.var-preview {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #f7f8fc;
+  border: 1px solid var(--line-soft);
+  font-size: 12.5px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 260px;
+  overflow: auto;
+}
+/* 变量位置：未填标红，已填标绿 */
+.var-chip {
+  display: inline-block;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.var-chip.missing {
+  background: #ffecec;
+  color: #e5534b;
+  border: 1px solid #ffd0d0;
+}
+.var-chip.filled {
+  background: #e8f7ee;
+  color: #2e9e5b;
+  border: 1px solid #c6ebd5;
+}

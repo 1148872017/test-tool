@@ -135,7 +135,7 @@ const COLLECTIONS = [
       { key: 'name', label: '名称', type: 'text', required: true, placeholder: '如：按订单号查退款流水' },
       { key: 'db', label: '库 / 环境', type: 'text', placeholder: '如：test_order' },
       { key: 'sql', label: 'SQL', type: 'code', required: true, rows: 10, placeholder: 'select * from t_refund where order_no = {{orderNo}}' },
-      { key: 'vars', label: '变量说明', type: 'text', placeholder: '{{orderNo}} = 订单号；{{today}} = 今天' },
+      { key: 'vars', label: '变量说明', type: 'vars', placeholder: '在 SQL 里写 {{orderNo}}，这里填说明' },
       { key: 'note', label: '备注', type: 'textarea', placeholder: '索引、坑点…' }
     ]
   },

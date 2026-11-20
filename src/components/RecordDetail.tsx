@@ -18,6 +18,7 @@ import api from '../api';
 import { toast } from '../msg';
 import { buildCurl, fmtTime, recordToText } from '../utils';
 import JsonTableToggle from './JsonTableToggle';
+import VarsEditor from './VarsEditor';
 import { caseKey, knownCaseKeys, loadCaseIndex } from '../caseIndex';
 import { matchOnlyFor, recentForApi, resultTone, runLine } from '../../shared/runs';
 import VarFillModal from './VarFillModal';
@@ -282,6 +283,8 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
             <pre className="mono">{String(raw)}</pre>
           </div>
         );
+      case 'vars':
+        return <VarsEditor value={String(raw)} onChange={() => {}} readOnly />;
       case 'textarea':
         return <div className="multiline">{String(raw)}</div>;
       default:
