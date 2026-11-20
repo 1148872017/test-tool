@@ -93,6 +93,47 @@ function mergedParams(pathItem, op, root) {
   return Array.from(map.values());
 }
 
+/**
+ * 参数表格数据（给详情页的「参数」表格用）。
+ *
+ * 和 paramLines 的区别：
+ *   paramLines 是给人看的文本摘要（一行一个）
+ *   paramTable 是结构化数据（JSON），详情页可以渲染成表格
+ *
+ * 字段：
+ *   in        位置（query/path/header/cookie）
+ *   name      参数名
+ *   required  是否必填
+ *   type      类型
+ *   example   示例值（有就用，没有留空）
+ *   desc      描述
+ */
+function paramTable(params) {
+  return params
+    .slice()
+    .sort(
+      (a, b) =>
+        (PARAM_ORDER[a.in] === undefined ? 9 : PARAM_ORDER[a.in]) -
+        (PARAM_ORDER[b.in] === undefined ? 9 : PARAM_ORDER[b.in])
+    )
+    .map((p) => {
+      const schema = isObj(p.schema) ? p.schema : {};
+      const type = schema.type || (schema.$ref ? 'ref' : '');
+      let example = '';
+      if (p.example !== undefined) example = String(p.example);
+      else if (schema.example !== undefined) example = String(schema.example);
+      else if (schema.default !== undefined) example = String(schema.default);
+      return {
+        in: p.in || 'query',
+        name: String(p.name || ''),
+        required: !!p.required,
+        type,
+        example,
+        desc: String(p.description || '').replace(/\s+/g, ' ').trim()
+      };
+    });
+}
+
 function paramLines(params) {
   return params
     .slice()
@@ -235,6 +276,32 @@ function buildHeadersText(paramList) {
     lines.push(`${name}: ${val}`);
   }
   return lines.join('\n');
+}
+
+/**
+ * 从响应里生成示例文本（和 buildBodyText 同逻辑，但用于 response）。
+ * 优先 media.example → examples 第一个 → schema 递归挖。
+ */
+function buildResponseExample(resp) {
+  if (!resp) return '';
+  let ex = resp.example;
+  if (ex === undefined && isObj(resp.examples)) {
+    const first = Object.keys(resp.examples)[0];
+    if (first) {
+      const e = resp.examples[first];
+      ex = isObj(e) && e.value !== undefined ? e.value : e;
+    }
+  }
+  if (ex === undefined && isObj(resp.schema)) {
+    ex = exampleFromSchema(resp.schema);
+  }
+  if (ex === undefined || ex === null) return '';
+  if (typeof ex === 'string') return ex;
+  try {
+    return JSON.stringify(ex, null, 2);
+  } catch (e) {
+    return String(ex);
+  }
 }
 
 function pickResponse(op, root) {
@@ -459,6 +526,10 @@ function parseOpenApi(doc) {
         ),
         reqSchema: req ? inlineSchema(req.schema, doc) : '',
         respSchema: resp ? inlineSchema(resp.schema, doc) : '',
+        // 响应示例（Apifox 的「响应示例」页签内容）
+        respExample: buildResponseExample(resp),
+        // 参数表格（结构化，详情页渲染成表格）
+        paramTable: JSON.stringify(paramTable(paramList)),
         // body / headers：从 requestBody 的 example 和 header 参数生成
         // （之前完全没填，导致详情页 Body/Headers 是空的，和 Apifox 差很多）
         body: buildBodyText(req),

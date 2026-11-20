@@ -559,6 +559,38 @@ function baseDoc() {
   check('header 参数转成 headers 文本', wh && wh.headers === 'api_key: <string>', wh && wh.headers);
   check('query 参数不进 headers', wh && wh.headers.indexOf('page') < 0, wh && wh.headers);
 
+  // ---- paramTable / respExample ----
+  const pt = wh && JSON.parse(wh.paramTable || '[]');
+  check('paramTable 是数组', Array.isArray(pt), typeof pt);
+  check('paramTable 含 2 个参数', pt && pt.length === 2, pt && pt.length);
+  check('paramTable 有 in/name/type', pt && pt[0].in && pt[0].name && pt[0].type !== undefined, pt && pt[0]);
+  check('paramTable 标了 required', pt && pt.some((p) => p.required === true), pt);
+
+  const withResp = parseOpenApi({
+    openapi: '3.0.1',
+    info: { title: 't', version: '1' },
+    paths: {
+      '/x': {
+        get: {
+          summary: 'x',
+          responses: {
+            200: {
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { code: { type: 'integer' } } },
+                  example: { code: 0, msg: 'ok' }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+  const xItem = (withResp.items || []).find((it) => it.url === '/x');
+  check('respExample 提取响应示例', xItem && /"code": 0/.test(xItem.respExample), xItem && xItem.respExample);
+  check('respExample 是格式化 JSON', xItem && xItem.respExample.indexOf('\n') > 0, xItem && xItem.respExample);
+
   const pinSet = await call('pin:set', { oldPin: '', pin: '2468' });
   await call('app:lock');
   let lockedErr = null;

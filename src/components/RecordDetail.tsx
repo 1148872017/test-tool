@@ -261,8 +261,8 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
         );
       }
       case 'code':
-        // headers / body 提供「表格 / JSON」切换，其他字段保持 JSON
-        if (f.key === 'headers' || f.key === 'body') {
+        // headers / body / paramTable / respExample 提供「表格 / JSON」切换
+        if (['headers', 'body', 'paramTable', 'respExample'].includes(f.key)) {
           return <JsonTableToggle fieldKey={f.key} raw={String(raw)} />;
         }
         return (

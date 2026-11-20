@@ -144,8 +144,10 @@ const COLLECTIONS = [
       { key: 'params', label: '参数摘要', type: 'code', rows: 4, formHidden: true },
       // 参数的结构化快照：只给「变更 diff」用，界面上不出现
       { key: 'paramSpec', label: '参数快照', type: 'code', formHidden: true, hideInDetail: true },
+      { key: 'paramTable', label: '参数', type: 'code', formHidden: true },
       { key: 'reqSchema', label: '请求 Schema', type: 'code', rows: 8, formHidden: true },
       { key: 'respSchema', label: '响应 Schema', type: 'code', rows: 8, formHidden: true },
+      { key: 'respExample', label: '响应示例', type: 'code', rows: 8, formHidden: true },
       { key: 'completeness', label: '完整度', type: 'select', options: COMPLETENESS_OPTIONS, formHidden: true },
       { key: 'source', label: '来源', type: 'select', options: SOURCE_OPTIONS, default: 'manual', formHidden: true },
       { key: 'syncedAt', label: '同步于', type: 'datetime', formHidden: true },
