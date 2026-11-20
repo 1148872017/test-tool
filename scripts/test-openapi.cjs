@@ -492,6 +492,73 @@ function baseDoc() {
   const swag = await call('apis:sync', { file: swaggerFile });
   check('Swagger 2.0 文件给出「重新导出 OpenAPI 3」提示', swag && swag.ok === false && swag.message.indexOf('OpenAPI 3') >= 0, swag);
 
+  // ---- body / headers 从 requestBody 的 example 和 header 参数生成 ----
+  const { parseOpenApi } = require(path.join(__dirname, '..', 'electron', 'openapi.js'));
+  const withBody = parseOpenApi({
+    openapi: '3.0.1',
+    info: { title: 't', version: '1' },
+    paths: {
+      '/pet': {
+        post: {
+          summary: '新建宠物',
+          tags: ['宠物'],
+          requestBody: {
+            content: {
+              'application/x-www-form-urlencoded': {
+                schema: { type: 'object', properties: { name: { type: 'string' }, status: { type: 'string' } } },
+                example: { name: 'Hello Kitty', status: 'sold' }
+              }
+            }
+          }
+        }
+      },
+      '/item': {
+        post: {
+          summary: '新建条目',
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: { type: 'object', properties: { id: { type: 'integer' } } },
+                example: { id: 1, name: 'x' }
+              }
+            }
+          }
+        }
+      },
+      '/plain': {
+        post: {
+          summary: '无示例',
+          requestBody: {
+            content: { 'application/json': { schema: { type: 'object', properties: {} } } }
+          }
+        }
+      },
+      '/withHeader': {
+        get: {
+          summary: '带 header 参数',
+          parameters: [
+            { name: 'api_key', in: 'header', required: true, schema: { type: 'string' } },
+            { name: 'page', in: 'query', schema: { type: 'integer' } }
+          ]
+        }
+      }
+    }
+  });
+  const byUrl = (u) => (withBody.items || []).find((it) => it.url === u);
+
+  const pet = byUrl('/pet');
+  check('form-urlencoded 的 example 转成 key=value', pet && pet.body === 'name=Hello%20Kitty&status=sold', pet && pet.body);
+
+  const item = byUrl('/item');
+  check('JSON 的 example 转成格式化 JSON', item && /"id": 1/.test(item.body), item && item.body);
+
+  const plain = byUrl('/plain');
+  check('没有 example 时 body 为空', plain && plain.body === '', plain && plain.body);
+
+  const wh = byUrl('/withHeader');
+  check('header 参数转成 headers 文本', wh && wh.headers === 'api_key: <string>', wh && wh.headers);
+  check('query 参数不进 headers', wh && wh.headers.indexOf('page') < 0, wh && wh.headers);
+
   const pinSet = await call('pin:set', { oldPin: '', pin: '2468' });
   await call('app:lock');
   let lockedErr = null;

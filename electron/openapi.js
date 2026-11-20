@@ -126,7 +126,115 @@ function pickContent(node, root) {
   const type = types.indexOf('application/json') >= 0 ? 'application/json' : types[0];
   const media = resolveRefs(content[type], root);
   if (!isObj(media)) return null;
-  return { type, schema: media.schema, hasExample: hasExample(media) };
+  return {
+    type,
+    schema: media.schema,
+    hasExample: hasExample(media),
+    // 保留 example 原文，用来填 body（Apifox 的「示例值」就在这里）
+    example: media.example,
+    examples: media.examples
+  };
+}
+
+/**
+ * 从 requestBody 生成 body 文本。
+ *
+ * 优先级：
+ *   1. media.example（Apifox 导出的示例值，最有用）
+ *   2. media.examples 里第一个
+ *   3. schema 里的 example / default 拼一个
+ *   4. 空
+ *
+ * 格式：
+ *   - application/json → 格式化 JSON
+ *   - x-www-form-urlencoded → key=value&key=value
+ *   - 其他 → JSON 字符串
+ */
+function buildBodyText(req) {
+  if (!req) return '';
+  const ct = String(req.type || '').toLowerCase();
+
+  // 1/2. 直接有 example
+  let ex = req.example;
+  if (ex === undefined && isObj(req.examples)) {
+    const first = Object.keys(req.examples)[0];
+    if (first) {
+      const e = req.examples[first];
+      ex = isObj(e) && e.value !== undefined ? e.value : e;
+    }
+  }
+
+  // 3. 从 schema 里挖 example
+  if (ex === undefined && isObj(req.schema)) {
+    ex = exampleFromSchema(req.schema);
+  }
+
+  if (ex === undefined || ex === null) return '';
+
+  // 按媒体类型格式化
+  if (ct.includes('x-www-form-urlencoded')) {
+    if (isObj(ex)) {
+      return Object.keys(ex)
+        .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(String(ex[k]))}`)
+        .join('&');
+    }
+    return String(ex);
+  }
+
+  if (typeof ex === 'string') return ex;
+  try {
+    return JSON.stringify(ex, null, 2);
+  } catch (e) {
+    return String(ex);
+  }
+}
+
+/** 从 schema 树里挖一个示例对象（递归，最多 3 层） */
+function exampleFromSchema(schema, depth = 0) {
+  if (!isObj(schema) || depth > 3) return undefined;
+  if (schema.example !== undefined) return schema.example;
+  if (schema.default !== undefined) return schema.default;
+
+  if (schema.type === 'object' && isObj(schema.properties)) {
+    const out = {};
+    let any = false;
+    for (const k of Object.keys(schema.properties)) {
+      const v = exampleFromSchema(schema.properties[k], depth + 1);
+      if (v !== undefined) {
+        out[k] = v;
+        any = true;
+      }
+    }
+    return any ? out : undefined;
+  }
+  if (schema.type === 'array' && isObj(schema.items)) {
+    const v = exampleFromSchema(schema.items, depth + 1);
+    return v !== undefined ? [v] : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * 从 parameters 里提取 header 参数，生成 headers 文本。
+ * 只取 in=header 的，query/path 不算。
+ */
+function buildHeadersText(paramList) {
+  const lines = [];
+  for (const p of paramList || []) {
+    if (String(p.in || '').toLowerCase() !== 'header') continue;
+    const name = String(p.name || '').trim();
+    if (!name) continue;
+    // 有 example 用 example，否则用类型占位
+    let val = '';
+    if (isObj(p.schema)) {
+      if (p.schema.example !== undefined) val = String(p.schema.example);
+      else if (p.schema.default !== undefined) val = String(p.schema.default);
+      else if (p.schema.type) val = `<${p.schema.type}>`;
+    }
+    if (!val && p.example !== undefined) val = String(p.example);
+    lines.push(`${name}: ${val}`);
+  }
+  return lines.join('\n');
 }
 
 function pickResponse(op, root) {
@@ -351,6 +459,10 @@ function parseOpenApi(doc) {
         ),
         reqSchema: req ? inlineSchema(req.schema, doc) : '',
         respSchema: resp ? inlineSchema(resp.schema, doc) : '',
+        // body / headers：从 requestBody 的 example 和 header 参数生成
+        // （之前完全没填，导致详情页 Body/Headers 是空的，和 Apifox 差很多）
+        body: buildBodyText(req),
+        headers: buildHeadersText(paramList),
         completeness: !summary && !desc ? 'missing-desc' : hasEx ? 'ok' : 'missing-example',
         source: 'openapi'
       });
