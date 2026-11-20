@@ -357,7 +357,10 @@ function baseDoc() {
   const afterChange = store.get(refundRec.id);
   check('描述变了会更新这条', s3.updated === 1 && afterChange.data.summary.indexOf('改过的描述') >= 0, s3);
   check('myNote 不被覆盖', afterChange.data.myNote === '回调有 3 秒延迟', afterChange.data.myNote);
-  check('headers / body / note 不被覆盖', afterChange.data.headers === 'X-A: 1' && afterChange.data.body === '{"a":1}' && afterChange.data.note === '手写备注');
+  // headers / body 现在由同步管理（v0.27.1 起从 openapi 的 example 生成），
+  // 只有 note / myNote 这类「用户字段」不被覆盖
+  check('note 不被覆盖', afterChange.data.note === '手写备注', afterChange.data.note);
+  check('headers 由同步更新（不再保留手填值）', afterChange.data.headers !== 'X-A: 1', afterChange.data.headers);
   check('tags / favorite 保留', afterChange.tags.indexOf('退款') >= 0 && afterChange.favorite === true, { tags: afterChange.tags, fav: afterChange.favorite });
   check('只改描述 → 不算「有变更」（updated 但 changed=0）', s3.updated === 1 && s3.changed === 0, { updated: s3.updated, changed: s3.changed });
   check('没变更时不写 lastChange', !afterChange.data.lastChange, afterChange.data.lastChange);
@@ -590,6 +593,16 @@ function baseDoc() {
   const xItem = (withResp.items || []).find((it) => it.url === '/x');
   check('respExample 提取响应示例', xItem && /"code": 0/.test(xItem.respExample), xItem && xItem.respExample);
   check('respExample 是格式化 JSON', xItem && xItem.respExample.indexOf('\n') > 0, xItem && xItem.respExample);
+
+  // ---- 关键：同步白名单必须包含所有新字段 ----
+  // v0.27.1/0.27.2 的 bug：解析对了但 store 的白名单漏了字段，存不进去
+  const storeSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'store.js'), 'utf8');
+  const m = /const API_SYNCED_KEYS = \[([\s\S]*?)\];/.exec(storeSrc);
+  const syncedKeys = m ? m[1].match(/'([^']+)'/g).map((s) => s.replace(/'/g, '')) : [];
+  const REQUIRED_KEYS = ['body', 'headers', 'paramTable', 'respExample', 'reqSchema', 'respSchema'];
+  for (const k of REQUIRED_KEYS) {
+    check(`同步白名单含 ${k}`, syncedKeys.includes(k), syncedKeys);
+  }
 
   const pinSet = await call('pin:set', { oldPin: '', pin: '2468' });
   await call('app:lock');

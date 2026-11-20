@@ -451,7 +451,30 @@ function counts() {
  * ------------------------------------------------------------------ */
 
 /** 同步会覆盖的字段（syncedAt / lastChange 单独处理，不参与「有没有变」的比对） */
-const API_SYNCED_KEYS = ['name', 'method', 'url', 'module', 'summary', 'params', 'paramSpec', 'reqSchema', 'respSchema', 'completeness', 'source'];
+/**
+ * 同步时从 openapi 记录里取哪些字段。
+ *
+ * 注意：这是白名单，新增字段必须加进来，否则同步时会被静默丢弃。
+ * （v0.27.1/0.27.2 的 body/headers/paramTable/respExample 就是因为漏了这里，
+ *   解析对了但存不进去，详情页一直显示「—」。）
+ */
+const API_SYNCED_KEYS = [
+  'name',
+  'method',
+  'url',
+  'module',
+  'summary',
+  'params',
+  'paramSpec',
+  'paramTable',
+  'reqSchema',
+  'respSchema',
+  'respExample',
+  'headers',
+  'body',
+  'completeness',
+  'source'
+];
 
 /** 最近一次同步里「有实质变更」的接口（附关联用例），供界面重新打开影响面清单 */
 function lastSyncChanges() {
