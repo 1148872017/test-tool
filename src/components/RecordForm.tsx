@@ -231,7 +231,7 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
       case 'scene':
         return <ScenePicker value={v} onChange={(next) => set(f.key, next)} placeholder={f.placeholder} />;
       case 'vars':
-        return <VarsEditor value={v} onChange={(next) => set(f.key, next)} />;
+        return <VarsEditor value={v} onChange={(next) => set(f.key, next)} sqlText={String(data.sql || '')} />;
       case 'code':
       case 'markdown':
         return (

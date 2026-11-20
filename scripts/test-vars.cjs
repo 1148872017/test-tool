@@ -8,10 +8,11 @@ const esbuild = require(path.join(__dirname, '..', 'node_modules', 'esbuild'));
 const fs = require('fs');
 
 const tsx = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'VarsEditor.tsx'), 'utf8');
-// 只保留纯函数部分（去掉 React 组件）
+// 只保留纯函数部分：从文件开头到 `export default function VarsEditor` 之前
+const cut = tsx.indexOf('export default function VarsEditor');
 const pure = tsx
+  .slice(0, cut)
   .replace(/^import .*$/gm, '')
-  .replace(/export default function VarsEditor[\s\S]*$/, '')
   .replace(/export function/g, 'function');
 
 const code = pure + '\nmodule.exports = { parseVars, serializeVars };';
@@ -62,7 +63,16 @@ const s1 = serializeVars([{ name: 'a', value: '1', desc: 'x' }]);
 check('序列化：是 JSON', s1.startsWith('['), s1);
 check('序列化：能反解', parseVars(s1)[0].name === 'a', parseVars(s1));
 check('序列化：空数组返回空串', serializeVars([]) === '', serializeVars([]));
-check('序列化：过滤空 name', serializeVars([{ name: '', value: '1', desc: 'x' }]) === '', serializeVars([{ name: '', value: '1', desc: 'x' }]));
+
+// 关键回归：新增的空行不能被过滤掉（否则「添加变量」点了没反应）
+const emptyRow = [{ name: '', value: '', desc: '' }];
+check('序列化：保留空 name 的新行', serializeVars(emptyRow) !== '', serializeVars(emptyRow));
+check('序列化：空行能反解回来', parseVars(serializeVars(emptyRow)).length === 1, parseVars(serializeVars(emptyRow)));
+check('序列化：空数组才返回空串', serializeVars([]) === '', serializeVars([]));
+
+// 只填了说明没填 name 的行也要保留
+const descOnly = [{ name: '', value: '', desc: '订单号' }];
+check('序列化：只填说明也保留', serializeVars(descOnly) !== '', serializeVars(descOnly));
 
 /* ---------- 5. 往返 ---------- */
 const rows = [{ name: 'a', value: '1', desc: 'A' }, { name: 'b', value: '', desc: 'B' }];

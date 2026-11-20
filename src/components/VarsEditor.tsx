@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Input, Button } from 'antd';
-import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, ImportOutlined } from '@ant-design/icons';
+import { toast } from '../msg';
 
 type Row = { name: string; value: string; desc: string };
 
@@ -10,6 +11,8 @@ type Props = {
   onChange: (next: string) => void;
   /** 只读模式（详情页展示用） */
   readOnly?: boolean;
+  /** SQL 原文，用来「从 SQL 提取」变量 */
+  sqlText?: string;
 };
 
 /**
@@ -63,14 +66,19 @@ export function parseVars(raw: string): Row[] {
   return rows;
 }
 
-/** 序列化成存储格式 */
+/**
+ * 序列化成存储格式。
+ *
+ * **不做任何过滤**——用户点「添加变量」时新行是全空的，
+ * 过滤掉会导致「点了没反应」（行加不进去）。
+ * 空行留着，用户接着填就行；保存时后端也不介意。
+ */
 export function serializeVars(rows: Row[]): string {
-  const clean = rows.filter((r) => r.name.trim());
-  if (!clean.length) return '';
-  return JSON.stringify(clean);
+  if (!rows.length) return '';
+  return JSON.stringify(rows);
 }
 
-export default function VarsEditor({ value, onChange, readOnly }: Props) {
+export default function VarsEditor({ value, onChange, readOnly, sqlText }: Props) {
   const rows = useMemo(() => parseVars(value), [value]);
 
   const update = (next: Row[]) => onChange(serializeVars(next));
@@ -84,6 +92,29 @@ export default function VarsEditor({ value, onChange, readOnly }: Props) {
   const addRow = () => update(rows.concat([{ name: '', value: '', desc: '' }]));
 
   const removeRow = (i: number) => update(rows.filter((_, idx) => idx !== i));
+
+  /** 从 SQL 里提取 {{var}}，补进表格（已有的保留说明） */
+  const extractFromSql = () => {
+    const text = String(sqlText || '');
+    const found: string[] = [];
+    const re = /\{\{\s*([^{}]+?)\s*\}\}/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+      const n = m[1].trim();
+      if (n && !found.includes(n)) found.push(n);
+    }
+    if (!found.length) {
+      return { added: 0, total: 0 };
+    }
+    const existing = new Map(rows.map((r) => [r.name, r]));
+    const next = found.map((n) => existing.get(n) || { name: n, value: '', desc: '' });
+    // 保留用户手动加的、SQL 里没有的行
+    for (const r of rows) {
+      if (r.name && !found.includes(r.name)) next.push(r);
+    }
+    update(next);
+    return { added: found.filter((n) => !existing.has(n)).length, total: found.length };
+  };
 
   if (readOnly) {
     if (!rows.length) return <span className="muted">—</span>;
@@ -167,10 +198,27 @@ export default function VarsEditor({ value, onChange, readOnly }: Props) {
           ) : null}
         </tbody>
       </table>
-      <div style={{ marginTop: 6 }}>
+      <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
         <Button size="small" type="link" icon={<PlusOutlined />} onClick={addRow}>
           添加变量
         </Button>
+        {sqlText !== undefined ? (
+          <Button
+            size="small"
+            type="link"
+            icon={<ImportOutlined />}
+            onClick={() => {
+              const r = extractFromSql();
+              if (!r.total) {
+                toast('SQL 里没有 {{变量}} 占位符', 'warning');
+              } else {
+                toast(`从 SQL 提取 ${r.total} 个变量${r.added ? `（新增 ${r.added} 个）` : ''}`);
+              }
+            }}
+          >
+            从 SQL 提取
+          </Button>
+        ) : null}
       </div>
     </div>
   );
