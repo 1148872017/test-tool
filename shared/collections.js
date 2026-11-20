@@ -46,6 +46,22 @@ const SOURCE_OPTIONS = [
   { value: 'openapi', label: 'Apifox', color: 'blue' }
 ];
 
+/**
+ * Body 的媒体类型（和 Apifox 的 Body 页签一致）。
+ * 只用于展示「这个接口的 body 是什么格式」，不参与解析。
+ */
+const BODY_TYPE_OPTIONS = [
+  { value: 'none', label: 'none', color: 'default' },
+  { value: 'form-data', label: 'form-data', color: 'purple' },
+  { value: 'x-www-form-urlencoded', label: 'x-www-form-urlencoded', color: 'blue' },
+  { value: 'json', label: 'JSON', color: 'cyan' },
+  { value: 'xml', label: 'XML', color: 'orange' },
+  { value: 'text', label: 'Text', color: 'default' },
+  { value: 'binary', label: 'Binary', color: 'default' },
+  { value: 'graphql', label: 'GraphQL', color: 'magenta' },
+  { value: 'msgpack', label: 'msgpack', color: 'default' }
+];
+
 /** 测试执行：一次跑批 = 一条记录（接口测试 / 压测） */
 const RUN_KIND_OPTIONS = [
   { value: 'api', label: '接口测试', color: 'blue' },
@@ -157,6 +173,8 @@ const COLLECTIONS = [
       { key: 'myNote', label: '我的备注', type: 'textarea', placeholder: '能不能测、坑在哪、要哪个账号 —— 这些 Apifox 里没有' },
       { key: 'headers', label: 'Headers', type: 'code', rows: 5, placeholder: 'Content-Type: application/json\nAuthorization: Bearer {{token}}' },
       { key: 'body', label: 'Body', type: 'code', rows: 8, placeholder: '{"orderNo": "{{orderNo}}"}' },
+      // body 的媒体类型（和 Apifox 的 Body 页签一致）
+      { key: 'bodyType', label: 'Body 类型', type: 'select', options: BODY_TYPE_OPTIONS, formHidden: true },
       { key: 'note', label: '其他备注', type: 'textarea', placeholder: '前置条件、返回字段…' }
     ]
   },
@@ -237,6 +255,7 @@ module.exports = {
   METHOD_OPTIONS,
   COMPLETENESS_OPTIONS,
   SOURCE_OPTIONS,
+  BODY_TYPE_OPTIONS,
   RUN_KIND_OPTIONS,
   RUN_RESULT_OPTIONS
 };

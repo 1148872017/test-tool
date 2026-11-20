@@ -472,6 +472,7 @@ const API_SYNCED_KEYS = [
   'respExample',
   'headers',
   'body',
+  'bodyType',
   'completeness',
   'source'
 ];

@@ -158,6 +158,24 @@ function hasExample(node, depth = 0) {
   return false;
 }
 
+/**
+ * 把 OpenAPI 的媒体类型映射成我们的 bodyType 枚举。
+ * 和 shared/collections.js 的 BODY_TYPE_OPTIONS 对应。
+ */
+function mapBodyType(contentType) {
+  const ct = String(contentType || '').toLowerCase();
+  if (!ct) return 'none';
+  if (ct.includes('x-www-form-urlencoded')) return 'x-www-form-urlencoded';
+  if (ct.includes('multipart/form-data')) return 'form-data';
+  if (ct.includes('application/json')) return 'json';
+  if (ct.includes('xml')) return 'xml';
+  if (ct.includes('graphql')) return 'graphql';
+  if (ct.includes('msgpack')) return 'msgpack';
+  if (ct.includes('octet-stream') || ct.includes('image/') || ct.includes('application/pdf')) return 'binary';
+  if (ct.startsWith('text/')) return 'text';
+  return 'text';
+}
+
 /** 在 content 里挑一个媒体类型（优先 application/json） */
 function pickContent(node, root) {
   const content = node && node.content;
@@ -533,6 +551,8 @@ function parseOpenApi(doc) {
         // body / headers：从 requestBody 的 example 和 header 参数生成
         // （之前完全没填，导致详情页 Body/Headers 是空的，和 Apifox 差很多）
         body: buildBodyText(req),
+        // body 的媒体类型（x-www-form-urlencoded / JSON / form-data …）
+        bodyType: req ? mapBodyType(req.type) : 'none',
         headers: buildHeadersText(paramList),
         completeness: !summary && !desc ? 'missing-desc' : hasEx ? 'ok' : 'missing-example',
         source: 'openapi'

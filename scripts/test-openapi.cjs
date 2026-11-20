@@ -551,12 +551,15 @@ function baseDoc() {
 
   const pet = byUrl('/pet');
   check('form-urlencoded 的 example 转成 key=value', pet && pet.body === 'name=Hello%20Kitty&status=sold', pet && pet.body);
+  check('bodyType 是 x-www-form-urlencoded', pet && pet.bodyType === 'x-www-form-urlencoded', pet && pet.bodyType);
 
   const item = byUrl('/item');
   check('JSON 的 example 转成格式化 JSON', item && /"id": 1/.test(item.body), item && item.body);
+  check('bodyType 是 json', item && item.bodyType === 'json', item && item.bodyType);
 
   const plain = byUrl('/plain');
   check('没有 example 时 body 为空', plain && plain.body === '', plain && plain.body);
+  check('没有 requestBody 时 bodyType 是 none', byUrl('/withHeader') && byUrl('/withHeader').bodyType === 'none', byUrl('/withHeader') && byUrl('/withHeader').bodyType);
 
   const wh = byUrl('/withHeader');
   check('header 参数转成 headers 文本', wh && wh.headers === 'api_key: <string>', wh && wh.headers);
@@ -599,7 +602,7 @@ function baseDoc() {
   const storeSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'store.js'), 'utf8');
   const m = /const API_SYNCED_KEYS = \[([\s\S]*?)\];/.exec(storeSrc);
   const syncedKeys = m ? m[1].match(/'([^']+)'/g).map((s) => s.replace(/'/g, '')) : [];
-  const REQUIRED_KEYS = ['body', 'headers', 'paramTable', 'respExample', 'reqSchema', 'respSchema'];
+  const REQUIRED_KEYS = ['body', 'bodyType', 'headers', 'paramTable', 'respExample', 'reqSchema', 'respSchema'];
   for (const k of REQUIRED_KEYS) {
     check(`同步白名单含 ${k}`, syncedKeys.includes(k), syncedKeys);
   }
