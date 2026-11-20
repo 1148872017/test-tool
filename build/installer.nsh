@@ -126,6 +126,31 @@
 ;
 ; 为什么不用「exe 图标」：electron-builder 的 CreateShortCut 用 `$appExe,0`，
 ; 而 keepShortcuts 机制会 Rename 旧快捷方式（不重建），所以图标永远是旧的。
+; ---- 自定义完成页：自己控制「运行程序」----
+; 为什么替换 electron-builder 的完成页：
+;   它的 StartApp 用 `StdUtils.ExecShellAsUser $launchLink`，
+;   而 $launchLink 指向开始菜单快捷方式（我们的 customInstall 会覆盖它，
+;   explorer 可能还没索引到 → 启动失败）。
+;
+; 这里自己实现：用 `ExecShell` 直接启动 **exe**（不走快捷方式）。
+; 注意：不能用 StdUtils.ExecShellAsUser —— 它在 customFinishPage 展开时
+; 还没加载（StdUtils.nsh 在模板更后面才 include）。
+; ExecShell 会以当前用户身份启动（安装器虽是提权的，但 ShellExecute 默认继承 explorer 的令牌）。
+!macro customFinishPage
+  !ifndef HIDE_RUN_AFTER_FINISH
+    Function StartApp
+      ; 直接启动 exe，不用 $launchLink（快捷方式可能刚被覆盖）
+      ExecShell "open" "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+    FunctionEnd
+
+    !define MUI_FINISHPAGE_RUN
+    !define MUI_FINISHPAGE_RUN_FUNCTION "StartApp"
+    !define MUI_FINISHPAGE_RUN_TEXT "运行 ${PRODUCT_NAME}"
+  !endif
+  !insertmacro MUI_PAGE_FINISH
+!macroend
+
+; ---- 安装完成后：刷新图标 ----
 !macro customInstall
   ; 详情区已隐藏（ShowInstDetails nevershow），DetailPrint 不显示，
   ; 但保留 SetDetailsPrint both 以防将来改回显示。
