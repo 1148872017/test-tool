@@ -17,6 +17,7 @@ import DOMPurify from 'dompurify';
 import api from '../api';
 import { toast } from '../msg';
 import { buildCurl, fmtTime, recordToText } from '../utils';
+import JsonTableToggle from './JsonTableToggle';
 import { caseKey, knownCaseKeys, loadCaseIndex } from '../caseIndex';
 import { matchOnlyFor, recentForApi, resultTone, runLine } from '../../shared/runs';
 import VarFillModal from './VarFillModal';
@@ -260,6 +261,10 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
         );
       }
       case 'code':
+        // headers / body 提供「表格 / JSON」切换，其他字段保持 JSON
+        if (f.key === 'headers' || f.key === 'body') {
+          return <JsonTableToggle fieldKey={f.key} raw={String(raw)} />;
+        }
         return (
           <div className="code-block">
             <pre className="mono">{String(raw)}</pre>

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Table, Input, Button, Tag, Popconfirm, Segmented, Select } from 'antd';
+import { Table, Input, Button, Tag, Popconfirm, Segmented, Select, Dropdown } from 'antd';
 import {
   PlusOutlined,
   ReloadOutlined,
@@ -14,7 +14,9 @@ import {
   InboxOutlined,
   TagOutlined,
   CloudDownloadOutlined,
-  BarChartOutlined
+  BarChartOutlined,
+  DownOutlined,
+  ImportOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
@@ -25,6 +27,7 @@ import VarFillModal from './VarFillModal';
 import SyncResultModal from './SyncResultModal';
 import ChangeImpactModal from './ChangeImpactModal';
 import ImportReportModal from './ImportReportModal';
+import CurlImportModal from './CurlImportModal';
 import { asArray, fieldOptions, getOptionsSync, loadOptions, OptionsMap } from '../options';
 
 type Props = {
@@ -58,6 +61,10 @@ export default function CollectionPage({
   const [detail, setDetail] = useState<any>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [formRecord, setFormRecord] = useState<any>(null);
+  // cURL 导入：解析结果作为表单预填值
+  const [curlOpen, setCurlOpen] = useState(false);
+  const [formPrefill, setFormPrefill] = useState<any>(null);
+  const [formWarnings, setFormWarnings] = useState<any[]>([]);
   const [varTarget, setVarTarget] = useState<any>(null);
   const [linkMap, setLinkMap] = useState<Record<string, string>>({});
   const [envFilter, setEnvFilter] = useState('');
@@ -254,6 +261,23 @@ export default function CollectionPage({
 
   const openCreate = () => {
     setFormRecord(null);
+    setFormPrefill(null);
+    setFormWarnings([]);
+    setFormOpen(true);
+  };
+
+  /** cURL 解析完成 → 关弹窗，用解析结果预填表单 */
+  const onCurlImport = (parsed: any) => {
+    setFormRecord(null);
+    setFormPrefill({
+      name: parsed.name || '',
+      method: parsed.method || 'GET',
+      url: parsed.url || '',
+      headers: parsed.headers || '',
+      body: parsed.body || '',
+      source: 'cURL 导入'
+    });
+    setFormWarnings(parsed.warnings || []);
     setFormOpen(true);
   };
 
@@ -484,11 +508,6 @@ export default function CollectionPage({
           <div className="page-desc">{conf.desc}</div>
         </div>
         <div className="page-head-right">
-          {conf.sync === 'openapi' ? (
-            <Button icon={<CloudDownloadOutlined />} onClick={doSync} loading={syncing}>
-              从 Apifox 同步
-            </Button>
-          ) : null}
           {conf.key === 'runs' ? (
             <Button icon={<BarChartOutlined />} onClick={() => setReportOpen(true)}>
               导入压测报告
@@ -508,9 +527,33 @@ export default function CollectionPage({
           <Button icon={<ReloadOutlined />} onClick={loadAll}>
             刷新
           </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新增
-          </Button>
+          {conf.sync === 'openapi' || conf.key === 'apis' ? (
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: [
+                  { key: 'manual', label: '手动新增', icon: <PlusOutlined /> },
+                  { key: 'curl', label: '粘贴 cURL 导入', icon: <ImportOutlined /> },
+                  ...(conf.sync === 'openapi'
+                    ? [{ key: 'apifox', label: '从 Apifox 同步', icon: <CloudDownloadOutlined /> }]
+                    : [])
+                ],
+                onClick: ({ key }) => {
+                  if (key === 'manual') openCreate();
+                  else if (key === 'curl') setCurlOpen(true);
+                  else if (key === 'apifox') doSync();
+                }
+              }}
+            >
+              <Button type="primary" icon={<PlusOutlined />} loading={syncing}>
+                新增 <DownOutlined style={{ fontSize: 10, marginLeft: 2 }} />
+              </Button>
+            </Dropdown>
+          ) : (
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              新增
+            </Button>
+          )}
         </div>
       </div>
 
@@ -690,6 +733,8 @@ export default function CollectionPage({
         open={formOpen}
         conf={conf}
         record={formRecord}
+        prefill={formPrefill}
+        warnings={formWarnings}
         onClose={() => setFormOpen(false)}
         onSaved={(saved: any) => {
           loadAll();
@@ -723,6 +768,8 @@ export default function CollectionPage({
       {conf.key === 'runs' ? (
         <ImportReportModal open={reportOpen} onClose={() => setReportOpen(false)} onImport={importReport} />
       ) : null}
+
+      <CurlImportModal open={curlOpen} onClose={() => setCurlOpen(false)} onImport={onCurlImport} />
     </div>
   );
 }

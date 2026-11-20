@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Modal, Input, Select, DatePicker, Switch } from 'antd';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Modal, Input, Select, DatePicker, Switch, Tooltip } from 'antd';
 import dayjs from 'dayjs';
 import api from '../api';
 import { toast } from '../msg';
@@ -11,6 +11,10 @@ type Props = {
   open: boolean;
   conf: any;
   record: any;
+  /** cURL 导入的预填值（和 record 互斥：record 有值时忽略 prefill） */
+  prefill?: any;
+  /** 字段级提示（来自 cURL 解析），按 field 分组挂到对应字段旁 */
+  warnings?: { field: string; text: string }[];
   onClose: () => void;
   onSaved: (rec: any) => void;
 };
@@ -57,11 +61,22 @@ function buildLinkOptions(
   };
 }
 
-export default function RecordForm({ open, conf, record, onClose, onSaved }: Props) {
+export default function RecordForm({ open, conf, record, prefill, warnings, onClose, onSaved }: Props) {
   const [data, setData] = useState<any>({});
   const [tagArr, setTagArr] = useState<string[]>([]);
   const [favorite, setFavorite] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  /** 按字段分组 warnings，供标签旁的 ? 使用 */
+  const warnByField = useMemo(() => {
+    const map: Record<string, { field: string; text: string }[]> = {};
+    for (const w of warnings || []) {
+      if (!w || !w.field) continue;
+      if (!map[w.field]) map[w.field] = [];
+      map[w.field].push(w);
+    }
+    return map;
+  }, [warnings]);
   const [linkOptions, setLinkOptions] = useState<Record<string, any[]>>({});
   const [linkEnv, setLinkEnv] = useState<Record<string, Record<string, any>>>({});
   const [opts, setOpts] = useState<OptionsMap>(getOptionsSync());
@@ -70,8 +85,10 @@ export default function RecordForm({ open, conf, record, onClose, onSaved }: Pro
     if (!open) return;
     loadOptions().then(setOpts).catch(() => {});
     const init: any = {};
+    // record 优先（编辑已有记录），否则用 prefill（cURL 导入）
+    const source = record && record.data ? record.data : prefill || {};
     for (const f of conf.fields) {
-      const raw = record && record.data ? record.data[f.key] : undefined;
+      const raw = source[f.key];
       if (f.type === 'multiselect') {
         init[f.key] = raw !== undefined ? asArray(raw) : asArray(f.default);
       } else {
@@ -81,7 +98,7 @@ export default function RecordForm({ open, conf, record, onClose, onSaved }: Pro
     setData(init);
     setTagArr(asArray((record && record.tags) || []));
     setFavorite(!!(record && record.favorite));
-  }, [open, record, conf]);
+  }, [open, record, prefill, conf]);
 
   useEffect(() => {
     if (!open) return;
@@ -254,6 +271,19 @@ export default function RecordForm({ open, conf, record, onClose, onSaved }: Pro
             <div className="kv-label">
               {f.label}
               {f.required ? <span style={{ color: '#e5534b' }}> *</span> : null}
+              {warnByField[f.key] && warnByField[f.key].length ? (
+                <Tooltip
+                  title={
+                    <ol className="field-warn-list">
+                      {warnByField[f.key].map((w: any, i: number) => (
+                        <li key={i}>{w.text}</li>
+                      ))}
+                    </ol>
+                  }
+                >
+                  <span className="field-warn-mark">?</span>
+                </Tooltip>
+              ) : null}
             </div>
             {renderField(f)}
             {f.hint ? <div className="form-hint muted">{f.hint}</div> : null}
