@@ -50,7 +50,11 @@ const out = esbuild.transformSync(tsx, { loader: 'tsx', format: 'cjs', jsx: 'tra
 check('MetricsTable 能转译', out.code.length > 0, out.code.length);
 check('MetricsTable 处理 perf 分支', /isPerf/.test(out.code), 'no isPerf');
 check('MetricsTable 处理 api 分支', /passCount/.test(out.code), 'no passCount');
-check('MetricsTable 分位合并成一行', /P90/.test(out.code) && /P95/.test(out.code) && /P99/.test(out.code), 'no pct');
+check('MetricsTable 分位拆成独立列', /P90 \(ms\)/.test(out.code) && /P95 \(ms\)/.test(out.code) && /P99 \(ms\)/.test(out.code), 'no pct cols');
+// 横向 2 行 N 列：thead 一行指标名，tbody 一行值（检查源码，转译后 JSX 会变成 createElement）
+check('MetricsTable 是横向布局（thead 遍历 cols）', /<thead>[\s\S]*?cols\.map/.test(tsx), 'not horizontal');
+check('MetricsTable 只有一行 tbody', (tsx.match(/<tr>/g) || []).length === 2, (tsx.match(/<tr>/g) || []).length);
+check('MetricsTable 不再有「指标/值」两列', !/指标<\/th>/.test(tsx), 'still vertical');
 
 /* ---------- 3. ScenePicker 的匹配逻辑 ---------- */
 const picker = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'ScenePicker.tsx'), 'utf8');

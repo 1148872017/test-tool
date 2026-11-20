@@ -1627,3 +1627,17 @@ body {
 .metrics-table th {
   padding: 6px 10px;
 }
+/* 压测指标表格：横向 2 行 N 列 */
+.metrics-table th {
+  padding: 6px 10px;
+  text-align: center;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.metrics-table td {
+  padding: 8px 10px;
+  text-align: center;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
