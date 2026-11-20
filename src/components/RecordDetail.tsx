@@ -350,7 +350,11 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
       {conf.fields
         .filter((f: any) => !f.hideInDetail)
         .filter((f: any) => matchOnlyFor(f, data.kind))
-        .filter((f: any) => !(f.hideEmpty && (data[f.key] === undefined || data[f.key] === null || data[f.key] === '')))
+        .filter((f: any) => {
+          // 虚拟字段（metrics / vars 等）不存数据，不能按 data[f.key] 判空
+          if (f.type === 'metrics') return true;
+          return !(f.hideEmpty && (data[f.key] === undefined || data[f.key] === null || data[f.key] === ''));
+        })
         .map((f: any) => (
           <div className="field-row" key={f.key}>
             <div className="field-label">{f.label}</div>

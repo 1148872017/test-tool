@@ -31,6 +31,19 @@ for (const k of ['passCount', 'failCount']) {
 
 check('scene 字段类型是 scene', runs.fields.find((f) => f.key === 'scene').type === 'scene', runs.fields.find((f) => f.key === 'scene').type);
 
+// 关键回归：perfMetrics 是虚拟字段（不存数据），不能被 hideEmpty 过滤掉
+const metricsField = runs.fields.find((f) => f.key === 'perfMetrics');
+check('perfMetrics 是虚拟字段（不存数据）', metricsField && metricsField.type === 'metrics', metricsField && metricsField.type);
+check('perfMetrics 标了 hideEmpty', metricsField && metricsField.hideEmpty === true, metricsField && metricsField.hideEmpty);
+
+// RecordDetail 必须对 metrics 类型豁免 hideEmpty 判断
+const detailSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'RecordDetail.tsx'), 'utf8');
+check(
+  'RecordDetail 对 metrics 豁免 hideEmpty',
+  /f\.type === 'metrics'\)\s*return true/.test(detailSrc),
+  'no exemption'
+);
+
 /* ---------- 2. MetricsTable 的取值逻辑（转译后测）---------- */
 const tsx = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'MetricsTable.tsx'), 'utf8');
 const out = esbuild.transformSync(tsx, { loader: 'tsx', format: 'cjs', jsx: 'transform' });
