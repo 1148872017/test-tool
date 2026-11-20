@@ -19,23 +19,13 @@ import { toast } from '../msg';
 import { buildCurl, fmtTime, recordToText } from '../utils';
 import JsonTableToggle from './JsonTableToggle';
 import VarsEditor from './VarsEditor';
+import MetricsTable from './MetricsTable';
+import ScenePicker from './ScenePicker';
 import { caseKey, knownCaseKeys, loadCaseIndex } from '../caseIndex';
 import { matchOnlyFor, recentForApi, resultTone, runLine } from '../../shared/runs';
 import VarFillModal from './VarFillModal';
 import CaseLinkModal from './CaseLinkModal';
 import { asArray, fieldOptions, getOptionsSync, loadOptions, OptionsMap } from '../options';
-import { BODY_TYPE_OPTIONS } from '../../shared/collections';
-
-/** body 媒体类型 → 显示文案 */
-const bodyTypeLabel = (v: string) => {
-  const hit = BODY_TYPE_OPTIONS.find((o: any) => o.value === v);
-  return hit ? hit.label : v;
-};
-/** body 媒体类型 → Tag 颜色 */
-const bodyTypeColor = (v: string) => {
-  const hit = BODY_TYPE_OPTIONS.find((o: any) => o.value === v);
-  return hit ? hit.color : 'default';
-};
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -283,6 +273,10 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
             <pre className="mono">{String(raw)}</pre>
           </div>
         );
+      case 'scene':
+        return <ScenePicker value={String(raw)} onChange={() => {}} readOnly />;
+      case 'metrics':
+        return <MetricsTable data={data} />;
       case 'vars':
         return <VarsEditor value={String(raw)} onChange={() => {}} readOnly />;
       case 'textarea':
@@ -359,18 +353,7 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
         .filter((f: any) => !(f.hideEmpty && (data[f.key] === undefined || data[f.key] === null || data[f.key] === '')))
         .map((f: any) => (
           <div className="field-row" key={f.key}>
-            <div className="field-label">
-              {f.label}
-              {/* Body 标签旁显示媒体类型（和 Apifox 的 Body 页签一致） */}
-              {f.key === 'body' && data.bodyType && data.bodyType !== 'none' ? (
-                <Tag
-                  color={bodyTypeColor(data.bodyType)}
-                  style={{ marginLeft: 6, fontSize: 11, lineHeight: '16px', padding: '0 5px' }}
-                >
-                  {bodyTypeLabel(data.bodyType)}
-                </Tag>
-              ) : null}
-            </div>
+            <div className="field-label">{f.label}</div>
             <div className="field-value">{renderValue(f)}</div>
           </div>
         ))}

@@ -1,0 +1,59 @@
+/* 压测指标表格 + 场景选择器 的纯逻辑测试 */
+const path = require('path');
+const fs = require('fs');
+const esbuild = require(path.join(__dirname, '..', 'node_modules', 'esbuild'));
+
+const results = [];
+const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });
+
+/* ---------- 1. runs 字段定义检查 ---------- */
+const collections = require('../shared/collections.js');
+const runs = collections.COLLECTION_MAP.runs;
+
+const perfFields = runs.fields.filter((f) => f.onlyFor && f.onlyFor.kind === 'perf');
+const apiFields = runs.fields.filter((f) => f.onlyFor && f.onlyFor.kind === 'api');
+
+check('有 perfMetrics 汇总字段', runs.fields.some((f) => f.key === 'perfMetrics' && f.type === 'metrics'), runs.fields.map((f) => f.key));
+check('perfMetrics 只在压测显示', runs.fields.find((f) => f.key === 'perfMetrics').onlyFor.kind === 'perf');
+
+// 这些字段已聚合到表格，详情页不该单独展示
+const AGGREGATED = ['concurrency', 'duration', 'tps', 'p90', 'p95', 'p99', 'errRate', 'samples'];
+for (const k of AGGREGATED) {
+  const f = runs.fields.find((x) => x.key === k);
+  check(`${k} 已标记 hideInDetail`, f && f.hideInDetail === true, f && f.hideInDetail);
+}
+
+// 接口测试的通过/失败也聚合
+for (const k of ['passCount', 'failCount']) {
+  const f = runs.fields.find((x) => x.key === k);
+  check(`${k} 已标记 hideInDetail`, f && f.hideInDetail === true, f && f.hideInDetail);
+}
+
+check('scene 字段类型是 scene', runs.fields.find((f) => f.key === 'scene').type === 'scene', runs.fields.find((f) => f.key === 'scene').type);
+
+/* ---------- 2. MetricsTable 的取值逻辑（转译后测）---------- */
+const tsx = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'MetricsTable.tsx'), 'utf8');
+const out = esbuild.transformSync(tsx, { loader: 'tsx', format: 'cjs', jsx: 'transform' });
+check('MetricsTable 能转译', out.code.length > 0, out.code.length);
+check('MetricsTable 处理 perf 分支', /isPerf/.test(out.code), 'no isPerf');
+check('MetricsTable 处理 api 分支', /passCount/.test(out.code), 'no passCount');
+check('MetricsTable 分位合并成一行', /P90/.test(out.code) && /P95/.test(out.code) && /P99/.test(out.code), 'no pct');
+
+/* ---------- 3. ScenePicker 的匹配逻辑 ---------- */
+const picker = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'ScenePicker.tsx'), 'utf8');
+check('ScenePicker 调 jmxScan', /api\.jmxScan/.test(picker), 'no jmxScan');
+check('ScenePicker 支持只读', /readOnly/.test(picker), 'no readOnly');
+check('ScenePicker 有重新扫描', /loadJmx/.test(picker), 'no reload');
+check('ScenePicker 显示采样器数', /samplers/.test(picker), 'no samplers');
+
+/* ---------- 4. body 类型标签去重 ---------- */
+const detail = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'RecordDetail.tsx'), 'utf8');
+check('RecordDetail 不再在 body 标签旁渲染 Tag', !/f\.key === 'body' && data\.bodyType/.test(detail), 'still has duplicate tag');
+check('RecordDetail 仍渲染 metrics', /case 'metrics'/.test(detail), 'no metrics case');
+check('RecordDetail 仍渲染 scene', /case 'scene'/.test(detail), 'no scene case');
+
+const failed = results.filter((r) => !r.ok);
+console.log('===== 压测指标 + 场景选择器测试 =====');
+for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));
+console.log('\n' + (results.length - failed.length) + '/' + results.length + ' passed');
+process.exit(failed.length ? 1 : 0);

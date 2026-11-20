@@ -1606,3 +1606,24 @@ body {
   color: #2e9e5b;
   border: 1px solid #c6ebd5;
 }
+/* ===== 场景 / 脚本 选择器 ===== */
+.scene-picker .scene-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  min-height: 20px;
+}
+.scene-option {
+  display: flex;
+  align-items: center;
+  font-size: 12.5px;
+}
+
+/* ===== 压测指标表格 ===== */
+.metrics-table td {
+  padding: 5px 10px;
+}
+.metrics-table th {
+  padding: 6px 10px;
+}

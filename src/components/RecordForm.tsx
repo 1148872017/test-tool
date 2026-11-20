@@ -5,6 +5,7 @@ import api from '../api';
 import { toast } from '../msg';
 import { COLLECTION_MAP } from '../../shared/collections';
 import VarsEditor from './VarsEditor';
+import ScenePicker from './ScenePicker';
 import { visibleFields } from '../../shared/runs';
 import { asArray, fieldOptions, getOptionsSync, labelOf, loadOptions, OptionsMap } from '../options';
 
@@ -227,6 +228,8 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
       }
       case 'secret':
         return <Input.Password value={v} onChange={(e) => set(f.key, e.target.value)} placeholder={f.placeholder} />;
+      case 'scene':
+        return <ScenePicker value={v} onChange={(next) => set(f.key, next)} placeholder={f.placeholder} />;
       case 'vars':
         return <VarsEditor value={v} onChange={(next) => set(f.key, next)} />;
       case 'code':

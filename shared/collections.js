@@ -204,21 +204,23 @@ const COLLECTIONS = [
       { key: 'ranAt', label: '执行时间', type: 'datetime' },
       { key: 'apiRef', label: '关联接口', type: 'link', linkTo: 'apis', placeholder: '从「接口记录」里选，接口详情里就能看到这次执行' },
       { key: 'env', label: '环境', type: 'select', options: ENV_OPTIONS, optionsKey: 'env', default: 'test' },
-      { key: 'scene', label: '场景 / 脚本', type: 'text', placeholder: 'Apifox 测试场景名，或 jmx 文件名' },
+      { key: 'scene', label: '场景 / 脚本', type: 'scene', placeholder: 'Apifox 测试场景名，或从下拉选已导入的 jmx' },
       { key: 'report', label: '报告链接', type: 'url', placeholder: 'Apifox 跑完的报告地址（选填）' },
       // ---- 接口测试 ----
-      { key: 'passCount', label: '通过', type: 'number', onlyFor: { kind: 'api' }, placeholder: '通过多少条' },
-      { key: 'failCount', label: '失败', type: 'number', onlyFor: { kind: 'api' }, placeholder: '挂了哪些，写结论里' },
+      { key: 'passCount', label: '通过', type: 'number', onlyFor: { kind: 'api' }, hideInDetail: true, placeholder: '通过多少条' },
+      { key: 'failCount', label: '失败', type: 'number', onlyFor: { kind: 'api' }, hideInDetail: true, placeholder: '挂了哪些，写结论里' },
       // ---- 压测 ----
-      { key: 'concurrency', label: '并发', type: 'number', onlyFor: { kind: 'perf' }, placeholder: '虚拟用户数' },
-      { key: 'duration', label: '时长', type: 'text', onlyFor: { kind: 'perf' }, placeholder: '如：60s / 5m' },
-      { key: 'tps', label: 'TPS / 吞吐', type: 'number', onlyFor: { kind: 'perf' }, placeholder: '每秒请求数' },
-      { key: 'p90', label: 'P90 (ms)', type: 'number', onlyFor: { kind: 'perf' }, placeholder: '90% 请求的响应时间' },
-      { key: 'p95', label: 'P95 (ms)', type: 'number', onlyFor: { kind: 'perf' }, placeholder: '95% 请求的响应时间' },
-      { key: 'p99', label: 'P99 (ms)', type: 'number', onlyFor: { kind: 'perf' }, placeholder: '99% 请求的响应时间' },
-      { key: 'errRate', label: '错误率 (%)', type: 'number', onlyFor: { kind: 'perf' }, placeholder: '如：0.2' },
-      { key: 'samples', label: '样本数', type: 'number', onlyFor: { kind: 'perf' }, placeholder: '总请求数（导入报告自动填）' },
+      { key: 'concurrency', label: '并发', type: 'number', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '虚拟用户数' },
+      { key: 'duration', label: '时长', type: 'text', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '如：60s / 5m' },
+      { key: 'tps', label: 'TPS / 吞吐', type: 'number', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '每秒请求数' },
+      { key: 'p90', label: 'P90 (ms)', type: 'number', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '90% 请求的响应时间' },
+      { key: 'p95', label: 'P95 (ms)', type: 'number', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '95% 请求的响应时间' },
+      { key: 'p99', label: 'P99 (ms)', type: 'number', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '99% 请求的响应时间' },
+      { key: 'errRate', label: '错误率 (%)', type: 'number', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '如：0.2' },
+      { key: 'samples', label: '样本数', type: 'number', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '总请求数（导入报告自动填）' },
       { key: 'reportDir', label: '报告目录', type: 'text', onlyFor: { kind: 'perf' }, formHidden: true },
+      // 压测指标汇总（详情页渲染成表格，字段本身不单独展示）
+      { key: 'perfMetrics', label: '压测指标', type: 'metrics', onlyFor: { kind: 'perf' }, formHidden: true, hideEmpty: true },
       { key: 'conclusion', label: '结论', type: 'textarea', placeholder: '达标没达标、瓶颈在哪、要不要跟进' }
     ]
   }
