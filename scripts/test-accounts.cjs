@@ -127,6 +127,39 @@ const storeSrc2 = fs.readFileSync(path.join(__dirname, '..', 'electron', 'store.
 check('exportAll 用 applySecretPath 清空', /applySecretPath\(data, key, \(\) => ''\)/.test(storeSrc2), 'export not using applySecretPath');
 check('exportAll 深拷贝', /JSON\.parse\(JSON\.stringify\(r\.data/.test(storeSrc2), 'export no deep clone');
 
+
+/* ---------- 12. 空账号不保存（问题 5）---------- */
+const editorSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'AccountsEditor.tsx'), 'utf8');
+check('serializeAccounts 过滤全空账号', /const clean = rows\.filter/.test(editorSrc2), 'no filter');
+check('过滤条件含 label/account/password/role/note', /r\.label.*r\.account.*r\.password/s.test(editorSrc2), 'incomplete filter');
+check('序列化保证有默认账号', /if \(!hasDefault\) clean\[0\]/.test(editorSrc2), 'no default guarantee');
+
+// 纯函数验证：空账号被过滤
+const emptyRows = [{ label: '', account: '', password: '', role: [], isDefault: true, note: '' }];
+check('全空账号序列化后为空串', serializeAccounts(emptyRows) === '', serializeAccounts(emptyRows));
+
+const filledRows = [{ label: '', account: 'admin', password: '', role: [], isDefault: false, note: '' }];
+check('填了账号就保留', serializeAccounts(filledRows) !== '', serializeAccounts(filledRows));
+check('保留时自动设默认', parseAccounts(serializeAccounts(filledRows))[0].isDefault === true, parseAccounts(serializeAccounts(filledRows)));
+
+const roleOnly = [{ label: '', account: '', password: '', role: ['admin'], isDefault: false, note: '' }];
+check('只填角色也保留', serializeAccounts(roleOnly) !== '', serializeAccounts(roleOnly));
+
+/* ---------- 13. 添加/删除账号有提示（问题 3）---------- */
+check('addRow 有 toast 提示', /toast\('已添加一个账号/.test(editorSrc2), 'no add toast');
+check('removeRow 有 toast 提示', /toast\('已删除该账号/.test(editorSrc2), 'no remove toast');
+
+/* ---------- 14. 表单重开强制重置（问题 4）---------- */
+const pageSrc3 = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'CollectionPage.tsx'), 'utf8');
+check('RecordForm 有 key 强制重挂载', /key=\{.*formSeq/.test(pageSrc3), 'no key');
+check('有 formSeq 状态', /const \[formSeq, setFormSeq\]/.test(pageSrc3), 'no formSeq');
+check('打开表单时 formSeq +1', /setFormSeq\(\(n\) => n \+ 1\)/.test(pageSrc3), 'no increment');
+
+/* ---------- 15. 导入导出同步调整（问题 2）---------- */
+const storeSrc3 = fs.readFileSync(path.join(__dirname, '..', 'electron', 'store.js'), 'utf8');
+check('导出用 applySecretPath 清空嵌套密码', /applySecretPath\(data, key, \(\) => ''\)/.test(storeSrc3), 'export not fixed');
+check('导入用 serialize 加密', /JSON\.stringify\(serialize\(item\.collection/.test(storeSrc3), 'import not encrypting');
+
 const failed = results.filter((r) => !r.ok);
 console.log('===== 账号合并测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));

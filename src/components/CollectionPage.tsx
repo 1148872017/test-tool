@@ -63,6 +63,8 @@ export default function CollectionPage({
   const [detail, setDetail] = useState<any>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [formRecord, setFormRecord] = useState<any>(null);
+  // 每次打开表单 +1，配合 key 强制重挂载（清掉上次的残留状态）
+  const [formSeq, setFormSeq] = useState(0);
   // cURL 导入：解析结果作为表单预填值
   const [curlOpen, setCurlOpen] = useState(false);
   // 一键启动时选账号（多个账号且没设默认）
@@ -137,6 +139,7 @@ export default function CollectionPage({
   useEffect(() => {
     if (!logFor) return;
     setFormRecord({ collection: conf.key, data: logFor, tags: [], favorite: false });
+    setFormSeq((n) => n + 1);
     setFormOpen(true);
     if (onLoggedRun) onLoggedRun();
   }, [logFor]);
@@ -270,6 +273,7 @@ export default function CollectionPage({
     setFormRecord(null);
     setFormPrefill(null);
     setFormWarnings([]);
+    setFormSeq((n) => n + 1);
     setFormOpen(true);
   };
 
@@ -285,6 +289,7 @@ export default function CollectionPage({
       source: 'cURL 导入'
     });
     setFormWarnings(parsed.warnings || []);
+    setFormSeq((n) => n + 1);
     setFormOpen(true);
   };
 
@@ -315,6 +320,7 @@ export default function CollectionPage({
     };
     setFormRecord({ collection: conf.key, data, tags: [], favorite: false });
     setReportOpen(false);
+    setFormSeq((n) => n + 1);
     setFormOpen(true);
   };
 
@@ -558,7 +564,8 @@ export default function CollectionPage({
             title="编辑"
             onClick={() => {
               setFormRecord(r);
-              setFormOpen(true);
+              setFormSeq((n) => n + 1);
+    setFormOpen(true);
             }}
           />
           <Popconfirm title="删除这条记录？" okText="删除" cancelText="取消" onConfirm={() => remove(r)}>
@@ -791,7 +798,8 @@ export default function CollectionPage({
         onClose={() => setDetail(null)}
         onEdit={() => {
           setFormRecord(detail);
-          setFormOpen(true);
+          setFormSeq((n) => n + 1);
+    setFormOpen(true);
         }}
         onDeleted={() => {
           setDetail(null);
@@ -802,6 +810,9 @@ export default function CollectionPage({
       />
 
       <RecordForm
+        // key 用「记录 id + 打开次数」：每次打开都强制重挂载，
+        // 避免上次编辑残留（比如加了账号没保存，下次打开还在）
+        key={`${formRecord && formRecord.id ? formRecord.id : 'new'}-${formSeq}`}
         open={formOpen}
         conf={conf}
         record={formRecord}

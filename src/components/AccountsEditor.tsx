@@ -42,10 +42,34 @@ export function parseAccounts(raw: string): AccountRow[] {
   }
 }
 
-/** 序列化 */
+/**
+ * 序列化。
+ *
+ * **过滤掉完全空的账号**（label/account/password/role/note 全空）——
+ * 用户点了「添加账号」但没填就保存，不该存一条全是「—」的记录。
+ * 注意：只过滤「全空」的，填了任意一项就保留。
+ */
 export function serializeAccounts(rows: AccountRow[]): string {
-  if (!rows.length) return '';
-  return JSON.stringify(rows);
+  const clean = rows.filter(
+    (r) =>
+      String(r.label || '').trim() ||
+      String(r.account || '').trim() ||
+      String(r.password || '').trim() ||
+      (Array.isArray(r.role) && r.role.length) ||
+      String(r.note || '').trim()
+  );
+  if (!clean.length) return '';
+  // 保证有且只有一个默认账号
+  const hasDefault = clean.some((r) => r.isDefault);
+  if (!hasDefault) clean[0] = Object.assign({}, clean[0], { isDefault: true });
+  let seen = false;
+  for (const r of clean) {
+    if (r.isDefault) {
+      if (seen) r.isDefault = false;
+      else seen = true;
+    }
+  }
+  return JSON.stringify(clean);
 }
 
 /** 角色 → 显示标签（显式表达，如「商家」「用户」） */
@@ -98,6 +122,7 @@ export default function AccountsEditor({ value, onChange, readOnly }: Props) {
     // 第一条自动设为默认
     const isFirst = rows.length === 0;
     update(rows.concat([{ label: '', account: '', password: '', role: [], isDefault: isFirst, note: '' }]));
+    toast('已添加一个账号，填完记得点「保存」');
   };
 
   const removeRow = (i: number) => {
@@ -105,6 +130,7 @@ export default function AccountsEditor({ value, onChange, readOnly }: Props) {
     // 删掉的是默认账号 → 把第一条设为默认
     if (rows[i].isDefault && next.length) next[0] = Object.assign({}, next[0], { isDefault: true });
     update(next);
+    toast('已删除该账号，记得点「保存」');
   };
 
   const copyPassword = async (pwd: string) => {
