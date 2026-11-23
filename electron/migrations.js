@@ -150,11 +150,15 @@ const MIGRATIONS = [
     to: 5,
     note: '账号合并进站点：accounts 集合 → sites.accounts 数组，删掉 accounts 集合',
     run(api) {
+      // 幂等：如果 accounts 集合已经空了，说明迁移跑过（或本来就没数据），
+      // 只做「清空旧字段」的收尾，不重复搬数据。
+      const legacyAccounts = api.records('accounts');
+
       // 1. 按站点分组收集账号
       const bySite = new Map(); // siteId -> AccountRow[]
       const orphans = []; // 没有归属站点的账号
 
-      for (const acc of api.records('accounts')) {
+      for (const acc of legacyAccounts) {
         const d = acc.data || {};
         const row = {
           label: String(d.name || '').trim(),
@@ -176,7 +180,7 @@ const MIGRATIONS = [
       // 2. 写回每个站点
       for (const site of api.records('sites')) {
         const d = site.data || {};
-        const existing = Array.isArray(d.accounts) ? d.accounts : [];
+        const existing = Array.isArray(d.accounts) ? d.accounts.slice() : [];
 
         // 站点自己原来填的 account/password 也搬进来（作为第一个账号）
         const legacyAccount = String(d.account || '').trim();
@@ -195,6 +199,23 @@ const MIGRATIONS = [
         // 追加关联到本站点的账号
         const linked = bySite.get(site.id) || [];
         for (const row of linked) existing.push(row);
+
+        // 去重：同一个 account + role 只留一条（老数据里常有重复录入）
+        const seen = new Set();
+        const deduped = [];
+        for (const a of existing) {
+          const key = `${a.account || ''}|${(a.role || []).join(',')}`;
+          // 空账号不参与去重（可能是占位行）
+          if (!a.account) {
+            deduped.push(a);
+            continue;
+          }
+          if (seen.has(key)) continue;
+          seen.add(key);
+          deduped.push(a);
+        }
+        existing.length = 0;
+        existing.push(...deduped);
 
         // 保证有且只有一个默认账号
         if (existing.length) {
@@ -218,20 +239,22 @@ const MIGRATIONS = [
       }
 
       // 3. 没有归属站点的账号：建一个「未归类」站点装它们
+      //    注意：api.write 只做 UPDATE（需要 id），新建记录必须用 api.sql 直接 INSERT
       if (orphans.length) {
         orphans[0].isDefault = true;
-        api.write({
-          collection: 'sites',
-          data: {
-            name: '未归类账号',
-            url: '',
-            env: ['other'],
-            accounts: orphans,
-            note: '从「测试账号」迁移过来，原来没有关联站点'
-          },
-          tags: [],
-          favorite: false
-        });
+        const now = Date.now();
+        const newId = 'r_' + now.toString(36) + Math.random().toString(36).slice(2, 8);
+        const data = {
+          name: '未归类账号',
+          url: '',
+          env: ['other'],
+          accounts: orphans,
+          note: '从「测试账号」迁移过来，原来没有关联站点'
+        };
+        api.sql(
+          'INSERT INTO records (id, collection, title, data, tags, favorite, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          [newId, 'sites', '未归类账号', JSON.stringify(data), '', 0, now, now]
+        );
       }
 
       // 4. 删掉 accounts 集合的所有记录

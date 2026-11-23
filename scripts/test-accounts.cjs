@@ -97,6 +97,8 @@ check('v5 迁移 accounts 到 sites', /api\.records\('accounts'\)/.test(migSrc),
 check('v5 删掉 accounts 集合', /DELETE FROM records WHERE collection = 'accounts'/.test(migSrc), 'no delete');
 check('v5 保证有默认账号', /isDefault = true/.test(migSrc), 'no default');
 check('v5 处理无归属站点的账号', /未归类账号/.test(migSrc), 'no orphan handling');
+check('v5 去重（同 account+role 只留一条）', /const seen = new Set\(\)/.test(migSrc) && /seen\.has\(key\)/.test(migSrc), 'no dedup');
+check('v5 新建记录用 INSERT 不用 write', /INSERT INTO records/.test(migSrc), 'no INSERT');
 
 const failed = results.filter((r) => !r.ok);
 console.log('===== 账号合并测试 =====');
