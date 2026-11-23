@@ -439,18 +439,25 @@ export default function CollectionPage({
     if (!list.length) return <span className="muted">—</span>;
     const def = list.find((a) => a.isDefault) || list[0];
     const more = list.length - 1;
+    // 完整信息放 Tooltip，列表里单行省略（内容长时不换行撑高行）
+    const tip = [
+      def.label ? `用途：${def.label}` : '',
+      `账号：${def.account || '—'}`,
+      def.role && def.role.length ? `角色：${def.role.join('、')}` : '',
+      more > 0 ? `另有 ${more} 个账号，点开详情查看` : ''
+    ]
+      .filter(Boolean)
+      .join('\n');
     return (
-      <span className="account-cell">
-        <span className="account-cell-main">
-          {def.label ? <span className="account-cell-label">{def.label}</span> : null}
-          <span className="mono">{def.account || '—'}</span>
+      <Tooltip title={<span style={{ whiteSpace: 'pre-line' }}>{tip}</span>}>
+        <span className="account-cell">
+          <span className="account-cell-main">
+            {def.label ? <span className="account-cell-label">{def.label}</span> : null}
+            <span className="mono account-cell-account">{def.account || '—'}</span>
+          </span>
+          {more > 0 ? <span className="account-cell-more">+{more}</span> : null}
         </span>
-        {more > 0 ? (
-          <Tooltip title={`还有 ${more} 个账号，点开详情查看`}>
-            <span className="account-cell-more">+{more}</span>
-          </Tooltip>
-        ) : null}
-      </span>
+      </Tooltip>
     );
   }
     if (value === undefined || value === null || value === '') return <span className="muted">—</span>;
@@ -487,6 +494,7 @@ export default function CollectionPage({
   const FIELD_WEIGHT: Record<string, number> = {
     method: 0.7,
     env: 1,
+    accounts: 2.2,   // 账号列内容长（用途 + 账号 + 角色），给更多空间
     account: 1.1,
     role: 1.05,
     db: 1.4,
@@ -500,8 +508,12 @@ export default function CollectionPage({
     .map((key: string) => ({ key, f: conf.fields.find((x: any) => x.key === key), weight: FIELD_WEIGHT[key] || 1 }))
     .filter((x: any) => x.f);
   const hasList = listMeta.length > 0;
-  const titleWidth = hasList ? '50%' : '64%';
-  const restPct = hasList ? 50 : 36;
+  // 名称列宽度：按集合调整。
+  // sites 的账号列内容长（用途 + 账号 + 角色），名称列收窄到 32%；
+  // 其他集合保持 50%。
+  const titlePct = !hasList ? 64 : conf.key === 'sites' ? 32 : 50;
+  const titleWidth = `${titlePct}%`;
+  const restPct = hasList ? 100 - titlePct : 36;
   const totalWeight = listMeta.reduce((s: number, x: any) => s + x.weight, 0) + 1.1 + 1.1;
   const pct = (w: number) => `${((restPct * w) / totalWeight).toFixed(2)}%`;
 

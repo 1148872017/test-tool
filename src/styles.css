@@ -1777,3 +1777,44 @@ body {
   line-height: 16px;
   cursor: help;
 }
+/* 账号单元格：单行省略，不换行撑高行 */
+.account-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+.account-cell-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.account-cell-label {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--muted);
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.account-cell-account {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-cell-more {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--primary-soft);
+  color: var(--primary-deep);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: help;
+}

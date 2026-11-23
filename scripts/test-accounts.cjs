@@ -106,7 +106,11 @@ const pageSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'components',
 check('列表渲染有 accounts 分支', /f\.type === 'accounts'/.test(pageSrc2), 'no accounts branch');
 check('列表只取默认账号', /list\.find\(\(a\) => a\.isDefault\)/.test(pageSrc2), 'no default pick');
 check('列表有「+N」更多提示', /account-cell-more/.test(pageSrc2), 'no more badge');
-check('更多提示用 Tooltip', /还有 \$\{more\} 个账号/.test(pageSrc2), 'no tooltip text');
+check('账号单元格单行省略', /account-cell-account/.test(pageSrc2), 'no ellipsis class');
+check('完整信息放 Tooltip', /另有 \$\{more\} 个账号/.test(pageSrc2), 'no tooltip detail');
+check('sites 名称列收窄到 32%', /conf\.key === 'sites' \? 32/.test(pageSrc2), 'title width not adjusted');
+check('accounts 字段加权', /accounts: 2\.2/.test(pageSrc2), 'no weight');
+check('账号单元格单行省略', /account-cell-account/.test(pageSrc2), 'no ellipsis class');
 
 /* ---------- 9. 角色选项从配置读（不是空数组）---------- */
 const editorSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'AccountsEditor.tsx'), 'utf8');
