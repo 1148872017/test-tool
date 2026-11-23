@@ -137,7 +137,7 @@ const editorSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'components
 const serBody = (editorSrc2.match(/export function serializeAccounts[\s\S]*?\n}/) || [''])[0];
 check('serializeAccounts 不过滤（编辑时）', !/rows\.filter/.test(serBody), 'still filtering');
 check('有 dropEmptyAccounts（保存时清理）', /export function dropEmptyAccounts/.test(editorSrc2), 'no dropEmptyAccounts');
-check('序列化保证有默认账号', /if \(!hasDefault\) out\[0\]/.test(editorSrc2), 'no default guarantee');
+check('序列化不强制设默认（可选）', !/if \(!hasDefault\) out\[0\]/.test(editorSrc2), 'still forcing default');
 
 // 纯函数验证：空账号被过滤
 const emptyRows = [{ label: '', account: '', password: '', role: [], isDefault: true, note: '' }];
@@ -147,7 +147,7 @@ check('编辑时空行能反解', parseAccounts(serializeAccounts(emptyRows)).le
 
 const filledRows = [{ label: '', account: 'admin', password: '', role: [], isDefault: false, note: '' }];
 check('填了账号就保留', serializeAccounts(filledRows) !== '', serializeAccounts(filledRows));
-check('保留时自动设默认', parseAccounts(serializeAccounts(filledRows))[0].isDefault === true, parseAccounts(serializeAccounts(filledRows)));
+check('保留时不自动设默认', parseAccounts(serializeAccounts(filledRows))[0].isDefault === false, parseAccounts(serializeAccounts(filledRows))[0].isDefault);
 
 const roleOnly = [{ label: '', account: '', password: '', role: ['admin'], isDefault: false, note: '' }];
 check('只填角色也保留', serializeAccounts(roleOnly) !== '', serializeAccounts(roleOnly));
@@ -235,6 +235,33 @@ check('searchableText 排除顶层 password', /k === 'password'/.test(pageSrc4),
 /* ---------- 22. 后端搜索排除密码 ---------- */
 check('后端用 json_set 置空', /json_set\(data/.test(storeSrc4), 'no json_set');
 check('后端排除嵌套数组字段', /split\('\[\]'\)\[0\]/.test(storeSrc4), 'no nested exclusion');
+
+
+/* ---------- 23. 默认账号是可选的（不是必填）---------- */
+const editorSrc4 = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'AccountsEditor.tsx'), 'utf8');
+check('serializeAccounts 不强制设默认', !/if \(!hasDefault\) out\[0\]\.isDefault = true/.test(editorSrc4), 'still forcing');
+check('addRow 不自动设默认', /isDefault: false, note: '', tags: \[\]/.test(editorSrc4), 'addRow still auto-default');
+check('removeRow 不自动补默认', !/next\[0\] = Object\.assign\(\{\}, next\[0\], \{ isDefault: true \}\)/.test(editorSrc4), 'removeRow still auto-fills');
+check('setDefault 支持取消', /wasDefault \? false : idx === i/.test(editorSrc4), 'cannot unset');
+check('Checkbox 不再 disabled', !/disabled=\{r\.isDefault\}/.test(editorSrc4), 'checkbox still disabled');
+
+// 纯函数：没设默认时保持没默认
+const noDefault = [{ label: 'A', account: 'a', password: '', role: [], isDefault: false, note: '', tags: [] }];
+check('没设默认 → 序列化后还是没默认', parseAccounts(serializeAccounts(noDefault))[0].isDefault === false, parseAccounts(serializeAccounts(noDefault))[0].isDefault);
+
+// 多个默认 → 只留第一个
+const twoDefaults = [
+  { label: 'A', account: 'a', password: '', role: [], isDefault: true, note: '', tags: [] },
+  { label: 'B', account: 'b', password: '', role: [], isDefault: true, note: '', tags: [] }
+];
+const deduped = parseAccounts(serializeAccounts(twoDefaults));
+check('多个默认 → 只留第一个', deduped[0].isDefault === true && deduped[1].isDefault === false, deduped.map((r) => r.isDefault));
+
+/* ---------- 24. 一键启动：没默认时弹窗选 ---------- */
+const pageSrc5 = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'CollectionPage.tsx'), 'utf8');
+check('一键启动优先默认账号', /accounts\.find\(\(a\) => a\.isDefault\)/.test(pageSrc5), 'no default pick');
+check('唯一账号自动用', /accounts\.length === 1/.test(pageSrc5), 'no single auto');
+check('多个且没默认 → 弹窗', /pickAccount\(accounts\)/.test(pageSrc5), 'no picker');
 
 const failed = results.filter((r) => !r.ok);
 console.log('===== 账号合并测试 =====');

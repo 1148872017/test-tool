@@ -55,10 +55,11 @@ export function parseAccounts(raw: string): AccountRow[] {
  */
 export function serializeAccounts(rows: AccountRow[]): string {
   if (!rows.length) return '';
-  // 保证有且只有一个默认账号
+  // 默认账号是**可选的**（不是必填）：
+  //   - 没设默认 → 一键启动时弹窗让用户选
+  //   - 设了默认 → 一键启动直接用
+  // 只保证「最多一个」默认，不强制「必须有一个」。
   const out = rows.map((r) => Object.assign({}, r));
-  const hasDefault = out.some((r) => r.isDefault);
-  if (!hasDefault) out[0].isDefault = true;
   let seen = false;
   for (const r of out) {
     if (r.isDefault) {
@@ -133,23 +134,24 @@ export default function AccountsEditor({ value, onChange, readOnly }: Props) {
     update(next);
   };
 
-  /** 设为默认（互斥：只能有一个） */
+  /** 设为默认（互斥：只能有一个；再点一次取消） */
   const setDefault = (i: number) => {
-    const next = rows.map((r, idx) => Object.assign({}, r, { isDefault: idx === i }));
+    const wasDefault = rows[i].isDefault;
+    const next = rows.map((r, idx) =>
+      Object.assign({}, r, { isDefault: wasDefault ? false : idx === i })
+    );
     update(next);
   };
 
   const addRow = () => {
-    // 第一条自动设为默认
-    const isFirst = rows.length === 0;
-    update(rows.concat([{ label: '', account: '', password: '', role: [], isDefault: isFirst, note: '', tags: [] }]));
+    // 不自动设默认：默认账号是可选的，用户自己勾
+    update(rows.concat([{ label: '', account: '', password: '', role: [], isDefault: false, note: '', tags: [] }]));
     toast('已添加一个账号，填完记得点「保存」');
   };
 
   const removeRow = (i: number) => {
+    // 删掉默认账号后不自动补：让用户自己决定新的默认（或干脆不设）
     const next = rows.filter((_, idx) => idx !== i);
-    // 删掉的是默认账号 → 把第一条设为默认
-    if (rows[i].isDefault && next.length) next[0] = Object.assign({}, next[0], { isDefault: true });
     update(next);
     toast('已删除该账号，记得点「保存」');
   };
@@ -236,11 +238,7 @@ export default function AccountsEditor({ value, onChange, readOnly }: Props) {
       {rows.map((r, i) => (
         <div className="account-card" key={i}>
           <div className="account-card-head">
-            <Checkbox
-              checked={r.isDefault}
-              onChange={() => setDefault(i)}
-              disabled={r.isDefault}
-            >
+            <Checkbox checked={r.isDefault} onChange={() => setDefault(i)}>
               {r.isDefault ? (
                 <span style={{ color: '#f5a623' }}>
                   <StarFilled /> 默认账号
