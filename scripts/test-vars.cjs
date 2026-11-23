@@ -80,8 +80,20 @@ const round = parseVars(serializeVars(rows));
 check('往返：长度一致', round.length === 2, round.length);
 check('往返：内容一致', round[0].name === 'a' && round[1].desc === 'B', round);
 
+
+/* ---------- 6. VarFillModal 打开时滚到第一个变量 ---------- */
+const modalSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'VarFillModal.tsx'), 'utf8');
+
+check('有 firstVarRef', /firstVarRef/.test(modalSrc), 'no firstVarRef');
+check('有 previewRef', /previewRef/.test(modalSrc), 'no previewRef');
+check('第一个变量挂 ref', /ref=\{isFirst \? firstVarRef/.test(modalSrc), 'ref not bound');
+check('有滚动逻辑', /box\.scrollTop\s*=/.test(modalSrc), 'no scrollTop');
+check('滚动位置在上方 1/3（不贴顶）', /clientHeight \/ 3/.test(modalSrc), 'no 1/3 offset');
+check('滚动有延迟（等 DOM 渲染）', /setTimeout\(/.test(modalSrc) && /\}, 120\);/.test(modalSrc), 'no delay');
+check('只在打开时滚（依赖 open）', /\[open, text\]/.test(modalSrc), 'no open dep');
+check('pre 挂了 previewRef', /<pre[^>]*ref=\{previewRef\}/.test(modalSrc), 'pre no ref');
+
 const failed = results.filter((r) => !r.ok);
-console.log('===== 变量表格测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));
 console.log('\n' + (results.length - failed.length) + '/' + results.length + ' passed');
 process.exit(failed.length ? 1 : 0);

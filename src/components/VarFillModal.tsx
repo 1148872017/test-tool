@@ -33,6 +33,9 @@ export default function VarFillModal({ open, text, title, varsRaw, onClose }: Pr
   }, [varsRaw]);
 
   const [values, setValues] = useState<Record<string, string>>({});
+  /** 第一个变量位置的 ref，弹窗打开后滚到它 */
+  const firstVarRef = React.useRef<HTMLSpanElement | null>(null);
+  const previewRef = React.useRef<HTMLPreElement | null>(null);
 
   // 打开时用 varsRaw 里的默认值预填
   React.useEffect(() => {
@@ -43,6 +46,21 @@ export default function VarFillModal({ open, text, title, varsRaw, onClose }: Pr
     }
     setValues(init);
   }, [open, varNames, meta]);
+
+  // 打开后把预览框滚到第一个变量（代码可能很长，变量在下面看不到）
+  React.useEffect(() => {
+    if (!open) return;
+    // 等 DOM 渲染完再滚
+    const timer = setTimeout(() => {
+      const el = firstVarRef.current;
+      const box = previewRef.current;
+      if (!el || !box) return;
+      // 让变量出现在预览框上方 1/3 处，而不是贴顶
+      const top = el.offsetTop - box.clientHeight / 3;
+      box.scrollTop = Math.max(0, top);
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [open, text]);
 
   const filled = useMemo(() => fillVars(text, values), [text, values]);
 
@@ -62,13 +80,21 @@ export default function VarFillModal({ open, text, title, varsRaw, onClose }: Pr
     let last = 0;
     let m: RegExpExecArray | null;
     let i = 0;
+    let firstVarDone = false;
     while ((m = re.exec(text))) {
       if (m.index > last) parts.push(<span key={`t${i++}`}>{text.slice(last, m.index)}</span>);
       const name = m[1];
       const v = values[name];
       const isFilled = v !== undefined && v !== '';
+      // 第一个变量挂 ref，弹窗打开后滚到它
+      const isFirst = !firstVarDone;
+      if (isFirst) firstVarDone = true;
       parts.push(
-        <span key={`v${i++}`} className={isFilled ? 'var-chip filled' : 'var-chip missing'}>
+        <span
+          key={`v${i++}`}
+          ref={isFirst ? firstVarRef : undefined}
+          className={isFilled ? 'var-chip filled' : 'var-chip missing'}
+        >
           {isFilled ? v : `{{${name}}}`}
         </span>
       );
@@ -150,7 +176,7 @@ export default function VarFillModal({ open, text, title, varsRaw, onClose }: Pr
           </table>
 
           <div className="var-preview-head">拼接后预览</div>
-          <pre className="var-preview mono">{renderPreview()}</pre>
+          <pre className="var-preview mono" ref={previewRef}>{renderPreview()}</pre>
         </>
       )}
     </Modal>
