@@ -62,6 +62,10 @@ const DEFAULT_SETTINGS = {
   notesDir: '',
   // 代码项目根目录（代码调试用）
   projectDir: '',
+  // 开发环境手动指定（空 = 自动探测）
+  javaHome: '',
+  pythonPath: '',
+  mvnPath: '',
   jmeterPath: '',
   pin: null
 };
@@ -155,6 +159,9 @@ function loadSettings() {
 function publicSettings() {
   return {
     projectDir: settings.projectDir || '',
+    javaHome: settings.javaHome || '',
+    pythonPath: settings.pythonPath || '',
+    mvnPath: settings.mvnPath || '',
     autoLockMinutes: settings.autoLockMinutes,
     clipboardClearSeconds: settings.clipboardClearSeconds,
     openCopyPassword: settings.openCopyPassword !== false,
@@ -756,10 +763,38 @@ function registerIpc() {
    * 支持 Groovy（JMeter）/ Python / pytest / Maven。
    * -------------------------------------------------- */
 
-  /** 运行器列表（给前端下拉） */
+  /** 运行器列表 + 完整环境状态（给前端下拉和状态面板） */
   ipcMain.handle('runner:list', async () => {
     assertUnlocked();
-    return { ok: true, runners: listRunners(), env: runner.detectAll() };
+    const env = runner.detectAll();
+    return {
+      ok: true,
+      runners: listRunners(),
+      env,
+      // 多版本列表（设置页下拉用）
+      jdks: runner.listJdks(),
+      pythons: runner.listPythons(),
+      // 手动指定的路径（空 = 自动）
+      manual: {
+        javaHome: settings.javaHome || '',
+        pythonPath: settings.pythonPath || '',
+        mvnPath: settings.mvnPath || ''
+      }
+    };
+  });
+
+  /** 打开 Playwright 浏览器缓存目录 */
+  ipcMain.handle('runner:openBrowserDir', async () => {
+    assertUnlocked();
+    const pw = runner.detectPlaywrightBrowsers();
+    if (!pw.dir) return { ok: false, message: '找不到缓存目录' };
+    try {
+      fs.mkdirSync(pw.dir, { recursive: true });
+      await shell.openPath(pw.dir);
+      return { ok: true, dir: pw.dir };
+    } catch (e) {
+      return { ok: false, message: String(e && e.message) };
+    }
   });
 
   /** 扫描代码项目目录 */
@@ -813,10 +848,16 @@ function registerIpc() {
     // JMeter 路径从 settings 取
     env.jmeter = settings.jmeterDir || '';
 
+    // 手动指定的路径优先（设置 → 开发环境）
+    if (settings.pythonPath) env.python = settings.pythonPath;
+    if (settings.mvnPath) env.mvn = settings.mvnPath;
+
     // Maven 用 JAVA_HOME 决定 JDK 版本（不是 PATH 里的 java）。
-    // 按项目 pom.xml 里声明的版本选 JDK，避免「无效目标发行版: 17」。
+    // 优先级：手动指定 > 按 pom.xml 版本自动选
     const projectDir = String(payload.projectDir || '').trim();
-    if (key === 'maven' && projectDir) {
+    if (settings.javaHome) {
+      env.javaHome = settings.javaHome;
+    } else if (key === 'maven' && projectDir) {
       const want = runner.readJavaVersion(projectDir);
       env.javaHome = runner.detectJavaHome(want);
     }

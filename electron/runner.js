@@ -178,12 +178,165 @@ function readJavaVersion(projectDir) {
   }
 }
 
+/**
+ * 找所有已安装的 Python。
+ *
+ * 常见位置：
+ *   - PATH 里的 python / python3
+ *   - %LOCALAPPDATA%\Programs\Python\Python3xx
+ *   - D:\python / C:\Python3xx
+ *   - py launcher（Windows）
+ *
+ * @returns {{version: string, path: string, name: string}[]} 按版本降序
+ */
+function listPythons() {
+  const out = [];
+  const seen = new Set();
+
+  const push = (exePath, name) => {
+    if (!exePath || seen.has(exePath)) return;
+    try {
+      if (!fs.existsSync(exePath)) return;
+    } catch (e) {
+      return;
+    }
+    seen.add(exePath);
+    // 从路径猜版本：Python312 / python3.12 / python.exe
+    const m = /(?:Python|python)[- ]?(\d+)\.(\d+)/i.exec(exePath) || /Python(\d)(\d+)/i.exec(exePath);
+    const version = m ? `${m[1]}.${m[2]}` : '';
+    out.push({ version, path: exePath, name: name || path.basename(exePath) });
+  };
+
+  // 1. PATH 里的
+  push(detect('python'), 'python');
+  push(detect('python3'), 'python3');
+
+  // 2. 常见安装目录
+  const roots = [
+    path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python'),
+    'D:\\python',
+    'C:\\Python312',
+    'C:\\Python311',
+    'C:\\Python310'
+  ];
+  for (const root of roots) {
+    let entries;
+    try {
+      entries = fs.readdirSync(root, { withFileTypes: true });
+    } catch (e) {
+      continue;
+    }
+    for (const ent of entries) {
+      if (ent.isDirectory()) {
+        push(path.join(root, ent.name, 'python.exe'), ent.name);
+      } else if (/^python\.exe$/i.test(ent.name)) {
+        push(path.join(root, ent.name), path.basename(root));
+      }
+    }
+  }
+
+  // 路径里没版本号的，跑一次 --version 拿（同步，最多 2 秒）
+  for (const item of out) {
+    if (item.version) continue;
+    try {
+      const res = require('child_process').spawnSync(item.path, ['--version'], {
+        timeout: 2000,
+        encoding: 'utf8',
+        windowsHide: true
+      });
+      const text = String(res.stdout || '') + String(res.stderr || '');
+      const m = /Python\s+(\d+)\.(\d+)/i.exec(text);
+      if (m) item.version = `${m[1]}.${m[2]}`;
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  // 按版本降序（空版本排最后）
+  return out.sort((a, b) => {
+    const va = a.version ? Number(a.version.split('.')[0]) * 100 + Number(a.version.split('.')[1] || 0) : -1;
+    const vb = b.version ? Number(b.version.split('.')[0]) * 100 + Number(b.version.split('.')[1] || 0) : -1;
+    return vb - va;
+  });
+}
+
+/**
+ * 探测 Playwright 浏览器缓存。
+ *
+ * Java 和 Python 的 Playwright 共享同一个缓存目录：
+ *   Windows: %LOCALAPPDATA%\ms-playwright
+ *   macOS:   ~/Library/Caches/ms-playwright
+ *   Linux:   ~/.cache/ms-playwright
+ *
+ * @returns {{found: boolean, dir: string, browsers: {name: string, size: number}[], totalSize: number}}
+ */
+function detectPlaywrightBrowsers() {
+  const isWin = process.platform === 'win32';
+  const dir = isWin
+    ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'ms-playwright')
+    : process.platform === 'darwin'
+      ? path.join(os.homedir(), 'Library', 'Caches', 'ms-playwright')
+      : path.join(os.homedir(), '.cache', 'ms-playwright');
+
+  if (!fs.existsSync(dir)) return { found: false, dir, browsers: [], totalSize: 0 };
+
+  const browsers = [];
+  let totalSize = 0;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    return { found: false, dir, browsers: [], totalSize: 0 };
+  }
+
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    // 跳过 .links / .settings 这类元数据目录
+    if (ent.name.startsWith('.')) continue;
+    // 只认 chromium-* / firefox-* / webkit-*
+    if (!/^(chromium|firefox|webkit)/i.test(ent.name)) continue;
+    const full = path.join(dir, ent.name);
+    let size = 0;
+    try {
+      size = dirSize(full);
+    } catch (e) {
+      size = 0;
+    }
+    browsers.push({ name: ent.name, size });
+    totalSize += size;
+  }
+
+  return { found: browsers.length > 0, dir, browsers, totalSize };
+}
+
+/** 递归算目录大小（字节） */
+function dirSize(dir) {
+  let total = 0;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    return 0;
+  }
+  for (const ent of entries) {
+    const full = path.join(dir, ent.name);
+    try {
+      if (ent.isDirectory()) total += dirSize(full);
+      else total += fs.statSync(full).size;
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  return total;
+}
+
 function detectAll() {
   return {
     java: detect('java'),
     python: detect('python'),
     mvn: detect('mvn'),
     javaHome: detectJavaHome(),
+    playwright: detectPlaywrightBrowsers(),
     jmeter: '' // 由调用方从 settings 里取
   };
 }
@@ -317,4 +470,16 @@ function cancelAll() {
   for (const id of Array.from(running.keys())) cancel(id);
 }
 
-module.exports = { run, cancel, cancelAll, detect, detectAll, detectJavaHome, listJdks, readJavaVersion, DEFAULT_TIMEOUT };
+module.exports = {
+  run,
+  cancel,
+  cancelAll,
+  detect,
+  detectAll,
+  detectJavaHome,
+  detectPlaywrightBrowsers,
+  listJdks,
+  listPythons,
+  readJavaVersion,
+  DEFAULT_TIMEOUT
+};

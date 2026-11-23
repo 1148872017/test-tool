@@ -157,6 +157,65 @@ Apifox 能跑接口用例（带断言）、能编排测试场景、能压测（�
 - 每天首次启动自动备份数据库，保留最近 10 份
 - 设置页「清除数据」可选择清空**本地备份文件**或**本地数据文件**：删除 `data.db` 后重建空库（含设置和锁屏密码一起重置），确认按钮有 3 秒倒计时，防手滑
 
+### 代码调试（Groovy / Python / pytest / Maven）
+
+在平台里写代码 → 跑 → 看输出，不用开 IDE。
+
+| 运行器 | 跑什么 | 等价命令 |
+|---|---|---|
+| **Groovy（JMeter）** | JMeter 的 JSR223 脚本 | `java -cp {jmeter}/lib/* groovy.ui.GroovyMain x.groovy` |
+| **Python** | 独立 Python 脚本 | `python x.py` |
+| **Python（pytest）** | pytest 用例 | `python -m pytest x.py -v` |
+| **Java（Maven）** | Maven 项目的测试类 | `mvn test -Dtest=Xxx` |
+
+**用法**：侧边栏「工具 → 代码调试」→ 选运行器 → 写代码（或选项目+测试类）→ 点「运行」（或 Ctrl+Enter）。
+
+#### 环境要求
+
+**平台只检测，不下载、不安装**——不会修改你的系统环境，卸载时也不会删除它们。
+
+| 环境 | 版本要求 | 检测方式 | 缺了怎么办 |
+|---|---|---|---|
+| **JDK** | 17+（按项目 `pom.xml` 自动选） | `JAVA_HOME` + 常见安装目录 | 自行安装，或在「设置 → 开发环境」手动指定 |
+| **Python** | 3.10+ | PATH + 常见安装目录 | 同上 |
+| **Maven** | 3.8+ | PATH + 常见安装目录 | 同上 |
+| **JMeter** | 5.x | 「设置 → 压测」里配的路径 | 在设置里配 |
+| **Playwright 浏览器** | — | `%LOCALAPPDATA%\ms-playwright` | 自行 `npx playwright install` 或 `mvn playwright:install` |
+
+**Java 和 Python 的 Playwright 共用同一个浏览器缓存**（`%LOCALAPPDATA%\ms-playwright`），只下一份。
+
+#### 多版本共存
+
+平台会**列出所有已装的 JDK / Python**，并按项目 `pom.xml` 里声明的版本自动选：
+
+```
+example 项目 pom.xml → <java.version>17</java.version>
+  → 在已装 JDK 里找 v17 → 选中 D:\Java\jdk-17
+  → 传给 mvn 子进程 JAVA_HOME=D:\Java\jdk-17
+```
+
+也可以在「设置 → 开发环境」里**手动指定**（覆盖自动探测）。
+
+#### 项目扫描
+
+平台扫描「设置 → 开发环境」里配的项目目录（默认 `D:\AI_Workspace\Project`），自动识别：
+
+| 识别项 | 依据 |
+|---|---|
+| **Maven 项目** | 有 `pom.xml` |
+| **Python 项目** | 有 `requirements.txt` / `pyproject.toml` |
+| **Node 项目** | 有 `package.json` |
+| **测试框架** | `pom.xml` / `requirements.txt` 里的关键词（REST Assured / Playwright / TestNG / JUnit / Allure / pytest） |
+
+#### 卸载时会不会删环境
+
+**不会。** 卸载时勾选「删除用户数据」只删：
+
+- `%APPDATA%\测试工作台`（数据库、备份）
+- `文档\测试工作台`（用例 / jmx / 报告 / 知识库 / 笔记）
+
+**不会删**：JDK / Python / Maven / JMeter / Playwright 浏览器——这些是你自己装的环境。
+
 ## 怎么用
 
 1. 解压 `测试工作台-0.15.0-win64.zip`

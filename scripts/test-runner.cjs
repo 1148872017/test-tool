@@ -217,6 +217,66 @@ if (fs.existsSync(mvnSettings)) {
   check('Maven 配了阿里云镜像', /aliyun/.test(active), 'no aliyun mirror');
 }
 
+
+/* ---------- 12. 多版本探测（Python / Playwright 浏览器）---------- */
+const pythons = runner.listPythons();
+check('listPythons 返回数组', Array.isArray(pythons), typeof pythons);
+if (pythons.length) {
+  check('Python 有 version 字段', 'version' in pythons[0], Object.keys(pythons[0]));
+  check('Python 有 path 字段', !!pythons[0].path, pythons[0]);
+}
+
+const pw = runner.detectPlaywrightBrowsers();
+check('detectPlaywrightBrowsers 返回对象', typeof pw === 'object', typeof pw);
+check('有 found/dir/browsers/totalSize', ['found', 'dir', 'browsers', 'totalSize'].every((k) => k in pw), Object.keys(pw));
+check('dir 是绝对路径', pw.dir.includes(':') || pw.dir.startsWith('/'), pw.dir);
+if (pw.found) {
+  check('browsers 是数组', Array.isArray(pw.browsers), typeof pw.browsers);
+  check('totalSize > 0', pw.totalSize > 0, pw.totalSize);
+}
+
+/* ---------- 13. 设置项：手动指定环境路径 ---------- */
+const mainSrc2 = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+check('DEFAULT_SETTINGS 有 javaHome', /javaHome: ''/.test(mainSrc2), 'no javaHome');
+check('DEFAULT_SETTINGS 有 pythonPath', /pythonPath: ''/.test(mainSrc2), 'no pythonPath');
+check('DEFAULT_SETTINGS 有 mvnPath', /mvnPath: ''/.test(mainSrc2), 'no mvnPath');
+check('publicSettings 暴露 javaHome', /javaHome: settings\.javaHome/.test(mainSrc2), 'not exposed');
+check('手动指定优先于自动探测', /if \(settings\.javaHome\) \{/.test(mainSrc2), 'manual not prioritized');
+
+/* ---------- 14. IPC：环境状态 + 打开浏览器目录 ---------- */
+check('runner:list 返回 jdks', /jdks: runner\.listJdks\(\)/.test(mainSrc2), 'no jdks');
+check('runner:list 返回 pythons', /pythons: runner\.listPythons\(\)/.test(mainSrc2), 'no pythons');
+check('runner:list 返回 manual', /manual: \{/.test(mainSrc2), 'no manual');
+check('有 runner:openBrowserDir', /ipcMain\.handle\('runner:openBrowserDir'/.test(mainSrc2), 'no openBrowserDir');
+
+/* ---------- 15. 前端：EnvCard + 侧边导航 + 引导弹窗 + 提示条 ---------- */
+const envCardSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'EnvCard.tsx'), 'utf8');
+check('EnvCard 存在', envCardSrc.length > 0, 'empty');
+check('EnvCard 显示「只检测不下载」', /只检测，不下载、不安装/.test(envCardSrc), 'no disclaimer');
+check('EnvCard 有 JDK 下拉', /JDK \$\{j\.version\}/.test(envCardSrc), 'no jdk select');
+check('EnvCard 有 Python 下拉', /Python \$\{p\.version/.test(envCardSrc), 'no python select');
+check('EnvCard 有 Playwright 浏览器状态', /Playwright 浏览器/.test(envCardSrc), 'no playwright');
+check('EnvCard 有「打开目录」', /runnerOpenBrowserDir/.test(envCardSrc), 'no open dir');
+
+const settingsSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'SettingsPage.tsx'), 'utf8');
+check('设置页接入 EnvCard', /<EnvCard/.test(settingsSrc), 'not used');
+check('设置页有侧边导航', /settings-nav/.test(settingsSrc), 'no nav');
+check('导航有 8+ 项', (settingsSrc.match(/id: 'sec-/g) || []).length >= 8, (settingsSrc.match(/id: 'sec-/g) || []).length);
+check('卡片有锚点 id', /id="sec-env"/.test(settingsSrc), 'no anchor');
+
+const pageSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'CodeRunnerPage.tsx'), 'utf8');
+check('代码调试页有首次引导弹窗', /guideOpen/.test(pageSrc2), 'no guide');
+check('引导用 localStorage 记一次', /runner-guide-seen/.test(pageSrc2), 'no localStorage');
+check('有环境提示条', /env-tip/.test(pageSrc2), 'no tip');
+check('提示条 30s 倒计时', /TIP_DURATION = 30000/.test(pageSrc2), 'no duration');
+check('提示条有绿色进度条', /env-tip-bar/.test(pageSrc2), 'no bar');
+check('提示条可手动关闭', /closeTip/.test(pageSrc2), 'no close');
+check('缺环境时不运行', /if \(missingEnv\.length\) \{/.test(pageSrc2), 'runs anyway');
+
+/* ---------- 16. 卸载页：不删环境说明 ---------- */
+const nsh = fs.readFileSync(path.join(__dirname, '..', 'build', 'installer.nsh'), 'utf8');
+check('卸载页说明不删环境', /不会删除：已安装的 JDK/.test(nsh), 'no note');
+
 const failed = results.filter((r) => !r.ok);
 console.log('===== 代码调试测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));

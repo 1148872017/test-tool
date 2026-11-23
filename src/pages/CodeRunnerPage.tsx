@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Select, Button, Input, Tag, Alert, Tooltip, Space } from 'antd';
+import { Select, Button, Input, Tag, Alert, Tooltip, Space, Modal } from 'antd';
 import {
   PlayCircleOutlined,
   StopOutlined,
   ClearOutlined,
   CopyOutlined,
   FolderOpenOutlined,
-  ReloadOutlined
+  ReloadOutlined,
+  SettingOutlined,
+  CloseOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
@@ -73,7 +75,26 @@ def test_fail():
 `
 };
 
-export default function CodeRunner() {
+/** 环境名 → 中文 */
+const ENV_LABEL: Record<string, string> = {
+  java: 'Java（JDK）',
+  python: 'Python',
+  mvn: 'Maven',
+  jmeter: 'JMeter'
+};
+
+/** 环境名 → 安装提示 */
+const ENV_HINT: Record<string, string> = {
+  java: '请安装 JDK 17+（Maven 用 JAVA_HOME 找 JDK）',
+  python: '请安装 Python 3.10+',
+  mvn: '请安装 Maven 3.8+',
+  jmeter: '请在「设置 → 压测」里配置 JMeter 路径'
+};
+
+/** 提示条自动关闭时间（毫秒） */
+const TIP_DURATION = 30000;
+
+export default function CodeRunnerPage() {
   const [runners, setRunners] = useState<Runner[]>([]);
   const [env, setEnv] = useState<any>({});
   const [runnerKey, setRunnerKey] = useState('groovy');
@@ -89,12 +110,19 @@ export default function CodeRunner() {
   const [runId, setRunId] = useState('');
   const [result, setResult] = useState<any>(null);
 
+  // 首次进入的引导弹窗
+  const [guideOpen, setGuideOpen] = useState(false);
+  // 环境提示条（可手动关闭 / 30s 自动关）
+  const [tipVisible, setTipVisible] = useState(false);
+  const [tipPct, setTipPct] = useState(100);
+  const tipTimer = useRef<any>(null);
+
   const outputRef = useRef<HTMLDivElement | null>(null);
 
   const currentRunner = useMemo(() => runners.find((r) => r.key === runnerKey), [runners, runnerKey]);
   const isMaven = runnerKey === 'maven';
 
-  /* ---------- 初始化：加载运行器 + 扫描项目 ---------- */
+  /* ---------- 初始化 ---------- */
   useEffect(() => {
     (async () => {
       try {
@@ -111,6 +139,15 @@ export default function CodeRunner() {
         /* 扫描失败不影响手写代码 */
       }
     })();
+
+    // 首次进入：弹引导（localStorage 记一次）
+    try {
+      if (!localStorage.getItem('runner-guide-seen')) {
+        setGuideOpen(true);
+      }
+    } catch (e) {
+      /* ignore */
+    }
   }, []);
 
   /* ---------- 订阅输出 ---------- */
@@ -137,7 +174,41 @@ export default function CodeRunner() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [lines]);
 
-  /* ---------- 切运行器：换模板 ---------- */
+  /* ---------- 环境缺失 → 显示提示条 + 30s 倒计时 ---------- */
+  const missingEnv = useMemo(() => {
+    if (!currentRunner) return [];
+    return (currentRunner.needs || []).filter((n) => !env[n]);
+  }, [currentRunner, env]);
+
+  useEffect(() => {
+    if (!missingEnv.length) {
+      setTipVisible(false);
+      return;
+    }
+    setTipVisible(true);
+    setTipPct(100);
+    if (tipTimer.current) clearInterval(tipTimer.current);
+    const started = Date.now();
+    tipTimer.current = setInterval(() => {
+      const elapsed = Date.now() - started;
+      const pct = Math.max(0, 100 - (elapsed / TIP_DURATION) * 100);
+      setTipPct(pct);
+      if (pct <= 0) {
+        clearInterval(tipTimer.current);
+        setTipVisible(false);
+      }
+    }, 100);
+    return () => {
+      if (tipTimer.current) clearInterval(tipTimer.current);
+    };
+  }, [missingEnv]);
+
+  const closeTip = () => {
+    if (tipTimer.current) clearInterval(tipTimer.current);
+    setTipVisible(false);
+  };
+
+  /* ---------- 切运行器 ---------- */
   const changeRunner = (key: string) => {
     setRunnerKey(key);
     setCode(TEMPLATES[key] || '');
@@ -145,7 +216,7 @@ export default function CodeRunner() {
     setResult(null);
   };
 
-  /* ---------- 选项目：加载测试类 ---------- */
+  /* ---------- 选项目 ---------- */
   const changeProject = async (dir: string) => {
     setProjectDir(dir);
     setTestClass('');
@@ -162,6 +233,10 @@ export default function CodeRunner() {
   /* ---------- 运行 ---------- */
   const doRun = async () => {
     if (running) return;
+    if (missingEnv.length) {
+      toast(`缺少环境：${missingEnv.map((n) => ENV_LABEL[n] || n).join('、')}`, 'error');
+      return;
+    }
     setLines([]);
     setResult(null);
     setRunning(true);
@@ -202,15 +277,66 @@ export default function CodeRunner() {
     toast('输出已复制');
   };
 
-  /* ---------- 环境检查 ---------- */
-  const missingEnv = useMemo(() => {
-    if (!currentRunner) return [];
-    const map: Record<string, string> = { java: 'Java', python: 'Python', mvn: 'Maven', jmeter: 'JMeter' };
-    return (currentRunner.needs || []).filter((n) => !env[n]).map((n) => map[n] || n);
-  }, [currentRunner, env]);
+  const closeGuide = () => {
+    setGuideOpen(false);
+    try {
+      localStorage.setItem('runner-guide-seen', '1');
+    } catch (e) {
+      /* ignore */
+    }
+  };
 
   return (
     <div className="code-runner">
+      {/* 首次引导弹窗 */}
+      <Modal
+        open={guideOpen}
+        title="先配置开发环境"
+        onCancel={closeGuide}
+        footer={[
+          <Button key="ok" type="primary" onClick={closeGuide}>
+            知道了
+          </Button>
+        ]}
+        width={520}
+      >
+        <div style={{ fontSize: 13, lineHeight: 1.9 }}>
+          <p>
+            「代码调试」需要本机已安装 <b>JDK</b> / <b>Python</b> / <b>Maven</b>（按你要用的运行器）。
+          </p>
+          <p>
+            <b>平台只检测，不下载、不安装</b>——不会修改你的系统环境，卸载时也不会删除它们。
+          </p>
+          <p>
+            建议先去 <b>设置 → 开发环境</b> 看一眼检测结果，缺什么装什么。
+          </p>
+        </div>
+      </Modal>
+
+      {/* 环境提示条（30s 倒计时绿条） */}
+      {tipVisible && missingEnv.length ? (
+        <div className="env-tip">
+          <div className="env-tip-body">
+            <span className="env-tip-icon">!</span>
+            <span className="env-tip-text">
+              缺少环境：<b>{missingEnv.map((n) => ENV_LABEL[n] || n).join('、')}</b>
+              <span className="muted" style={{ marginLeft: 8 }}>
+                {missingEnv.map((n) => ENV_HINT[n]).filter(Boolean).join('；')}
+              </span>
+            </span>
+            <Button
+              type="text"
+              size="small"
+              icon={<CloseOutlined />}
+              onClick={closeTip}
+              className="env-tip-close"
+            />
+          </div>
+          {/* 底部自动缩减的绿色粗线 */}
+          <div className="env-tip-bar" style={{ width: `${tipPct}%` }} />
+        </div>
+      ) : null}
+
       {/* 顶部：运行器 + 项目选择 */}
       <div className="runner-bar">
         <Space size={8} wrap>
@@ -283,19 +409,7 @@ export default function CodeRunner() {
         </Space>
       </div>
 
-      {currentRunner ? (
-        <div className="runner-desc muted">{currentRunner.desc}</div>
-      ) : null}
-
-      {missingEnv.length ? (
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 8 }}
-          message={`缺少环境：${missingEnv.join('、')}`}
-          description="请先安装，或在「设置」里配置路径。"
-        />
-      ) : null}
+      {currentRunner ? <div className="runner-desc muted">{currentRunner.desc}</div> : null}
 
       {/* 代码编辑器 */}
       {!isMaven ? (

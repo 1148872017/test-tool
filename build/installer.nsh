@@ -217,11 +217,15 @@
     ${NSD_CreateLabel} 0 28u 100% 40u "· 数据库与备份：$DataDirAppData$\r$\n· 用例 / jmx / 报告 / 知识库 / 笔记：$DataDirDocuments"
     Pop $0
 
-    ${NSD_CreateCheckbox} 0 76u 100% 12u "同时删除上述用户数据（不可恢复）"
+    ; 明确告知：不会删除已安装的开发环境
+    ${NSD_CreateLabel} 0 70u 100% 30u "不会删除：已安装的 JDK / Python / Maven / JMeter / Playwright 浏览器。$\r$\n这些是你自己装的环境，平台从不修改也不删除。"
+    Pop $0
+
+    ${NSD_CreateCheckbox} 0 102u 100% 12u "同时删除上述用户数据（不可恢复）"
     Pop $hCheckbox
     ${NSD_OnClick} $hCheckbox un.DataCheckboxClick
 
-    ${NSD_CreateLabel} 0 96u 100% 70u ""
+    ${NSD_CreateLabel} 0 122u 100% 70u ""
     Pop $hWarnLabel
 
     StrCpy $DeleteUserData "0"

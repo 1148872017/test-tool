@@ -50,6 +50,7 @@ const fmtEta = (sec: number) => {
   return `${h} 小时 ${m % 60} 分`;
 };
 import OptionEditor from '../components/OptionEditor';
+import EnvCard from '../components/EnvCard';
 
 type Props = {
   boot: any;
@@ -459,7 +460,39 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         </div>
       </div>
 
-      <div className="tool-card" style={{ marginBottom: 14 }}>
+      {/* 侧边快速导航 */}
+      <nav className="settings-nav">
+        {[
+          { id: 'sec-env', label: '开发环境' },
+          { id: 'sec-cases', label: '测试用例' },
+          { id: 'sec-jmx', label: '压测（JMeter）' },
+          { id: 'sec-kb', label: '知识库' },
+          { id: 'sec-notes', label: '测试笔记' },
+          { id: 'sec-options', label: '选项配置' },
+          { id: 'sec-security', label: '安全' },
+          { id: 'sec-data', label: '数据与备份' },
+          { id: 'sec-about', label: '关于' }
+        ].map((it) => (
+          <a
+            key={it.id}
+            className="settings-nav-item"
+            onClick={(e) => {
+              e.preventDefault();
+              const el = document.getElementById(it.id);
+              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }}
+            href={`#${it.id}`}
+          >
+            {it.label}
+          </a>
+        ))}
+      </nav>
+
+      <div id="sec-env">
+        <EnvCard saveSettings={saveSettings} settings={settings} />
+      </div>
+
+      <div id="sec-cases" className="tool-card" style={{ marginBottom: 14 }}>
         <div className="tool-card-title">
           <FolderOpenOutlined /> 测试用例
         </div>
@@ -485,7 +518,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         </div>
       </div>
 
-      <div className="tool-card" style={{ marginBottom: 14 }}>
+      <div id="sec-jmx" className="tool-card" style={{ marginBottom: 14 }}>
         <div className="tool-card-title">
           <DashboardOutlined /> 压测（JMeter）
         </div>
@@ -560,7 +593,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         </div>
       </div>
 
-      <div className="tool-card" style={{ marginBottom: 14 }}>
+      <div id="sec-kb" className="tool-card" style={{ marginBottom: 14 }}>
         <div className="tool-card-title">
           <BookOutlined /> 知识库
         </div>
@@ -586,7 +619,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         </div>
       </div>
 
-      <div className="tool-card" style={{ marginBottom: 14 }}>
+      <div id="sec-notes" className="tool-card" style={{ marginBottom: 14 }}>
         <div className="tool-card-title">
           <FileTextOutlined /> 测试笔记
         </div>
@@ -612,7 +645,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         </div>
       </div>
 
-      <div className="tool-card" style={{ marginBottom: 14 }}>
+      <div id="sec-options" className="tool-card" style={{ marginBottom: 14 }}>
         <div className="tool-card-title">
           <TagOutlined /> 选项配置
         </div>
@@ -622,7 +655,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         <OptionEditor />
       </div>
 
-      <div className="tool-card" style={{ marginBottom: 14 }}>
+      <div id="sec-security" className="tool-card" style={{ marginBottom: 14 }}>
         <div className="tool-card-title">
           <LockOutlined /> 安全
         </div>
@@ -742,7 +775,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         ) : null}
       </div>
 
-      <div className="tool-card" style={{ marginBottom: 14 }}>
+      <div id="sec-data" className="tool-card" style={{ marginBottom: 14 }}>
         <div className="tool-card-title">
           <SaveOutlined /> 数据与备份
         </div>
