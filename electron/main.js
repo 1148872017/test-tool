@@ -813,6 +813,14 @@ function registerIpc() {
     // JMeter 路径从 settings 取
     env.jmeter = settings.jmeterDir || '';
 
+    // Maven 用 JAVA_HOME 决定 JDK 版本（不是 PATH 里的 java）。
+    // 按项目 pom.xml 里声明的版本选 JDK，避免「无效目标发行版: 17」。
+    const projectDir = String(payload.projectDir || '').trim();
+    if (key === 'maven' && projectDir) {
+      const want = runner.readJavaVersion(projectDir);
+      env.javaHome = runner.detectJavaHome(want);
+    }
+
     // 代码内容 → 临时文件
     let file = String(payload.file || '').trim();
     let tmpFile = '';
@@ -850,6 +858,8 @@ function registerIpc() {
       cmd: built.cmd,
       args: built.args,
       cwd: built.cwd,
+      // Maven 需要 JAVA_HOME 才能用对的 JDK
+      env: env.javaHome ? { JAVA_HOME: env.javaHome } : undefined,
       timeout: Number(payload.timeout) || undefined,
       onData: (chunk) => {
         if (win && !win.isDestroyed()) {

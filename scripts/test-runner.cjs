@@ -173,6 +173,50 @@ check('App 有 runner 路由', /route\.key === 'runner'/.test(appSrc), 'no route
 const iconsSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'icons.tsx'), 'utf8');
 check('BugOutlined 已注册', /BugOutlined/.test(iconsSrc), 'no icon');
 
+
+/* ---------- 9. JDK 版本匹配（Maven 用 JAVA_HOME 不是 PATH）---------- */
+const jdks = runner.listJdks();
+check('listJdks 返回数组', Array.isArray(jdks), typeof jdks);
+check('listJdks 按版本降序', jdks.length < 2 || jdks[0].version >= jdks[1].version, jdks.map((j) => j.version));
+
+// readJavaVersion 从 pom.xml 读
+const os2 = require('os');
+const tmp2 = fs.mkdtempSync(path.join(os2.tmpdir(), 'jdk-test-'));
+const projDir = path.join(tmp2, 'p');
+fs.mkdirSync(projDir, { recursive: true });
+fs.writeFileSync(path.join(projDir, 'pom.xml'), '<project><properties><java.version>17</java.version></properties></project>', 'utf8');
+check('readJavaVersion 读到 17', runner.readJavaVersion(projDir) === 17, runner.readJavaVersion(projDir));
+
+// 读不到返回 0
+fs.writeFileSync(path.join(projDir, 'pom.xml'), '<project></project>', 'utf8');
+check('readJavaVersion 读不到返回 0', runner.readJavaVersion(projDir) === 0, runner.readJavaVersion(projDir));
+
+// detectJavaHome 按版本选
+const home17 = runner.detectJavaHome(17);
+check('detectJavaHome(17) 返回路径', typeof home17 === 'string', typeof home17);
+if (home17) {
+  check('detectJavaHome(17) 路径存在', fs.existsSync(path.join(home17, 'bin', 'java.exe')), home17);
+}
+
+fs.rmSync(tmp2, { recursive: true, force: true });
+
+/* ---------- 10. main.js 传 JAVA_HOME ---------- */
+check('main.js 按项目读 Java 版本', /runner\.readJavaVersion\(projectDir\)/.test(mainSrc), 'no readJavaVersion');
+check('main.js 传 JAVA_HOME 给子进程', /env: env\.javaHome \? \{ JAVA_HOME: env\.javaHome \}/.test(mainSrc), 'no JAVA_HOME pass');
+
+/* ---------- 11. Maven 镜像已配（阿里云）---------- */
+const mvnSettings = 'D:/apache-maven-3.9.12/conf/settings.xml';
+if (fs.existsSync(mvnSettings)) {
+  const xml = fs.readFileSync(mvnSettings, 'utf8');
+  // 阿里云镜像必须在 <mirrors> 里且没被注释
+  const mirrorsBlock = (xml.match(/<mirrors>[\s\S]*?<\/mirrors>/) || [''])[0];
+  const active = mirrorsBlock
+    .split('\n')
+    .filter((l) => !/^\s*<!--/.test(l))
+    .join('\n');
+  check('Maven 配了阿里云镜像', /aliyun/.test(active), 'no aliyun mirror');
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log('===== 代码调试测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));

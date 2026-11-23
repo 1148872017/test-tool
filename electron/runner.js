@@ -90,11 +90,100 @@ function detect(name) {
  * 探测所有运行器需要的环境。
  * @returns {{java: string, python: string, mvn: string, jmeter: string}}
  */
+/**
+ * 探测 JAVA_HOME。
+ *
+ * 为什么需要：Maven 用 JAVA_HOME 决定 JDK 版本，不是 PATH 里的 java。
+ * 用户系统里 JAVA_HOME 可能指向 JDK 8，而项目要求 17 → 编译报「无效目标发行版」。
+ *
+ * 策略：
+ *   1. 用户级 JAVA_HOME（优先，用户自己配的）
+ *   2. 系统级 JAVA_HOME
+ *   3. 从 PATH 里的 java 反推（java.exe 在 {JAVA_HOME}/bin/java.exe）
+ */
+/**
+ * 找所有已安装的 JDK。
+ * @returns {{version: string, home: string}[]} 按版本降序
+ */
+function listJdks() {
+  const roots = ['D:\\Java', 'C:\\Program Files\\Java', 'C:\\Program Files\\Eclipse Adoptium', 'C:\\Program Files\\Microsoft'];
+  const out = [];
+  for (const root of roots) {
+    let entries;
+    try {
+      entries = fs.readdirSync(root, { withFileTypes: true });
+    } catch (e) {
+      continue;
+    }
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const home = path.join(root, ent.name);
+      const javaExe = path.join(home, 'bin', 'java.exe');
+      if (!fs.existsSync(javaExe)) continue;
+      // 从目录名猜版本：jdk-17 / jdk1.8.0_371 / jdk-17.0.12
+      const m = /(?:jdk-?)(\d+)(?:\.(\d+))?/i.exec(ent.name);
+      const major = m ? Number(m[1]) : 0;
+      out.push({ version: major, home, name: ent.name });
+    }
+  }
+  return out.sort((a, b) => b.version - a.version);
+}
+
+/**
+ * 探测 JAVA_HOME。
+ *
+ * 为什么需要：Maven 用 JAVA_HOME 决定 JDK 版本，不是 PATH 里的 java。
+ * 用户系统里 JAVA_HOME 可能指向 JDK 8，而项目要求 17 → 编译报「无效目标发行版」。
+ *
+ * @param {number} [wantVersion] 项目要求的 Java 版本（从 pom.xml 读）
+ * @returns {string} JAVA_HOME 路径
+ */
+function detectJavaHome(wantVersion) {
+  const jdks = listJdks();
+
+  // 1. 项目要求了版本 → 找匹配的
+  if (wantVersion) {
+    const hit = jdks.find((j) => j.version === wantVersion);
+    if (hit) return hit.home;
+  }
+
+  // 2. 环境变量
+  const fromEnv = process.env.JAVA_HOME || '';
+  if (fromEnv && fs.existsSync(path.join(fromEnv, 'bin', 'java.exe'))) return fromEnv;
+
+  // 3. 从 java 路径反推
+  const javaPath = detect('java');
+  if (javaPath) {
+    const home = path.dirname(path.dirname(javaPath));
+    if (fs.existsSync(path.join(home, 'bin', 'java.exe'))) return home;
+  }
+
+  // 4. 最高版本
+  return jdks.length ? jdks[0].home : '';
+}
+
+/**
+ * 从 pom.xml 读项目要求的 Java 版本。
+ * @param {string} projectDir
+ * @returns {number} 版本号，读不到返回 0
+ */
+function readJavaVersion(projectDir) {
+  try {
+    const pom = fs.readFileSync(path.join(projectDir, 'pom.xml'), 'utf8');
+    // <java.version>17</java.version> 或 <maven.compiler.source>17</maven.compiler.source>
+    const m = /<(?:java\.version|maven\.compiler\.(?:source|target|release))>\s*(\d+)/.exec(pom);
+    return m ? Number(m[1]) : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
 function detectAll() {
   return {
     java: detect('java'),
     python: detect('python'),
     mvn: detect('mvn'),
+    javaHome: detectJavaHome(),
     jmeter: '' // 由调用方从 settings 里取
   };
 }
@@ -228,4 +317,4 @@ function cancelAll() {
   for (const id of Array.from(running.keys())) cancel(id);
 }
 
-module.exports = { run, cancel, cancelAll, detect, detectAll, DEFAULT_TIMEOUT };
+module.exports = { run, cancel, cancelAll, detect, detectAll, detectJavaHome, listJdks, readJavaVersion, DEFAULT_TIMEOUT };
