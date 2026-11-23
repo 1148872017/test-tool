@@ -55,9 +55,17 @@ export default function VarFillModal({ open, text, title, varsRaw, onClose }: Pr
       const el = firstVarRef.current;
       const box = previewRef.current;
       if (!el || !box) return;
+      // 用 getBoundingClientRect 算相对位置。
+      // 不能用 el.offsetTop —— 它是相对 offsetParent 的，
+      // 而 <pre> 没设 position: relative，offsetParent 是更外层容器，
+      // offsetTop 会包含 <pre> 自身的位置偏移 → 滚过头。
+      const elRect = el.getBoundingClientRect();
+      const boxRect = box.getBoundingClientRect();
+      // 变量相对预览框内容顶部的距离
+      const relTop = elRect.top - boxRect.top + box.scrollTop;
       // 让变量出现在预览框上方 1/3 处，而不是贴顶
-      const top = el.offsetTop - box.clientHeight / 3;
-      box.scrollTop = Math.max(0, top);
+      const target = relTop - box.clientHeight / 3;
+      box.scrollTop = Math.max(0, target);
     }, 120);
     return () => clearTimeout(timer);
   }, [open, text]);
