@@ -268,7 +268,7 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 
   const store2 = require(path.join(proj, 'electron', 'store'));
   const legacyInfo = await store2.init(dirLegacy);
-  check('v2 老库启动后版本号升到当前版本', store2.schemaVersion() === 4, store2.schemaVersion());
+  check('v2 老库启动后版本号升到当前版本', store2.schemaVersion() === 5, store2.schemaVersion());
   check(
     'v2 老库升级留下了迁移前备份',
     !!(legacyInfo.migration && /data-before-v2-/.test(legacyInfo.migration.backupFile || '') && fs.existsSync(legacyInfo.migration.backupFile)),

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Table, Input, Button, Tag, Popconfirm, Segmented, Select, Dropdown } from 'antd';
+import { Table, Input, Button, Tag, Popconfirm, Segmented, Select, Dropdown, Modal } from 'antd';
 import {
   PlusOutlined,
   ReloadOutlined,
@@ -28,6 +28,8 @@ import SyncResultModal from './SyncResultModal';
 import ChangeImpactModal from './ChangeImpactModal';
 import ImportReportModal from './ImportReportModal';
 import CurlImportModal from './CurlImportModal';
+import { parseAccounts, AccountRow } from './AccountsEditor';
+import { ROLE_OPTIONS } from '../../shared/collections';
 import { asArray, fieldOptions, getOptionsSync, loadOptions, OptionsMap } from '../options';
 
 type Props = {
@@ -63,6 +65,11 @@ export default function CollectionPage({
   const [formRecord, setFormRecord] = useState<any>(null);
   // cURL 导入：解析结果作为表单预填值
   const [curlOpen, setCurlOpen] = useState(false);
+  // 一键启动时选账号（多个账号且没设默认）
+  const [accountPicker, setAccountPicker] = useState<{
+    accounts: AccountRow[];
+    resolve: (a: AccountRow | null) => void;
+  } | null>(null);
   const [formPrefill, setFormPrefill] = useState<any>(null);
   const [formWarnings, setFormWarnings] = useState<any[]>([]);
   const [varTarget, setVarTarget] = useState<any>(null);
@@ -322,10 +329,17 @@ export default function CollectionPage({
 
   const quickCopy = async (r: any) => {
     const d = r.data || {};
-    if (conf.key === 'sites' || conf.key === 'accounts') {
-      if (d.password) return copy(d.password, true, '密码已复制，30 秒后自动清空');
-      if (d.account) return copy(d.account, false, '账号已复制');
-      toast('这条记录没有账号或密码', 'warning');
+    if (conf.key === 'sites') {
+      // 账号在 accounts 数组里：优先默认账号，其次第一个
+      const list = parseAccounts(String(d.accounts || ''));
+      if (!list.length) {
+        toast('这个站点还没记账号', 'warning');
+        return;
+      }
+      const target = list.find((a) => a.isDefault) || list[0];
+      if (target.password) return copy(target.password, true, '密码已复制，30 秒后自动清空');
+      if (target.account) return copy(target.account, false, '账号已复制');
+      toast('这个账号没填账号或密码', 'warning');
       return;
     }
     if (conf.key === 'sqls') {
@@ -340,6 +354,12 @@ export default function CollectionPage({
    * 用系统默认浏览器打开。
    * 浏览器不允许外部程序往页面里打字，所以这里退一步：
    * 打开的同时把密码复制到剪贴板，切过去 Ctrl+V 就行。
+   *
+   * 账号选择逻辑：
+   *   1. 有 isDefault 的账号 → 用它
+   *   2. 只有一个账号 → 自动用
+   *   3. 多个且没默认 → 弹窗选
+   *   4. 没有账号 → 只打开 URL
    */
   const openSite = async (r: any) => {
     const url = String((r.data || {})[openField] || '').trim();
@@ -347,20 +367,51 @@ export default function CollectionPage({
       toast('这条记录没有填地址', 'warning');
       return;
     }
-    const pwd = (r.data || {}).password;
+
+    const accounts = parseAccounts(String((r.data || {}).accounts || ''));
+
+    // 没有账号：只打开
+    if (!accounts.length) {
+      try {
+        await api.openUrl(url);
+        toast('已用浏览器打开（这个站点还没记账号）');
+      } catch (e: any) {
+        toast('打开失败：' + (e && e.message ? e.message : e), 'error');
+      }
+      return;
+    }
+
+    // 选账号：默认 → 唯一 → 弹窗
+    let target = accounts.find((a) => a.isDefault);
+    if (!target && accounts.length === 1) target = accounts[0];
+
+    if (!target) {
+      // 多个且没默认 → 弹窗选
+      target = await pickAccount(accounts);
+      if (!target) return; // 用户取消
+    }
+
     try {
       await api.openUrl(url);
     } catch (e: any) {
       toast('打开失败：' + (e && e.message ? e.message : e), 'error');
       return;
     }
-    if (pwd && openCopy) {
-      await api.copy(String(pwd), true);
-      toast('已用浏览器打开，密码已复制 —— 切过去 Ctrl+V');
+
+    if (target.password && openCopy) {
+      await api.copy(target.password, true);
+      const who = target.label || target.account || '账号';
+      toast(`已打开，${who} 的密码已复制 —— 切过去 Ctrl+V`);
     } else {
       toast('已用浏览器打开');
     }
   };
+
+  /** 弹窗选账号（多个账号且没设默认时） */
+  const pickAccount = (accounts: AccountRow[]): Promise<AccountRow | null> =>
+    new Promise((resolve) => {
+      setAccountPicker({ accounts, resolve });
+    });
 
   const remove = async (r: any) => {
     try {
@@ -771,6 +822,50 @@ export default function CollectionPage({
       ) : null}
 
       <CurlImportModal open={curlOpen} onClose={() => setCurlOpen(false)} onImport={onCurlImport} />
+
+      {/* 一键启动：多个账号且没设默认时，选一个 */}
+      <Modal
+        open={!!accountPicker}
+        title="用哪个账号登录？"
+        footer={null}
+        onCancel={() => {
+          if (accountPicker) accountPicker.resolve(null);
+          setAccountPicker(null);
+        }}
+        width={480}
+      >
+        <div className="account-picker">
+          {(accountPicker ? accountPicker.accounts : []).map((a, i) => (
+            <div
+              key={i}
+              className="account-picker-item"
+              onClick={() => {
+                if (accountPicker) accountPicker.resolve(a);
+                setAccountPicker(null);
+              }}
+            >
+              <div className="account-picker-main">
+                <span className="account-picker-label">{a.label || a.account || '未命名'}</span>
+                {a.role && a.role.length ? (
+                  <span className="role-tags" style={{ marginLeft: 8 }}>
+                    {a.role.map((v) => {
+                      const opt = ROLE_OPTIONS.find((o: any) => o.value === v);
+                      return (
+                        <Tag key={v} color={opt && opt.color ? opt.color : 'default'} style={{ margin: '0 4px 0 0' }}>
+                          {opt ? opt.label : v}
+                        </Tag>
+                      );
+                    })}
+                  </span>
+                ) : null}
+              </div>
+              <div className="muted mono" style={{ fontSize: 12 }}>
+                {a.account || '—'}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Modal>
     </div>
   );
 }

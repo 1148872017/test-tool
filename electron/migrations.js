@@ -21,7 +21,7 @@
 
 const { OPTION_SETS } = require('../shared/collections');
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 /**
  * 用例 ↔ 接口关联表（唯一事实源，DDL 只写这一份）
@@ -144,6 +144,98 @@ const MIGRATIONS = [
       api.setMeta('opt.env', envOpt);
       api.setMeta('opt.role', roleItems);
       api.setMeta('opt.tags', tagItems.slice(0, 300));
+    }
+  },
+  {
+    to: 5,
+    note: '账号合并进站点：accounts 集合 → sites.accounts 数组，删掉 accounts 集合',
+    run(api) {
+      // 1. 按站点分组收集账号
+      const bySite = new Map(); // siteId -> AccountRow[]
+      const orphans = []; // 没有归属站点的账号
+
+      for (const acc of api.records('accounts')) {
+        const d = acc.data || {};
+        const row = {
+          label: String(d.name || '').trim(),
+          account: String(d.account || '').trim(),
+          password: String(d.password || ''),
+          role: Array.isArray(d.role) ? d.role : d.role ? [d.role] : [],
+          isDefault: false,
+          note: String(d.note || '').trim()
+        };
+        const siteId = String(d.site || '').trim();
+        if (siteId) {
+          if (!bySite.has(siteId)) bySite.set(siteId, []);
+          bySite.get(siteId).push(row);
+        } else {
+          orphans.push(row);
+        }
+      }
+
+      // 2. 写回每个站点
+      for (const site of api.records('sites')) {
+        const d = site.data || {};
+        const existing = Array.isArray(d.accounts) ? d.accounts : [];
+
+        // 站点自己原来填的 account/password 也搬进来（作为第一个账号）
+        const legacyAccount = String(d.account || '').trim();
+        const legacyPassword = String(d.password || '');
+        if (legacyAccount || legacyPassword) {
+          existing.unshift({
+            label: '默认账号',
+            account: legacyAccount,
+            password: legacyPassword,
+            role: [],
+            isDefault: true,
+            note: '从「网站管理」的账号/密码字段迁移'
+          });
+        }
+
+        // 追加关联到本站点的账号
+        const linked = bySite.get(site.id) || [];
+        for (const row of linked) existing.push(row);
+
+        // 保证有且只有一个默认账号
+        if (existing.length) {
+          const hasDefault = existing.some((a) => a.isDefault);
+          if (!hasDefault) existing[0].isDefault = true;
+          // 多个默认只留第一个
+          let seenDefault = false;
+          for (const a of existing) {
+            if (a.isDefault) {
+              if (seenDefault) a.isDefault = false;
+              else seenDefault = true;
+            }
+          }
+        }
+
+        d.accounts = existing;
+        // 清空旧字段（不删数据，留空）
+        d.account = '';
+        d.password = '';
+        api.write(site);
+      }
+
+      // 3. 没有归属站点的账号：建一个「未归类」站点装它们
+      if (orphans.length) {
+        orphans[0].isDefault = true;
+        api.write({
+          collection: 'sites',
+          data: {
+            name: '未归类账号',
+            url: '',
+            env: ['other'],
+            accounts: orphans,
+            note: '从「测试账号」迁移过来，原来没有关联站点'
+          },
+          tags: [],
+          favorite: false
+        });
+      }
+
+      // 4. 删掉 accounts 集合的所有记录
+      api.sql("DELETE FROM records WHERE collection = 'accounts'");
     }
   }
 ];

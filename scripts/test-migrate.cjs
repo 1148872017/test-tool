@@ -100,20 +100,36 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
   const info = await store.init(tmp);
 
   // --- 3. 断言 ---
-  check('版本号升到 4', store.schemaVersion() === 4, store.schemaVersion());
+  check('版本号升到 5', store.schemaVersion() === 5, store.schemaVersion());
   check('迁移前自动备份了一份', !!info.migration && /data-before-v1-/.test(info.migration.backupFile || ''), info.migration);
   check('备份文件确实存在', !!(info.migration && fs.existsSync(info.migration.backupFile)));
 
   const rec = store.get('r_legacy1');
-  check('字段已改名 account→username', rec && rec.data.username === 'old_admin' && rec.data.account === undefined, rec && rec.data);
+  // v5 会把 account/password 清空（留空字符串，不删 key），所以这里判「空」而不是 undefined
+  check(
+    '字段已改名 account→username',
+    rec && rec.data.username === 'old_admin' && !rec.data.account,
+    rec && rec.data
+  );
   check('未知字段被保留', rec && rec.data.legacyExtra === '要保住的字段', rec && rec.data);
   check('标题没被改坏', rec && rec.title === '老站A', rec && rec.title);
   check('标签没丢', rec && rec.tags[0] === '老标签', rec && rec.tags);
 
+  // v5：accounts 集合已删，账号合并进 sites.accounts
   const acc = store.get('r_legacy_acc');
-  check('老账号按所属站点回填了环境', acc && Array.isArray(acc.data.env) && acc.data.env[0] === 'test', acc && acc.data);
+  check('v5 删掉了 accounts 集合的记录', acc === null, acc && acc.id);
+
+  const site = store.get('r_legacy1');
+  const siteAccounts = (site && site.data && site.data.accounts) || [];
+  check('v5 把账号合并进 sites.accounts', Array.isArray(siteAccounts) && siteAccounts.length > 0, siteAccounts);
+  check(
+    'v5 迁移的账号保留了角色',
+    siteAccounts.some((a) => Array.isArray(a.role) && a.role.indexOf('只读') >= 0),
+    siteAccounts.map((a) => a.role)
+  );
+  check('v5 保证有默认账号', siteAccounts.some((a) => a.isDefault === true), siteAccounts.map((a) => a.isDefault));
+
   check('v4 把 env 从字符串变成数组', Array.isArray(rec.data.env) && rec.data.env[0] === 'test', rec.data.env);
-  check('v4 把角色从字符串变成数组', Array.isArray(acc.data.role) && acc.data.role[0] === '只读', acc.data.role);
   const optsAfter = store.getOptions();
   check('v4 把历史环境值收进选项配置', optsAfter.env.some((o) => o.value === 'test'), optsAfter.env);
   check('v4 把历史角色收进选项配置', optsAfter.role.indexOf('只读') >= 0, optsAfter.role);

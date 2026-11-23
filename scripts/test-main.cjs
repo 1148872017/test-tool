@@ -118,15 +118,21 @@ const call = (channel, payload) => handlers[channel]({}, payload);
     data: {
       name: '测试站A',
       url: 'https://a.test.local',
-      env: 'test',
-      account: 'admin',
-      password: 'SuperSecret123',
+      env: ['test'],
+      // v0.30.0 起账号在 accounts 数组里，密码是嵌套字段（靠 secretPaths 加密）
+      accounts: [
+        { label: '管理员', account: 'admin', password: 'SuperSecret123', role: ['admin'], isDefault: true, note: '' }
+      ],
       note: 'note-abc'
     },
     tags: ['tagA'],
     favorite: true
   });
-  check('保存返回明文密码给界面', saved && saved.data.password === 'SuperSecret123', saved && saved.data);
+  check(
+    '保存返回明文密码给界面',
+    saved && saved.data.accounts && saved.data.accounts[0].password === 'SuperSecret123',
+    saved && saved.data
+  );
 
   const dbPath = path.join(tmp, 'data.db');
   await new Promise((r) => setTimeout(r, 800)); // 等 400ms 防抖落盘
@@ -135,7 +141,11 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   check('数据库里有密文前缀', raw.indexOf(Buffer.from('enc:')) >= 0);
 
   const list = await call('records:list', { collection: 'sites' });
-  check('列表返回 1 条且解密正确', list.length === 1 && list[0].data.password === 'SuperSecret123', list.length);
+  check(
+    '列表返回 1 条且解密正确',
+    list.length === 1 && list[0].data.accounts[0].password === 'SuperSecret123',
+    list.length
+  );
   check('标题取 name 字段', list[0].title === '测试站A');
   check('标签保存正确', Array.isArray(list[0].tags) && list[0].tags[0] === 'tagA');
 

@@ -21,6 +21,7 @@ import JsonTableToggle from './JsonTableToggle';
 import VarsEditor from './VarsEditor';
 import MetricsTable from './MetricsTable';
 import ScenePicker from './ScenePicker';
+import AccountsEditor from './AccountsEditor';
 import { caseKey, knownCaseKeys, loadCaseIndex } from '../caseIndex';
 import { matchOnlyFor, recentForApi, resultTone, runLine } from '../../shared/runs';
 import VarFillModal from './VarFillModal';
@@ -273,6 +274,8 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
             <pre className="mono">{String(raw)}</pre>
           </div>
         );
+      case 'accounts':
+        return <AccountsEditor value={String(raw)} onChange={() => {}} readOnly />;
       case 'scene':
         return <ScenePicker value={String(raw)} onChange={() => {}} readOnly />;
       case 'metrics':

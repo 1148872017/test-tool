@@ -84,7 +84,7 @@ const COLLECTIONS = [
     desc: '测试环境地址与登录信息，点开即用',
     titleField: 'name',
     titlePlaceholder: '如：资产管理系统-管理后台',
-    listFields: ['env', 'account'],
+    listFields: ['env', 'accounts'],
     filterField: 'env',
     noFavorite: true,
     openField: 'url',
@@ -93,32 +93,16 @@ const COLLECTIONS = [
       { key: 'name', label: '名称', type: 'text', required: true, placeholder: '如：资产管理系统-管理后台' },
       { key: 'url', label: '地址', type: 'url', placeholder: 'https://test.example.com/admin' },
       { key: 'env', label: '环境', type: 'multiselect', optionsKey: 'env', default: ['test'] },
-      { key: 'account', label: '账号', type: 'text', placeholder: '登录账号', copyable: true },
-      { key: 'password', label: '密码', type: 'secret', placeholder: '登录密码' },
+      // 账号列表：一个站点可以有多个账号（管理员 / 普通用户 / 只读…）
+      // 密码是嵌套字段，靠 secretPaths 声明加密
+      {
+        key: 'accounts',
+        label: '账号列表',
+        type: 'accounts',
+        secretPaths: ['accounts[].password'],
+        placeholder: '一个站点可以有多个账号'
+      },
       { key: 'note', label: '备注', type: 'textarea', placeholder: '入口路径、注意事项…' }
-    ]
-  },
-  {
-    key: 'accounts',
-    name: '测试账号',
-    group: '密码库',
-    icon: 'UserOutlined',
-    desc: '各系统测试账号，含角色、环境与所属站点',
-    titleField: 'name',
-    titlePlaceholder: '如：运营后台-管理员',
-    listFields: ['env', 'role', 'account'],
-    filterField: 'env',
-    noFavorite: true,
-    actions: [],
-    fields: [
-      { key: 'name', label: '系统 / 用途', type: 'text', required: true, placeholder: '如：运营后台-管理员' },
-      { key: 'env', label: '环境', type: 'multiselect', optionsKey: 'env', default: ['test'] },
-      { key: 'role', label: '角色 / 权限', type: 'multiselect', optionsKey: 'role', placeholder: '可多选，选项在「设置 → 选项配置」里维护' },
-      { key: 'account', label: '账号', type: 'text', placeholder: '登录账号', copyable: true },
-      { key: 'password', label: '密码', type: 'secret', placeholder: '登录密码' },
-      { key: 'site', label: '所属站点', type: 'link', linkTo: 'sites', placeholder: '从「网站管理」里选，会自动带出环境' },
-      { key: 'expire', label: '到期日', type: 'date' },
-      { key: 'note', label: '备注', type: 'textarea', placeholder: '用途说明、限制…' }
     ]
   },
   {
@@ -239,8 +223,20 @@ const COLLECTION_MAP = COLLECTIONS.reduce((acc, c) => {
   return acc;
 }, {});
 
+/**
+ * 需要加密的字段。
+ *
+ * 支持两种形式：
+ *   - 顶层字段：`type: 'secret'` → 自动收集
+ *   - **嵌套路径**：字段上写 `secretPaths: ['accounts[].password']`
+ *     （数组里的密码，`type` 不是 secret，靠这个显式声明）
+ */
 const SECRET_KEYS = COLLECTIONS.reduce((acc, c) => {
   const keys = c.fields.filter((f) => f.type === 'secret').map((f) => f.key);
+  // 收集嵌套路径
+  for (const f of c.fields) {
+    if (Array.isArray(f.secretPaths)) keys.push(...f.secretPaths);
+  }
   if (keys.length) acc[c.key] = keys;
   return acc;
 }, {});

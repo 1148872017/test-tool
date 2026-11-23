@@ -60,9 +60,11 @@ const SEED: Record<string, any[]> = {
       data: {
         name: '资产管理系统-管理后台',
         url: 'https://test.asset.local/admin',
-        env: 'test',
-        account: 'admin',
-        password: 'Admin@123',
+        env: ['test'],
+        accounts: [
+          { label: '管理员', account: 'admin', password: 'Admin@123', role: ['admin'], isDefault: true, note: '能改配置' },
+          { label: '普通用户', account: 'user01', password: 'User@123', role: ['user'], isDefault: false, note: '只读权限' }
+        ],
         note: '入口 /login，测试环境 10.0.0.1'
       },
       tags: ['核心'],
@@ -77,9 +79,10 @@ const SEED: Record<string, any[]> = {
       data: {
         name: '退款服务-运营端',
         url: 'https://test.refund.local',
-        env: 'staging',
-        account: 'qa_refund',
-        password: 'Refund#2026',
+        env: ['staging'],
+        accounts: [
+          { label: '测试账号', account: 'qa_refund', password: 'Refund#2026', role: ['user'], isDefault: true, note: '预发环境专用' }
+        ],
         note: '预发环境，数据每天凌晨重置'
       },
       tags: ['退款'],
@@ -94,54 +97,15 @@ const SEED: Record<string, any[]> = {
       data: {
         name: '支付网关-沙箱',
         url: 'https://sandbox.pay.local',
-        env: 'other',
-        account: 'sandbox',
-        password: 'pay123456',
+        env: ['other'],
+        accounts: [
+          { label: '沙箱账号', account: 'sandbox', password: 'pay123456', role: ['user'], isDefault: true, note: '只用于联调' }
+        ],
         note: '只用于联调，不要提交真实卡号'
       },
       tags: ['支付'],
       favorite: false,
       created_at: now() - 86400000 * 6,
-      updated_at: now() - 86400000
-    }
-  ],
-  accounts: [
-    {
-      id: 'a1',
-      collection: 'accounts',
-      title: '运营后台-管理员',
-      data: {
-        name: '运营后台-管理员',
-        env: 'test',
-        role: '超级管理员',
-        account: 'ops_admin',
-        password: 'Ops@123456',
-        site: 's1',
-        expire: '2027-06-30',
-        note: '能改配置，慎用'
-      },
-      tags: ['超管'],
-      favorite: true,
-      created_at: now() - 86400000 * 5,
-      updated_at: now() - 5400000
-    },
-    {
-      id: 'a2',
-      collection: 'accounts',
-      title: '运营后台-只读',
-      data: {
-        name: '运营后台-只读',
-        env: 'staging',
-        role: '只读',
-        account: 'viewer',
-        password: 'View@123',
-        site: 's2',
-        expire: '',
-        note: '验证权限用'
-      },
-      tags: [],
-      favorite: false,
-      created_at: now() - 86400000 * 4,
       updated_at: now() - 86400000
     }
   ],
@@ -330,13 +294,11 @@ const MOCK_REPORTS: any[] = [
 function seedData() {
   const db: Record<string, any[]> = {};
   for (const key of Object.keys(SEED)) db[key] = SEED[key].map((r) => ({ ...r, data: { ...r.data }, tags: [...r.tags] }));
-  // 和真实迁移 v4 对齐：站点/账号的 env、账号的 role 都是数组
-  for (const coll of ['sites', 'accounts']) {
-    for (const r of db[coll] || []) {
-      const d = r.data || {};
-      if (!Array.isArray(d.env)) d.env = d.env ? [d.env] : [];
-      if (coll === 'accounts' && !Array.isArray(d.role)) d.role = d.role ? [d.role] : [];
-    }
+  // 和真实迁移 v4/v5 对齐：env 是数组；sites 的账号在 accounts 数组里
+  for (const r of db['sites'] || []) {
+    const d = r.data || {};
+    if (!Array.isArray(d.env)) d.env = d.env ? [d.env] : [];
+    if (!Array.isArray(d.accounts)) d.accounts = [];
   }
   return db;
 }

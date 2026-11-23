@@ -315,17 +315,49 @@ function listBackups() {
   }
 }
 
+/**
+ * 按路径读写嵌套字段。
+ *
+ * 支持两种路径：
+ *   'password'            → 顶层字段
+ *   'accounts[].password' → 数组里每个元素的 password
+ *
+ * 为什么要这个：sites 的账号存在 `accounts` 数组里，
+ * 密码是嵌套字段，原来的「只处理顶层 key」逻辑加密不到它 → 明文入库。
+ */
+function applySecretPath(obj, path, fn) {
+  if (!obj || typeof obj !== 'object') return;
+
+  // 数组路径：accounts[].password
+  const arrMatch = /^(\w+)\[\]\.(\w+)$/.exec(path);
+  if (arrMatch) {
+    const [, arrKey, subKey] = arrMatch;
+    const arr = obj[arrKey];
+    if (!Array.isArray(arr)) return;
+    for (const item of arr) {
+      if (item && typeof item === 'object' && item[subKey] !== undefined) {
+        item[subKey] = fn(item[subKey]);
+      }
+    }
+    return;
+  }
+
+  // 顶层字段
+  if (obj[path] !== undefined) obj[path] = fn(obj[path]);
+}
+
 function serialize(collection, data) {
-  const out = Object.assign({}, data || {});
+  // 深拷贝，避免改到调用方的对象（数组里的元素也要拷）
+  const out = JSON.parse(JSON.stringify(data || {}));
   const secrets = SECRET_KEYS[collection] || [];
-  for (const key of secrets) out[key] = encrypt(out[key]);
+  for (const key of secrets) applySecretPath(out, key, encrypt);
   return out;
 }
 
 function deserialize(collection, data) {
-  const out = Object.assign({}, data || {});
+  const out = JSON.parse(JSON.stringify(data || {}));
   const secrets = SECRET_KEYS[collection] || [];
-  for (const key of secrets) out[key] = decrypt(out[key]);
+  for (const key of secrets) applySecretPath(out, key, decrypt);
   return out;
 }
 
