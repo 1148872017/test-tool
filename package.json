@@ -1,7 +1,7 @@
 {
   "name": "test-tool",
   "productName": "测试工作台",
-  "version": "0.30.10",
+  "version": "0.31.0",
   "description": "本地测试工作台：密码库 / 测试账号 / SQL 片段 / 接口记录 / 测试笔记",
   "author": "",
   "license": "MIT",
@@ -17,7 +17,7 @@
     "test:links": "node scripts/test-links.cjs",
     "test:openapi": "node scripts/test-openapi.cjs",
     "test:jmx": "node scripts/test-jmx.cjs",
-    "test": "node scripts/test-main.cjs && node scripts/test-migrate.cjs && node scripts/test-cases.cjs && node scripts/test-links.cjs && node scripts/test-openapi.cjs && node scripts/test-jmx.cjs && node scripts/test-jtl.cjs && node scripts/test-templates.cjs && node scripts/test-knowledge.cjs && node scripts/test-notes.cjs && node scripts/test-updater.cjs && node scripts/test-curl.cjs && node scripts/test-json-table.cjs && node scripts/test-vars.cjs && node scripts/test-metrics.cjs && node scripts/test-installer.cjs && node scripts/test-accounts.cjs",
+    "test": "node scripts/test-main.cjs && node scripts/test-migrate.cjs && node scripts/test-cases.cjs && node scripts/test-links.cjs && node scripts/test-openapi.cjs && node scripts/test-jmx.cjs && node scripts/test-jtl.cjs && node scripts/test-templates.cjs && node scripts/test-knowledge.cjs && node scripts/test-notes.cjs && node scripts/test-updater.cjs && node scripts/test-curl.cjs && node scripts/test-json-table.cjs && node scripts/test-vars.cjs && node scripts/test-metrics.cjs && node scripts/test-installer.cjs && node scripts/test-accounts.cjs && node scripts/test-runner.cjs",
     "dist": "npm run build:renderer && electron-builder --win portable --x64",
     "test:jtl": "node scripts/test-jtl.cjs",
     "test:templates": "node scripts/test-templates.cjs",
@@ -31,7 +31,8 @@
     "test:vars": "node scripts/test-vars.cjs",
     "test:metrics": "node scripts/test-metrics.cjs",
     "test:installer": "node scripts/test-installer.cjs",
-    "test:accounts": "node scripts/test-accounts.cjs"
+    "test:accounts": "node scripts/test-accounts.cjs",
+    "test:runner": "node scripts/test-runner.cjs"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.8.15",

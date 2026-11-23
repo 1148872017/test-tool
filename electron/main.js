@@ -14,6 +14,9 @@ const notesIndex = require('./notes');
 const updater = require('./updater');
 const openapi = require('./openapi');
 const security = require('./security');
+const runner = require('./runner');
+const projects = require('./projects');
+const { RUNNERS, listRunners } = require('../shared/runners');
 const { TOOLS, COLLECTION_MAP } = require('../shared/collections');
 
 const DEBUG = process.env.TT_DEBUG === '1';
@@ -27,6 +30,8 @@ let win = null;
 let tray = null;
 let locked = true;
 let settings = {};
+/** 当前正在跑的代码任务 id（runner:output 事件要用） */
+let currentRunId = '';
 let clipboardTimer = null;
 let initialized = false;
 
@@ -55,6 +60,8 @@ const DEFAULT_SETTINGS = {
   reportDir: '',
   kbDir: '',
   notesDir: '',
+  // 代码项目根目录（代码调试用）
+  projectDir: '',
   jmeterPath: '',
   pin: null
 };
@@ -135,12 +142,19 @@ function loadSettings() {
     fill('notesDir', 'notes');
   }
 
+  // 代码项目目录：默认 D:\AI_Workspace\Project（和「文档\测试工作台」同级）
+  if (!settings.projectDir) {
+    const guess = path.join(path.dirname(base || ''), 'Project');
+    if (base && fs.existsSync(guess)) settings.projectDir = guess;
+  }
+
   locked = !!settings.pin;
   return settings;
 }
 
 function publicSettings() {
   return {
+    projectDir: settings.projectDir || '',
     autoLockMinutes: settings.autoLockMinutes,
     clipboardClearSeconds: settings.clipboardClearSeconds,
     openCopyPassword: settings.openCopyPassword !== false,
@@ -736,6 +750,134 @@ function registerIpc() {
       return '';
     }
   };
+
+  /* ==================== 代码调试 ==================== *
+   * 在平台里写代码 → 跑 → 看输出。
+   * 支持 Groovy（JMeter）/ Python / pytest / Maven。
+   * -------------------------------------------------- */
+
+  /** 运行器列表（给前端下拉） */
+  ipcMain.handle('runner:list', async () => {
+    assertUnlocked();
+    return { ok: true, runners: listRunners(), env: runner.detectAll() };
+  });
+
+  /** 扫描代码项目目录 */
+  ipcMain.handle('projects:scan', async (e, { root } = {}) => {
+    assertUnlocked();
+    const dir = (root && String(root).trim()) || settings.projectDir || '';
+    return projects.scanProjects(dir);
+  });
+
+  /** 列出某个 Maven 项目的测试类 */
+  ipcMain.handle('projects:testClasses', async (e, { dir } = {}) => {
+    assertUnlocked();
+    const d = String(dir || '').trim();
+    if (!d) return { ok: false, classes: [], message: '缺少项目目录' };
+    return { ok: true, classes: projects.listTestClasses(d) };
+  });
+
+  /** 选项目目录 */
+  ipcMain.handle('projects:pickDir', async () => {
+    assertUnlocked();
+    const picked = await dialog.showOpenDialog(win, {
+      title: '选择代码项目目录',
+      properties: ['openDirectory']
+    });
+    if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+    return { ok: true, dir: picked.filePaths[0] };
+  });
+
+  /**
+   * 跑代码。
+   *
+   * payload:
+   *   runnerKey  运行器（groovy / python / pytest / maven）
+   *   code       代码内容（临时文件模式）
+   *   file       已有文件路径（可选，优先用这个）
+   *   projectDir 项目目录（maven 用）
+   *   testClass  测试类名（maven 用）
+   *
+   * 输出通过 runner:output 事件流式推送：
+   *   { runId, stream: 'stdout'|'stderr', text }
+   * 结束时推 runner:exit：
+   *   { runId, code, signal, duration, timedOut }
+   */
+  ipcMain.handle('runner:run', async (e, payload = {}) => {
+    assertUnlocked();
+    const key = String(payload.runnerKey || '').trim();
+    const conf = RUNNERS[key];
+    if (!conf) return { ok: false, message: '不认识的运行器：' + key };
+
+    const env = runner.detectAll();
+    // JMeter 路径从 settings 取
+    env.jmeter = settings.jmeterDir || '';
+
+    // 代码内容 → 临时文件
+    let file = String(payload.file || '').trim();
+    let tmpFile = '';
+    if (!file && payload.code) {
+      const ext = conf.ext || '.txt';
+      const tmpDir = path.join(app.getPath('temp'), 'test-tool-runner');
+      fs.mkdirSync(tmpDir, { recursive: true });
+      tmpFile = path.join(tmpDir, `run-${Date.now()}${ext}`);
+      fs.writeFileSync(tmpFile, String(payload.code), 'utf8');
+      file = tmpFile;
+    }
+    if (!file && conf.ext) {
+      return { ok: false, message: '没有代码内容' };
+    }
+
+    const ctx = {
+      java: env.java,
+      python: env.python,
+      mvn: env.mvn,
+      jmeter: env.jmeter,
+      projectDir: String(payload.projectDir || '').trim(),
+      testClass: String(payload.testClass || '').trim(),
+      file
+    };
+
+    const built = conf.build(ctx);
+    if (built.error) {
+      if (tmpFile) fs.rmSync(tmpFile, { force: true });
+      return { ok: false, message: built.error };
+    }
+
+    // 先占位 runId，runner.run 内部会生成真正的 id
+    let realRunId = '';
+    realRunId = runner.run({
+      cmd: built.cmd,
+      args: built.args,
+      cwd: built.cwd,
+      timeout: Number(payload.timeout) || undefined,
+      onData: (chunk) => {
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('runner:output', { runId: realRunId, ...chunk });
+        }
+      },
+      onExit: (result) => {
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('runner:exit', { runId: realRunId, ...result });
+        }
+        if (tmpFile) {
+          try {
+            fs.rmSync(tmpFile, { force: true });
+          } catch (err) {
+            /* ignore */
+          }
+        }
+      }
+    });
+
+    return { ok: true, runId: realRunId, cmd: built.cmd, args: built.args, cwd: built.cwd };
+  });
+
+  /** 取消正在跑的任务 */
+  ipcMain.handle('runner:cancel', async (e, { runId } = {}) => {
+    assertUnlocked();
+    return { ok: runner.cancel(String(runId || '')) };
+  });
 
   ipcMain.handle('jmx:scan', async (e, { root } = {}) => {
     assertUnlocked();

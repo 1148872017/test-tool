@@ -10,7 +10,8 @@ import {
   ProfileOutlined,
   ThunderboltOutlined,
   DashboardOutlined,
-  BookOutlined
+  BookOutlined,
+  BugOutlined
 } from '@ant-design/icons';
 
 const MAP: Record<string, any> = {
@@ -25,7 +26,8 @@ const MAP: Record<string, any> = {
   ProfileOutlined,
   ThunderboltOutlined,
   DashboardOutlined,
-  BookOutlined
+  BookOutlined,
+  BugOutlined
 };
 
 export default function Icon({ name, style }: { name: string; style?: any }) {

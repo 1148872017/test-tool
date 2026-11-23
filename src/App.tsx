@@ -8,6 +8,7 @@ import CollectionPage from './components/CollectionPage';
 import JsonTool from './pages/JsonTool';
 import DataTool from './pages/DataTool';
 import Toolbox from './pages/Toolbox';
+import CodeRunnerPage from './pages/CodeRunnerPage';
 import SettingsPage from './pages/SettingsPage';
 import CasePage from './pages/CasePage';
 import JmxPage from './pages/JmxPage';
@@ -181,6 +182,7 @@ export default function App() {
         {route.type === 'tool' && route.key === 'json' ? <JsonTool /> : null}
         {route.type === 'tool' && route.key === 'data' ? <DataTool /> : null}
         {route.type === 'tool' && route.key === 'toolbox' ? <Toolbox /> : null}
+        {route.type === 'tool' && route.key === 'runner' ? <CodeRunnerPage /> : null}
         {route.type === 'settings' ? (
           <SettingsPage
             boot={boot}

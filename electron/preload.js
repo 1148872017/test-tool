@@ -35,6 +35,25 @@ contextBridge.exposeInMainWorld('api', {
   exportDb: () => invoke('data:exportDb'),
   restoreBackup: (file) => invoke('backup:restore', { file }),
 
+  // ---- 代码调试 ----
+  runnerList: () => invoke('runner:list'),
+  runnerRun: (payload) => invoke('runner:run', payload),
+  runnerCancel: (runId) => invoke('runner:cancel', { runId }),
+  projectsScan: (root) => invoke('projects:scan', { root }),
+  projectsTestClasses: (dir) => invoke('projects:testClasses', { dir }),
+  projectsPickDir: () => invoke('projects:pickDir'),
+
+  /** 订阅代码运行输出（返回取消订阅函数） */
+  onRunnerOutput: (cb) => {
+    const handler = (_e, data) => cb(data);
+    ipcRenderer.on('runner:output', handler);
+    return () => ipcRenderer.removeListener('runner:output', handler);
+  },
+  onRunnerExit: (cb) => {
+    const handler = (_e, data) => cb(data);
+    ipcRenderer.on('runner:exit', handler);
+    return () => ipcRenderer.removeListener('runner:exit', handler);
+  },
   caseScan: (root) => invoke('cases:scan', { root }),
   caseOpen: (file) => invoke('cases:openFile', { file }),
   caseReveal: (file) => invoke('cases:reveal', { file }),

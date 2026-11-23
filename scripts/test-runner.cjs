@@ -1,0 +1,180 @@
+/* 代码调试：运行器配置 + 项目扫描 + 环境探测 */
+const fs = require('fs');
+const path = require('path');
+
+const results = [];
+const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });
+
+/* ---------- 1. 运行器配置 ---------- */
+const { RUNNERS, listRunners } = require('../shared/runners.js');
+
+check('有 4 个运行器', Object.keys(RUNNERS).length === 4, Object.keys(RUNNERS));
+check('有 groovy 运行器', !!RUNNERS.groovy, 'no groovy');
+check('有 python 运行器', !!RUNNERS.python, 'no python');
+check('有 pytest 运行器', !!RUNNERS.pytest, 'no pytest');
+check('有 maven 运行器', !!RUNNERS.maven, 'no maven');
+
+// 每个运行器必须有 build 函数
+for (const [k, r] of Object.entries(RUNNERS)) {
+  check(`${k} 有 build 函数`, typeof r.build === 'function', typeof r.build);
+  check(`${k} 有 label`, !!r.label, r.label);
+  check(`${k} 声明了 needs`, Array.isArray(r.needs), r.needs);
+}
+
+// listRunners 给前端用
+const list = listRunners();
+check('listRunners 返回 4 项', list.length === 4, list.length);
+check('listRunners 不含 build 函数', list.every((r) => !r.build), 'leaked build');
+
+/* ---------- 2. build 函数行为 ---------- */
+// groovy：缺 java 要报错
+const g1 = RUNNERS.groovy.build({ java: '', jmeter: '' });
+check('groovy 缺 java 报错', !!g1.error, g1);
+
+// groovy：正常构造
+const g2 = RUNNERS.groovy.build({ java: 'java.exe', jmeter: 'D:/jmeter', file: 'x.groovy' });
+check('groovy 构造 cmd', g2.cmd === 'java.exe', g2.cmd);
+check('groovy 用 GroovyMain', g2.args.includes('groovy.ui.GroovyMain'), g2.args);
+check('groovy 带 -cp', g2.args.includes('-cp'), g2.args);
+
+// python：缺 python 报错
+const p1 = RUNNERS.python.build({ python: '' });
+check('python 缺 python 报错', !!p1.error, p1);
+
+// python：正常
+const p2 = RUNNERS.python.build({ python: 'python.exe', file: 'x.py' });
+check('python 构造 cmd', p2.cmd === 'python.exe', p2.cmd);
+check('python 带 -X utf8', p2.args.includes('-X') && p2.args.includes('utf8'), p2.args);
+
+// pytest：带 -m pytest
+const pt = RUNNERS.pytest.build({ python: 'python.exe', file: 'x.py' });
+check('pytest 带 -m pytest', pt.args.includes('-m') && pt.args.includes('pytest'), pt.args);
+check('pytest 带 -v', pt.args.includes('-v'), pt.args);
+
+// maven：缺 mvn 报错
+const m1 = RUNNERS.maven.build({ mvn: '', projectDir: 'x' });
+check('maven 缺 mvn 报错', !!m1.error, m1);
+
+// maven：缺 projectDir 报错
+const m2 = RUNNERS.maven.build({ mvn: 'mvn.cmd', projectDir: '' });
+check('maven 缺 projectDir 报错', !!m2.error, m2);
+
+// maven：正常（带测试类）
+const m3 = RUNNERS.maven.build({ mvn: 'mvn.cmd', projectDir: 'D:/proj', testClass: 'LoginTest' });
+check('maven 构造 cmd', m3.cmd === 'mvn.cmd', m3.cmd);
+check('maven 带 test', m3.args.includes('test'), m3.args);
+check('maven 带 -Dtest', m3.args.includes('-Dtest=LoginTest'), m3.args);
+check('maven cwd 是项目目录', m3.cwd === 'D:/proj', m3.cwd);
+
+// maven：不带测试类（跑全部）
+const m4 = RUNNERS.maven.build({ mvn: 'mvn.cmd', projectDir: 'D:/proj' });
+check('maven 不带测试类时不加 -Dtest', !m4.args.some((a) => a.startsWith('-Dtest=')), m4.args);
+
+/* ---------- 3. 项目扫描 ---------- */
+const projects = require('../electron/projects.js');
+
+// 用临时目录造项目
+const os = require('os');
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-test-'));
+
+// Maven + REST Assured
+const p1dir = path.join(tmp, 'api-test');
+fs.mkdirSync(path.join(p1dir, 'src', 'test', 'java', 'com', 'x'), { recursive: true });
+fs.writeFileSync(
+  path.join(p1dir, 'pom.xml'),
+  '<project><dependency><artifactId>rest-assured</artifactId></dependency><dependency><artifactId>testng</artifactId></dependency></project>',
+  'utf8'
+);
+fs.writeFileSync(path.join(p1dir, 'src', 'test', 'java', 'com', 'x', 'LoginTest.java'), 'class LoginTest {}', 'utf8');
+
+// Maven + Playwright
+const p2dir = path.join(tmp, 'ui-test');
+fs.mkdirSync(p2dir, { recursive: true });
+fs.writeFileSync(path.join(p2dir, 'pom.xml'), '<project><artifactId>playwright</artifactId></project>', 'utf8');
+
+// Python + pytest
+const p3dir = path.join(tmp, 'py-test');
+fs.mkdirSync(p3dir, { recursive: true });
+fs.writeFileSync(path.join(p3dir, 'requirements.txt'), 'pytest>=7\nplaywright>=1.40\n', 'utf8');
+
+// 非测试项目
+const p4dir = path.join(tmp, 'tool');
+fs.mkdirSync(p4dir, { recursive: true });
+fs.writeFileSync(path.join(p4dir, 'requirements.txt'), 'openpyxl\n', 'utf8');
+
+const scan = projects.scanProjects(tmp);
+check('扫描成功', scan.ok === true, scan);
+check('扫到 4 个项目', scan.projects.length === 4, scan.projects.length);
+
+const byName = (n) => scan.projects.find((p) => p.name === n);
+
+const api = byName('api-test');
+check('识别 REST Assured', api && api.frameworks.some((f) => f.key === 'rest-assured'), api && api.frameworks);
+check('识别 TestNG', api && api.frameworks.some((f) => f.key === 'testng'), api && api.frameworks);
+check('api-test 是测试项目', api && api.isTest === true, api && api.isTest);
+
+const ui = byName('ui-test');
+check('识别 Playwright', ui && ui.frameworks.some((f) => f.key === 'playwright'), ui && ui.frameworks);
+
+const py = byName('py-test');
+check('识别 pytest', py && py.frameworks.some((f) => f.key === 'pytest'), py && py.frameworks);
+check('识别 Python Playwright', py && py.frameworks.some((f) => f.key === 'playwright'), py && py.frameworks);
+
+const tool = byName('tool');
+check('非测试项目 isTest=false', tool && tool.isTest === false, tool && tool.isTest);
+
+// 测试项目排前面
+check('测试项目排前面', scan.projects[0].isTest === true, scan.projects.map((p) => p.isTest));
+
+// 测试类列表
+const classes = projects.listTestClasses(p1dir);
+check('列出测试类', classes.includes('LoginTest'), classes);
+
+// 边界
+check('空目录返回 ok:false', projects.scanProjects('').ok === false);
+check('不存在目录返回 ok:false', projects.scanProjects('D:/nonexistent-xyz').ok === false);
+
+fs.rmSync(tmp, { recursive: true, force: true });
+
+/* ---------- 4. 环境探测 ---------- */
+const runner = require('../electron/runner.js');
+const env = runner.detectAll();
+check('detectAll 返回 4 个字段', ['java', 'python', 'mvn', 'jmeter'].every((k) => k in env), Object.keys(env));
+check('detect 找不到返回空串', runner.detect('nonexistent-xyz-abc') === '', runner.detect('nonexistent-xyz-abc'));
+
+/* ---------- 5. IPC 已注册 ---------- */
+const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+check('有 runner:list', /ipcMain\.handle\('runner:list'/.test(mainSrc), 'no runner:list');
+check('有 runner:run', /ipcMain\.handle\('runner:run'/.test(mainSrc), 'no runner:run');
+check('有 runner:cancel', /ipcMain\.handle\('runner:cancel'/.test(mainSrc), 'no runner:cancel');
+check('有 projects:scan', /ipcMain\.handle\('projects:scan'/.test(mainSrc), 'no projects:scan');
+check('有 projects:testClasses', /ipcMain\.handle\('projects:testClasses'/.test(mainSrc), 'no projects:testClasses');
+
+/* ---------- 6. preload 已暴露 ---------- */
+const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
+check('preload 有 runnerRun', /runnerRun:/.test(preloadSrc), 'no runnerRun');
+check('preload 有 onRunnerOutput', /onRunnerOutput:/.test(preloadSrc), 'no onRunnerOutput');
+check('preload 有 projectsScan', /projectsScan:/.test(preloadSrc), 'no projectsScan');
+
+/* ---------- 7. 前端组件 ---------- */
+const pageSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'CodeRunnerPage.tsx'), 'utf8');
+check('组件订阅输出', /onRunnerOutput/.test(pageSrc), 'no subscribe');
+check('组件有运行按钮', /doRun/.test(pageSrc), 'no run');
+check('组件有取消按钮', /doCancel/.test(pageSrc), 'no cancel');
+check('组件支持 Ctrl+Enter', /ctrlKey.*Enter/.test(pageSrc), 'no shortcut');
+check('组件有输出面板', /runner-output/.test(pageSrc), 'no output panel');
+check('Maven 模式不显示编辑器', /!isMaven \?/.test(pageSrc), 'maven shows editor');
+
+/* ---------- 8. 侧边栏入口 ---------- */
+const collections = require('../shared/collections.js');
+check('TOOLS 有代码调试', collections.TOOLS.some((t) => t.key === 'runner'), collections.TOOLS.map((t) => t.key));
+const appSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 'utf8');
+check('App 有 runner 路由', /route\.key === 'runner'/.test(appSrc), 'no route');
+const iconsSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'icons.tsx'), 'utf8');
+check('BugOutlined 已注册', /BugOutlined/.test(iconsSrc), 'no icon');
+
+const failed = results.filter((r) => !r.ok);
+console.log('===== 代码调试测试 =====');
+for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));
+console.log('\n' + (results.length - failed.length) + '/' + results.length + ' passed');
+process.exit(failed.length ? 1 : 0);
