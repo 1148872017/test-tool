@@ -1747,3 +1747,33 @@ body {
   font-weight: 600;
   color: #3a4055;
 }
+/* 列表页的账号单元格（默认账号 + 更多提示） */
+.account-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.account-cell-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-cell-label {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.account-cell-more {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--primary-soft);
+  color: var(--primary-deep);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: help;
+}

@@ -911,9 +911,11 @@ function exportAll(includeSecrets, collection) {
     hydrate
   );
   const records = rows.map((r) => {
-    const data = Object.assign({}, r.data);
+    // 深拷贝，避免改到缓存里的对象
+    const data = JSON.parse(JSON.stringify(r.data || {}));
     if (!includeSecrets) {
-      for (const key of SECRET_KEYS[r.collection] || []) data[key] = '';
+      // 用 applySecretPath 清空，支持嵌套路径（accounts[].password）
+      for (const key of SECRET_KEYS[r.collection] || []) applySecretPath(data, key, () => '');
     }
     return {
       id: r.id,

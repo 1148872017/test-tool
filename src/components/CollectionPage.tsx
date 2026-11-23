@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Table, Input, Button, Tag, Popconfirm, Segmented, Select, Dropdown, Modal } from 'antd';
+import { Table, Input, Button, Tag, Popconfirm, Segmented, Select, Dropdown, Modal, Tooltip } from 'antd';
 import {
   PlusOutlined,
   ReloadOutlined,
@@ -426,6 +426,27 @@ export default function CollectionPage({
   };
 
   const renderListField = (f: any, value: any) => {
+
+  // 账号列表：列表页只显示默认账号 + 「+N」提示（完整列表在详情里看）
+  if (f.type === 'accounts') {
+    const list = parseAccounts(String(value || ''));
+    if (!list.length) return <span className="muted">—</span>;
+    const def = list.find((a) => a.isDefault) || list[0];
+    const more = list.length - 1;
+    return (
+      <span className="account-cell">
+        <span className="account-cell-main">
+          {def.label ? <span className="account-cell-label">{def.label}</span> : null}
+          <span className="mono">{def.account || '—'}</span>
+        </span>
+        {more > 0 ? (
+          <Tooltip title={`还有 ${more} 个账号，点开详情查看`}>
+            <span className="account-cell-more">+{more}</span>
+          </Tooltip>
+        ) : null}
+      </span>
+    );
+  }
     if (value === undefined || value === null || value === '') return <span className="muted">—</span>;
     if (Array.isArray(value) || f.type === 'multiselect') {
       const arr = asArray(value);

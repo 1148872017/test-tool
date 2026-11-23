@@ -85,7 +85,7 @@ check('有选账号弹窗', /accountPicker/.test(pageSrc), 'no picker state');
 
 /* ---------- 6. 角色标签显式表达 ---------- */
 check('AccountsEditor 有 RoleTags', /function RoleTags/.test(tsx), 'no RoleTags');
-check('RoleTags 用 ROLE_OPTIONS 映射', /ROLE_OPTIONS\.find/.test(tsx), 'no role mapping');
+check('RoleTags 用 fieldOptions 映射', /fieldOptions/.test(tsx), 'no role mapping');
 check('只读表格有角色列', /<th[^>]*>角色<\/th>/.test(tsx), 'no role column');
 check('选账号弹窗显示角色', /ROLE_OPTIONS\.find/.test(pageSrc), 'picker no role');
 
@@ -99,6 +99,33 @@ check('v5 保证有默认账号', /isDefault = true/.test(migSrc), 'no default')
 check('v5 处理无归属站点的账号', /未归类账号/.test(migSrc), 'no orphan handling');
 check('v5 去重（同 account+role 只留一条）', /const seen = new Set\(\)/.test(migSrc) && /seen\.has\(key\)/.test(migSrc), 'no dedup');
 check('v5 新建记录用 INSERT 不用 write', /INSERT INTO records/.test(migSrc), 'no INSERT');
+
+
+/* ---------- 8. 列表页只显示默认账号 ---------- */
+const pageSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'CollectionPage.tsx'), 'utf8');
+check('列表渲染有 accounts 分支', /f\.type === 'accounts'/.test(pageSrc2), 'no accounts branch');
+check('列表只取默认账号', /list\.find\(\(a\) => a\.isDefault\)/.test(pageSrc2), 'no default pick');
+check('列表有「+N」更多提示', /account-cell-more/.test(pageSrc2), 'no more badge');
+check('更多提示用 Tooltip', /还有 \$\{more\} 个账号/.test(pageSrc2), 'no tooltip text');
+
+/* ---------- 9. 角色选项从配置读（不是空数组）---------- */
+const editorSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'AccountsEditor.tsx'), 'utf8');
+check('AccountsEditor 不再用 ROLE_OPTIONS', !/ROLE_OPTIONS/.test(editorSrc), 'still uses ROLE_OPTIONS');
+check('AccountsEditor 用 fieldOptions', /fieldOptions/.test(editorSrc), 'no fieldOptions');
+check('AccountsEditor 加载 opts', /loadOptions\(\)/.test(editorSrc), 'no loadOptions');
+check('角色下拉用 roleOptions', /options=\{roleOptions\}/.test(editorSrc), 'no roleOptions');
+check('RoleTags 接收 opts', /RoleTags.*opts/.test(editorSrc), 'no opts prop');
+
+/* ---------- 10. 详情页账号列表是 6 列 ---------- */
+check('只读表格有 6 列（th 数 = 6）', (editorSrc.match(/<th[ >]/g) || []).length === 6, (editorSrc.match(/<th[ >]/g) || []).length);
+check('表格有「密码」列', /<th[^>]*>密码<\/th>/.test(editorSrc), 'no password col');
+check('表格有「默认」列', /<th[^>]*>默认<\/th>/.test(editorSrc), 'no default col');
+check('表格有「角色」列', /<th[^>]*>角色<\/th>/.test(editorSrc), 'no role col');
+
+/* ---------- 11. 导出时嵌套密码也要清空 ---------- */
+const storeSrc2 = fs.readFileSync(path.join(__dirname, '..', 'electron', 'store.js'), 'utf8');
+check('exportAll 用 applySecretPath 清空', /applySecretPath\(data, key, \(\) => ''\)/.test(storeSrc2), 'export not using applySecretPath');
+check('exportAll 深拷贝', /JSON\.parse\(JSON\.stringify\(r\.data/.test(storeSrc2), 'export no deep clone');
 
 const failed = results.filter((r) => !r.ok);
 console.log('===== 账号合并测试 =====');

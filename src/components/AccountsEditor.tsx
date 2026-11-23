@@ -1,7 +1,7 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Input, Button, Select, Tag, Tooltip, Checkbox } from 'antd';
 import { PlusOutlined, DeleteOutlined, CopyOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
-import { ROLE_OPTIONS } from '../../shared/collections';
+import { fieldOptions, getOptionsSync, loadOptions, OptionsMap } from '../options';
 import { toast } from '../msg';
 
 export type AccountRow = {
@@ -49,15 +49,18 @@ export function serializeAccounts(rows: AccountRow[]): string {
 }
 
 /** 角色 → 显示标签（显式表达，如「商家」「用户」） */
-function RoleTags({ role }: { role: string[] }) {
+function RoleTags({ role, opts }: { role: string[]; opts: OptionsMap }) {
   if (!role || !role.length) return <span className="muted">—</span>;
+  // 角色选项在「设置 → 选项配置」里维护，通过 fieldOptions 读
+  const roleField = { key: 'role', optionsKey: 'role' };
+  const list = fieldOptions(roleField as any, opts);
   return (
     <span className="role-tags">
       {role.map((v) => {
-        const opt = ROLE_OPTIONS.find((o: any) => o.value === v);
+        const opt = list.find((o: any) => o.value === v);
         return (
           <Tag key={v} color={opt && opt.color ? opt.color : 'default'} style={{ margin: '0 4px 0 0' }}>
-            {opt ? opt.label : v}
+            {opt ? opt.label || v : v}
           </Tag>
         );
       })}
@@ -67,6 +70,15 @@ function RoleTags({ role }: { role: string[] }) {
 
 export default function AccountsEditor({ value, onChange, readOnly }: Props) {
   const rows = useMemo(() => parseAccounts(value), [value]);
+  // 角色选项从配置读（设置 → 选项配置）
+  const [opts, setOpts] = useState<OptionsMap>(getOptionsSync());
+  useEffect(() => {
+    loadOptions().then(setOpts).catch(() => {});
+  }, []);
+  const roleOptions = fieldOptions({ key: 'role', optionsKey: 'role' } as any, opts).map((o: any) => ({
+    value: o.value,
+    label: o.label || o.value
+  }));
 
   const update = (next: AccountRow[]) => onChange(serializeAccounts(next));
 
@@ -104,32 +116,27 @@ export default function AccountsEditor({ value, onChange, readOnly }: Props) {
     toast('密码已复制，30 秒后自动清空');
   };
 
-  // 只读：表格展示
+  // 只读：6 列表格（用途 / 账号 / 密码 / 角色 / 备注 / 默认）
   if (readOnly) {
     if (!rows.length) return <span className="muted">—</span>;
     return (
       <table className="jmx-table accounts-table">
         <thead>
           <tr>
-            <th style={{ width: '18%' }}>用途</th>
-            <th style={{ width: '22%' }}>账号</th>
-            <th style={{ width: '20%' }}>角色</th>
+            <th style={{ width: '16%' }}>用途</th>
+            <th style={{ width: '18%' }}>账号</th>
+            <th style={{ width: '10%' }}>密码</th>
+            <th style={{ width: '22%' }}>角色</th>
             <th>备注</th>
+            <th style={{ width: '8%' }}>默认</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
             <tr key={i}>
+              <td>{r.label || <span className="muted">—</span>}</td>
+              <td className="mono">{r.account || '—'}</td>
               <td>
-                {r.isDefault ? (
-                  <Tooltip title="默认账号（一键启动时用这个）">
-                    <StarFilled style={{ color: '#f5a623', marginRight: 4 }} />
-                  </Tooltip>
-                ) : null}
-                {r.label || <span className="muted">—</span>}
-              </td>
-              <td className="mono">
-                {r.account || '—'}
                 {r.password ? (
                   <Button
                     type="text"
@@ -137,14 +144,24 @@ export default function AccountsEditor({ value, onChange, readOnly }: Props) {
                     icon={<CopyOutlined />}
                     title="复制密码"
                     onClick={() => copyPassword(r.password)}
-                    style={{ marginLeft: 4 }}
                   />
-                ) : null}
+                ) : (
+                  <span className="muted">—</span>
+                )}
               </td>
               <td>
-                <RoleTags role={r.role} />
+                <RoleTags role={r.role} opts={opts} />
               </td>
               <td className="muted">{r.note || '—'}</td>
+              <td>
+                {r.isDefault ? (
+                  <Tooltip title="默认账号（一键启动时用这个）">
+                    <StarFilled style={{ color: '#f5a623' }} />
+                  </Tooltip>
+                ) : (
+                  <span className="muted">—</span>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -215,7 +232,7 @@ export default function AccountsEditor({ value, onChange, readOnly }: Props) {
                 mode="multiple"
                 value={r.role}
                 placeholder="可多选，选项在「设置 → 选项配置」里维护"
-                options={ROLE_OPTIONS.map((o: any) => ({ value: o.value, label: o.label }))}
+                options={roleOptions}
                 onChange={(v) => setCell(i, 'role', v)}
                 style={{ width: '100%' }}
               />
