@@ -178,12 +178,13 @@ const TEMPLATES = [
     name: '断言：HTTP 状态码',
     when: '想确认接口返回 200。其实用响应断言就行，不用写代码——这个模板是给你看「脚本版长什么样」的',
     where: '右键采样器 → 添加 → 断言 → JSR223 断言；语言选 Groovy',
+  vars: [{"name":"expectedCode","value":"200","desc":"期望的 HTTP 状态码"}],
     code: `// 断言 HTTP 状态码是 200
 // prev 是 JMeter 内置对象，代表「上一个采样器的结果」
 String code = prev.getResponseCode();
 
-// ↓ 改成你期望的状态码
-String expected = "200";
+// 期望的状态码（复制时填）
+String expected = "{{expectedCode}}";
 
 if (!expected.equals(code)) {
     // 断言失败：标记失败 + 写清原因（报告里能看到）
@@ -200,11 +201,12 @@ if (!expected.equals(code)) {
     name: '断言：响应体包含关键字',
     when: '想确认返回内容里有 "code":0 或某个业务标识。响应断言能覆盖大部分场景',
     where: '右键采样器 → 添加 → 断言 → JSR223 断言；语言选 Groovy',
+  vars: [{"name":"keyword","value":"\\\"code\\\":0","desc":"响应体里要查找的文字（注意 JSON 里的引号要转义）"}],
     code: `// 断言响应体包含指定文字
 String body = prev.getResponseDataAsString();
 
-// ↓ 改成你要找的内容
-String keyword = "\\"code\\":0";
+// 要查找的内容（复制时填）
+String keyword = "{{keyword}}";
 
 if (body == null || !body.contains(keyword)) {
     AssertionResult.setFailure(true);
@@ -225,6 +227,7 @@ if (body == null || !body.contains(keyword)) {
     name: '断言：JSON 字段值等于预期',
     when: '想确认 data.status == "SUCCESS" 这种。简单取值用 JSON 提取器 + 响应断言组合，不用脚本',
     where: '右键采样器 → 添加 → 断言 → JSR223 断言；语言选 Groovy',
+  vars: [{"name":"fieldPath","value":"data.status","desc":"JSON 字段路径，如 data.status / data.list[0].id"},{"name":"expectedValue","value":"SUCCESS","desc":"期望的字段值"}],
     code: `// 断言 JSON 响应里的某个字段值
 // 用 JMeter 内置的 JSON 解析（不需要额外 jar）
 import groovy.json.JsonSlurper
@@ -234,9 +237,9 @@ String body = prev.getResponseDataAsString();
 try {
     def json = new JsonSlurper().parseText(body)
 
-    // ↓ 改成你要检查的字段路径
-    def actual = json.data.status
-    def expected = "SUCCESS"
+    // 字段路径（复制时填，如 data.status）
+    def actual = json.{{fieldPath}}
+    def expected = "{{expectedValue}}"
 
     if (actual != expected) {
         AssertionResult.setFailure(true);
@@ -256,9 +259,10 @@ try {
     name: '断言：响应时间上限',
     when: '想确认单次请求不超过 800ms。持续时间断言能覆盖，不用代码',
     where: '右键采样器 → 添加 → 断言 → JSR223 断言；语言选 Groovy',
+  vars: [{"name":"limitMs","value":"800","desc":"响应时间上限（毫秒）"}],
     code: `// 断言响应时间不超过指定毫秒
 long elapsed = prev.getTime();   // 单位：毫秒
-long limit = 800;                // ↓ 改成你的上限
+long limit = {{limitMs}};         // 响应时间上限（毫秒，复制时填）
 
 if (elapsed > limit) {
     AssertionResult.setFailure(true);
@@ -274,6 +278,7 @@ if (elapsed > limit) {
     name: '提取：从响应拿 token 存变量',
     when: '登录后拿到 token，后续接口要用。优先用 JSON 提取器，这个模板是脚本版',
     where: '右键采样器 → 添加 → 后置处理器 → JSR223 后置处理程序；语言选 Groovy',
+  vars: [{"name":"jsonPath","value":"data.token","desc":"token 在响应 JSON 里的路径"}],
     code: `// 从登录响应里提取 token，存进线程变量
 import groovy.json.JsonSlurper
 
@@ -282,8 +287,8 @@ String body = prev.getResponseDataAsString();
 try {
     def json = new JsonSlurper().parseText(body)
 
-    // ↓ 改成你的 JSON 路径
-    def token = json.data.token
+    // JSON 路径（复制时填，如 data.token）
+    def token = json.{{jsonPath}}
 
     if (token == null || token.toString().isEmpty()) {
         // 提取失败：存个标记值，让后续接口明显报错（而不是用空 token 静默失败）
@@ -305,6 +310,7 @@ try {
     name: '提取：token 写入文件',
     when: '想把每次登录的 token 攒起来，给别的脚本用。这是你现有脚本在做的事',
     where: '右键采样器 → 添加 → 后置处理器 → JSR223 后置处理程序；语言选 Groovy',
+  vars: [{"name":"filePath","value":"D:/test/token.txt","desc":"写入的文件路径（Windows 用 / 或 \\\\）"}],
     code: `// 把 token 追加写入文件（每次一行）
 import groovy.json.JsonSlurper
 
@@ -315,8 +321,8 @@ try {
     def code = json.code
     def token = json.data
 
-    // ↓ 改成你的路径。注意：Windows 用 / 或 \\\\，别用单个 \\
-    String filePath = "D:/test/token.txt";
+    // 文件路径（复制时填）。注意：Windows 用 / 或 \\\\，别用单个 \\
+    String filePath = "{{filePath}}";
 
     if (code == 0) {
         // true = 追加模式，不覆盖已有内容
@@ -336,9 +342,10 @@ try {
     name: '读取：从文件读 token 到变量',
     when: '压测时每个线程从文件读一个 token。其实 CSV Data Set Config 更合适，这个模板是脚本版',
     where: '右键采样器 → 添加 → 前置处理器 → JSR223 预处理程序；语言选 Groovy',
+  vars: [{"name":"filePath","value":"D:/test/token.txt","desc":"读取的文件路径"}],
     code: `// 从文件读第一行，存进变量
-// ↓ 改成你的路径
-String filePath = "D:/test/token.txt";
+// 文件路径（复制时填）
+String filePath = "{{filePath}}";
 
 try {
     def file = new File(filePath)
@@ -367,6 +374,7 @@ try {
     name: '生成：随机数 / 时间戳 / UUID',
     when: '下单号、流水号这类需要唯一值。JMeter 有内置函数 __Random / __UUID / __time，不用脚本',
     where: '右键采样器 → 添加 → 前置处理器 → JSR223 预处理程序；语言选 Groovy',
+  vars: [{"name":"orderPrefix","value":"ORD","desc":"订单号前缀"}],
     code: `// 生成常用随机数据存进变量
 // 提示：JMeter 内置函数更简单，见下方 gotcha
 
@@ -381,8 +389,8 @@ vars.put("randNum", String.valueOf(rand))
 vars.put("uuid", UUID.randomUUID().toString().replace("-", ""))
 
 // 4. 订单号 = 前缀 + 时间戳 + 随机数
-// ↓ 改成你的订单号前缀
-String prefix = "ORD"
+// 订单号前缀（复制时填）
+String prefix = "{{orderPrefix}}"
 vars.put("orderNo", prefix + System.currentTimeMillis() + rand)
 
 log.info("生成：orderNo=" + vars.get("orderNo"))`,
@@ -394,12 +402,13 @@ log.info("生成：orderNo=" + vars.get("orderNo"))`,
     name: '加密：MD5 / Base64 签名',
     when: '接口要求签名（sign = md5(参数拼接 + 密钥)）',
     where: '右键采样器 → 添加 → 前置处理器 → JSR223 预处理程序；语言选 Groovy',
+  vars: [{"name":"appSecret","value":"your_secret_here","desc":"签名密钥"},{"name":"paramsTemplate","value":"userId=\" + vars.get(\"userId\") + \"&ts=\" + vars.get(\"ts","desc":"参与签名的参数拼接（Groovy 表达式片段）"}],
     code: `// 生成 MD5 签名
 import java.security.MessageDigest
 
-// ↓ 改成你的签名规则
-String appSecret = "your_secret_here"
-String params = "userId=" + vars.get("userId") + "&ts=" + vars.get("ts")
+// 签名规则（复制时填）
+String appSecret = "{{appSecret}}"
+String params = "{{paramsTemplate}}"
 String raw = params + "&key=" + appSecret
 
 // MD5
@@ -420,12 +429,13 @@ log.info("签名结果：" + sign)
     name: '流程：满足条件才执行后续',
     when: '比如「只有登录成功才继续下单」。优先用 If Controller，不用脚本',
     where: '右键线程组 → 添加 → 逻辑控制器 → 如果（If）控制器；条件填 ${__groovy(vars.get("token") != null)}',
+  vars: [{"name":"varName","value":"token","desc":"要判断的变量名"}],
     code: `// 这个模板演示「用脚本设置一个标志变量，给 If Controller 用」
 // 放在前置处理器里
 
 // 判断条件（示例：token 存在且不是失败标记）
-// ↓ 改成你的判断条件
-String token = vars.get("token")
+// 判断条件（复制时填变量名）
+String token = vars.get("{{varName}}")
 boolean ok = token != null && !token.startsWith("TOKEN_")
 
 vars.put("canContinue", String.valueOf(ok))

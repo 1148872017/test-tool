@@ -26,9 +26,10 @@ for (const t of TEMPLATES) {
   // 代码里必须有注释（这是模板库的核心价值）
   check(`模板「${t.name}」代码带注释`, /\/\//.test(t.code), t.code.slice(0, 60));
 
-  // 必须有「改成你的」这类指引
-  const hasGuide = /改成你的|↓|改成你/.test(t.code);
-  check(`模板「${t.name}」标了要改哪里`, hasGuide, t.code.slice(0, 80));
+  // 必须有「可改位置」的指引：要么是 {{变量}} 占位符，要么是「改成你的」注释
+  const hasPlaceholder = /\{\{[^}]+\}\}/.test(t.code);
+  const hasGuide = /改成你的|↓|改成你|复制时填/.test(t.code);
+  check(`模板「${t.name}」标了要改哪里`, hasPlaceholder || hasGuide, t.code.slice(0, 80));
 
   // 不能有 macOS 路径（用户踩过这个坑）
   check(`模板「${t.name}」没有 macOS 路径`, !/\/Users\//.test(t.code), t.code.match(/\/Users\/[^\s"]*/));
@@ -81,6 +82,37 @@ check('对照表覆盖响应断言', noCodeUses.some((u) => /响应断言/.test(
 check('对照表覆盖持续时间断言', noCodeUses.some((u) => /持续时间断言/.test(u)), noCodeUses);
 check('对照表覆盖 CSV', noCodeUses.some((u) => /CSV/.test(u)), noCodeUses);
 check('对照表覆盖集合点', noCodeUses.some((u) => /同步定时器/.test(u)), noCodeUses);
+
+
+/* ---------- 占位符 + vars（速填功能）---------- */
+
+// 每个模板都必须有 vars 字段（速填弹窗靠它显示说明）
+for (const t of TEMPLATES) {
+  check(`模板「${t.name}」有 vars 字段`, Array.isArray(t.vars), typeof t.vars);
+}
+
+// 模板代码里的 {{变量}} 必须都能在 vars 里找到说明
+for (const t of TEMPLATES) {
+  const inCode = (t.code.match(/\{\{\s*([^{}]+?)\s*\}\}/g) || []).map((m) =>
+    m.replace(/\{\{|\}\}/g, '').trim()
+  );
+  const inVars = (t.vars || []).map((v) => v.name);
+  const missing = inCode.filter((n) => !inVars.includes(n));
+  check(`模板「${t.name}」占位符都有说明`, missing.length === 0, missing);
+}
+
+// vars 里的每个变量都必须有 name 和 desc
+for (const t of TEMPLATES) {
+  const bad = (t.vars || []).filter((v) => !v.name || !v.desc);
+  check(`模板「${t.name}」vars 都有 name/desc`, bad.length === 0, bad);
+}
+
+// 至少一半模板有占位符（说明速填功能真的用得上）
+const withPlaceholder = TEMPLATES.filter((t) => /\{\{[^}]+\}\}/.test(t.code));
+check('多数模板有 {{变量}} 占位符', withPlaceholder.length >= TEMPLATES.length / 2, withPlaceholder.length + '/' + TEMPLATES.length);
+
+// 所有模板都有占位符（本次改造目标）
+check('全部模板都有 {{变量}} 占位符', withPlaceholder.length === TEMPLATES.length, withPlaceholder.length + '/' + TEMPLATES.length);
 
 const failed = results.filter((r) => !r.ok);
 console.log('===== 脚本模板库测试 =====');

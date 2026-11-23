@@ -4,6 +4,8 @@ import { CopyOutlined, SearchOutlined, BulbOutlined, WarningOutlined } from '@an
 import api from '../api';
 import { toast } from '../msg';
 import { NO_CODE_NEEDED, TEMPLATES, TEMPLATE_CATEGORIES, CATEGORY_MAP } from '../../shared/scriptTemplates';
+import { extractVars } from '../utils';
+import VarFillModal from './VarFillModal';
 
 type Props = {
   open: boolean;
@@ -18,6 +20,8 @@ export default function ScriptTemplatesDrawer({ open, onClose }: Props) {
   const [keyword, setKeyword] = useState('');
   const [activeId, setActiveId] = useState(TEMPLATES[0].id);
   const [showNoCode, setShowNoCode] = useState(true);
+  // 速填弹窗（有 {{变量}} 占位符时用）
+  const [fillOpen, setFillOpen] = useState(false);
 
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
@@ -152,8 +156,17 @@ export default function ScriptTemplatesDrawer({ open, onClose }: Props) {
                   ) : null}
                   {active.name}
                 </h3>
-                <Button size="small" type="primary" icon={<CopyOutlined />} onClick={() => copy(active.code)}>
-                  复制代码
+                <Button
+                  size="small"
+                  type="primary"
+                  icon={<CopyOutlined />}
+                  onClick={() => {
+                    // 有占位符 → 打开速填弹窗；没有 → 直接复制
+                    if (extractVars(active.code).length) setFillOpen(true);
+                    else copy(active.code);
+                  }}
+                >
+                  {extractVars(active.code).length ? '填写并复制' : '复制代码'}
                 </Button>
               </div>
 
@@ -191,6 +204,17 @@ export default function ScriptTemplatesDrawer({ open, onClose }: Props) {
           )}
         </main>
       </div>
+
+      {/* 速填弹窗：和 SQL 片段同款（变量表格 + 拼接预览标色） */}
+      {active ? (
+        <VarFillModal
+          open={fillOpen}
+          text={active.code}
+          title={`填写变量并复制 · ${active.name}`}
+          varsRaw={active.vars ? JSON.stringify(active.vars) : ''}
+          onClose={() => setFillOpen(false)}
+        />
+      ) : null}
     </Drawer>
   );
 }
