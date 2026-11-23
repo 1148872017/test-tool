@@ -60,46 +60,44 @@
 ;   位置在 SetOutPath 之后、解压之前——所以进度条已经动了一点才提示。
 ;   放到 .onInit 就是「点安装的瞬间」提示。
 !macro customInit
-  ; 1. 检查程序是否在运行（用 tasklist，不依赖 nsProcess 插件）
-  ;    判断方式：输出里**包含 exe 名**才算在跑。
-  ;    不能只判断「输出非空」——tasklist 没找到时会输出
-  ;    「信息: 没有运行的任务匹配指定标准。」，那也是非空。
+  ; 1. 检查程序是否在运行
   ;
-  ;    不用 StrContains 宏（它被 assistedInstaller.nsh 先 include 了，
-  ;    重复 include 会报 STR_HAYSTACK already declared）。
-  ;    改用 StrCmp 对比「没找到」的两种输出。
-  nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /NH'
-  Pop $R2 ; 退出码
-  Pop $R3 ; 输出内容
+  ; 为什么不用 StrCmp 比较 tasklist 输出：
+  ;   tasklist 没找到进程时输出「信息: 没有运行的任务匹配指定标准。」（中文系统）
+  ;   或「INFO: No tasks are running which match the specified criteria.」（英文系统）。
+  ;   硬编码任何一种，在另一种语言的系统上都会误判 → 100% 误报「正在运行」。
+  ;
+  ; 正确做法：用 find 的**退出码**判断，与语言无关。
+  ;   find 找到 → 退出码 0
+  ;   find 没找到 → 退出码 1
+  ;
+  ; 注意：nsExec::ExecToStack 先 Pop 出来的是退出码，再 Pop 是输出。
+  nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /NH | find /I "${APP_EXECUTABLE_FILENAME}" >nul'
+  Pop $R2 ; 退出码（0=在跑，1=没跑）
+  Pop $R3 ; 输出（find 重定向到 nul 了，这里是空）
 
-  ; 去掉首尾空白和换行，方便比较
-  StrCpy $R4 "$R3"
-  ; 判断是否「没找到」：中文/英文两种提示
-  StrCmp $R4 "信息: 没有运行的任务匹配指定标准。" notRunning
-  StrCmp $R4 "INFO: No tasks are running which match the specified criteria." notRunning
-  StrCmp $R4 "" notRunning
-  ; 其余情况 = 进程在跑
-  MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION \
-    "「${PRODUCT_NAME}」正在运行。$\r$\n$\r$\n安装前需要先关闭它，否则文件会被占用。$\r$\n点「确定」自动关闭并继续安装，点「取消」退出。" \
-    IDOK +2
-  Quit
-  ; 用户点确定 → 结束进程，并**循环确认真的退出了**
-  ; （只 Sleep 一次不够，Electron 有多个子进程，退出需要时间）
-  nsExec::ExecToLog 'taskkill /f /im ${APP_EXECUTABLE_FILENAME} /t'
-  Pop $R2
-  StrCpy $R6 "0"
-  checkLoop:
-    IntOp $R6 $R6 + 1
-    Sleep 500
-    nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /NH'
+  StrCmp $R2 "0" appRunning notRunning
+
+  appRunning:
+    MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION \
+      "「${PRODUCT_NAME}」正在运行。$\r$\n$\r$\n安装前需要先关闭它，否则文件会被占用。$\r$\n点「确定」自动关闭并继续安装，点「取消」退出。" \
+      IDOK +2
+    Quit
+    ; 用户点确定 → 结束进程，并**循环确认真的退出了**
+    ; （只 Sleep 一次不够，Electron 有多个子进程，退出需要时间）
+    nsExec::ExecToLog 'taskkill /f /im ${APP_EXECUTABLE_FILENAME} /t'
     Pop $R2
-    Pop $R3
-    StrCmp $R3 "信息: 没有运行的任务匹配指定标准。" checkDone
-    StrCmp $R3 "INFO: No tasks are running which match the specified criteria." checkDone
-    StrCmp $R3 "" checkDone
-    ; 还在跑，最多等 10 次（5 秒）
-    IntCmp $R6 10 checkDone checkLoop checkDone
-  checkDone:
+    StrCpy $R6 "0"
+    checkLoop:
+      IntOp $R6 $R6 + 1
+      Sleep 500
+      nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${APP_EXECUTABLE_FILENAME}" /NH | find /I "${APP_EXECUTABLE_FILENAME}" >nul'
+      Pop $R2
+      Pop $R3
+      StrCmp $R2 "0" +2 checkDone
+      ; 还在跑，最多等 10 次（5 秒）
+      IntCmp $R6 10 checkDone checkLoop checkDone
+    checkDone:
 
   notRunning:
 
