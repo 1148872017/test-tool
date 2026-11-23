@@ -767,6 +767,8 @@ function registerIpc() {
   ipcMain.handle('runner:list', async () => {
     assertUnlocked();
     const env = runner.detectAll();
+    // JMeter 路径从 settings 取（detectAll 里没有）
+    env.jmeter = settings.jmeterPath || '';
     return {
       ok: true,
       runners: listRunners(),
@@ -781,6 +783,26 @@ function registerIpc() {
         mvnPath: settings.mvnPath || ''
       }
     };
+  });
+
+  /**
+   * 通用文件选择器（给「手动指定环境路径」用）。
+   *
+   * payload:
+   *   title    对话框标题
+   *   filters  文件类型过滤（[{name, extensions}]）
+   *   defaultPath 默认路径
+   */
+  ipcMain.handle('util:pickFile', async (e, payload = {}) => {
+    assertUnlocked();
+    const picked = await dialog.showOpenDialog(win, {
+      title: String(payload.title || '选择文件'),
+      defaultPath: String(payload.defaultPath || ''),
+      filters: Array.isArray(payload.filters) ? payload.filters : undefined,
+      properties: ['openFile']
+    });
+    if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+    return { ok: true, path: picked.filePaths[0] };
   });
 
   /** 打开 Playwright 浏览器缓存目录 */
@@ -846,7 +868,8 @@ function registerIpc() {
 
     const env = runner.detectAll();
     // JMeter 路径从 settings 取
-    env.jmeter = settings.jmeterDir || '';
+    // 注意：字段名是 jmeterPath（不是 jmeterDir）
+    env.jmeter = settings.jmeterPath || '';
 
     // 手动指定的路径优先（设置 → 开发环境）
     if (settings.pythonPath) env.python = settings.pythonPath;

@@ -277,6 +277,32 @@ check('缺环境时不运行', /if \(missingEnv\.length\) \{/.test(pageSrc2), 'r
 const nsh = fs.readFileSync(path.join(__dirname, '..', 'build', 'installer.nsh'), 'utf8');
 check('卸载页说明不删环境', /不会删除：已安装的 JDK/.test(nsh), 'no note');
 
+
+/* ---------- 17. JMeter 字段名（jmeterPath 不是 jmeterDir）---------- */
+const mainSrc3 = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+check('用 settings.jmeterPath', /env\.jmeter = settings\.jmeterPath/.test(mainSrc3), 'wrong field');
+check('没有 settings.jmeterDir 残留', !/settings\.jmeterDir/.test(mainSrc3), 'jmeterDir remains');
+check('runner:list 也返回 jmeter', /env\.jmeter = settings\.jmeterPath \|\| '';\s*\n\s*return \{/.test(mainSrc3), 'list not returning jmeter');
+
+/* ---------- 18. 设置页导航：手动算滚动位置 ---------- */
+const settingsSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'SettingsPage.tsx'), 'utf8');
+check('导航用 scrollTo 不用 scrollIntoView', /scroller\.scrollTo/.test(settingsSrc2), 'still scrollIntoView');
+check('导航算 sticky 高度偏移', /navH = 56/.test(settingsSrc2), 'no offset');
+check('导航找 .main 滚动容器', /querySelector\('\.main'\)/.test(settingsSrc2), 'no scroller');
+
+/* ---------- 19. EnvCard：下拉始终显示 + Maven 选择器 ---------- */
+const envCardSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'EnvCard.tsx'), 'utf8');
+check('JDK 下拉始终显示（jdks.length）', /jdks\.length \?/.test(envCardSrc2), 'jdk hidden');
+check('Python 下拉始终显示（pythons.length）', /pythons\.length \?/.test(envCardSrc2), 'python hidden');
+check('不再用 length > 1 判断', !/jdks\.length > 1/.test(envCardSrc2) && !/pythons\.length > 1/.test(envCardSrc2), 'still > 1');
+check('Maven 有「选择…」按钮', /选择…/.test(envCardSrc2), 'no pick button');
+check('Maven 用 api.pickFile', /api\.pickFile/.test(envCardSrc2), 'no pickFile');
+
+/* ---------- 20. util:pickFile IPC ---------- */
+check('有 util:pickFile', /ipcMain\.handle\('util:pickFile'/.test(mainSrc3), 'no pickFile ipc');
+const preloadSrc2 = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
+check('preload 暴露 pickFile', /pickFile: \(payload\)/.test(preloadSrc2), 'not exposed');
+
 const failed = results.filter((r) => !r.ok);
 console.log('===== 代码调试测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));

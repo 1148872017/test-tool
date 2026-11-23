@@ -479,7 +479,16 @@ export default function SettingsPage({ boot, onChanged }: Props) {
             onClick={(e) => {
               e.preventDefault();
               const el = document.getElementById(it.id);
-              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              if (!el) return;
+              // 手动算滚动位置：scrollIntoView 会被 sticky 导航挡住
+              const scroller = document.querySelector('.main') as HTMLElement | null;
+              if (!scroller) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                return;
+              }
+              const navH = 56; // 导航条高度 + 间距
+              const top = el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - navH;
+              scroller.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
             }}
             href={`#${it.id}`}
           >

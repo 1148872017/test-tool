@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Select, Input, Tag, Alert, Tooltip } from 'antd';
+import { Button, Select, Input, Tag, Alert, Tooltip, Space } from 'antd';
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -124,10 +124,10 @@ export default function EnvCard({ saveSettings, settings }: Props) {
               )
             }
             extra={
-              jdks.length > 1 ? (
+              jdks.length ? (
                 <Select
                   size="small"
-                  style={{ width: 220 }}
+                  style={{ width: 260 }}
                   value={settings.javaHome || ''}
                   onChange={(v) => saveSettings({ javaHome: v })}
                   options={[
@@ -151,10 +151,10 @@ export default function EnvCard({ saveSettings, settings }: Props) {
               )
             }
             extra={
-              pythons.length > 1 ? (
+              pythons.length ? (
                 <Select
                   size="small"
-                  style={{ width: 220 }}
+                  style={{ width: 260 }}
                   value={settings.pythonPath || ''}
                   onChange={(v) => saveSettings({ pythonPath: v })}
                   options={[
@@ -178,13 +178,28 @@ export default function EnvCard({ saveSettings, settings }: Props) {
               )
             }
             extra={
-              <Input
-                size="small"
-                style={{ width: 220 }}
-                value={settings.mvnPath || ''}
-                placeholder="自动探测（可手动指定）"
-                onChange={(e) => saveSettings({ mvnPath: e.target.value })}
-              />
+              <Space size={4}>
+                <Input
+                  size="small"
+                  style={{ width: 200 }}
+                  value={settings.mvnPath || ''}
+                  placeholder="自动探测"
+                  onChange={(e) => saveSettings({ mvnPath: e.target.value })}
+                />
+                <Button
+                  size="small"
+                  icon={<FolderOpenOutlined />}
+                  onClick={async () => {
+                    const res = await api.pickFile({
+                      title: '选择 mvn.cmd / mvn',
+                      filters: [{ name: 'Maven 可执行文件', extensions: ['cmd', 'bat', 'exe', ''] }]
+                    });
+                    if (res && res.ok && res.path) saveSettings({ mvnPath: res.path });
+                  }}
+                >
+                  选择…
+                </Button>
+              </Space>
             }
           />
 

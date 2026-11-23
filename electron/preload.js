@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('api', {
   projectsTestClasses: (dir) => invoke('projects:testClasses', { dir }),
   projectsPickDir: () => invoke('projects:pickDir'),
   runnerOpenBrowserDir: () => invoke('runner:openBrowserDir'),
+  pickFile: (payload) => invoke('util:pickFile', payload),
 
   /** 订阅代码运行输出（返回取消订阅函数） */
   onRunnerOutput: (cb) => {
