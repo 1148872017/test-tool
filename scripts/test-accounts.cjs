@@ -263,6 +263,49 @@ check('一键启动优先默认账号', /accounts\.find\(\(a\) => a\.isDefault\)
 check('唯一账号自动用', /accounts\.length === 1/.test(pageSrc5), 'no single auto');
 check('多个且没默认 → 弹窗', /pickAccount\(accounts\)/.test(pageSrc5), 'no picker');
 
+
+/* ---------- 25. searchableText 必须处理 JSON 字符串（关键 bug）---------- */
+const pageSrc6 = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'CollectionPage.tsx'), 'utf8');
+check('searchableText 处理 JSON 字符串', /typeof v === 'string' && v\.trim\(\)\.startsWith\('\['\)/.test(pageSrc6), 'no string parse');
+check('searchableText 先 parse 再判断数组', /JSON\.parse\(v\)/.test(pageSrc6), 'no JSON.parse');
+
+// 纯函数验证：accounts 是字符串时也要排除密码
+const stSrc = (pageSrc6.match(/function searchableText[\s\S]*?\n}/) || [''])[0];
+const stOut = esbuild.transformSync(stSrc + '\nmodule.exports = { searchableText };', {
+  loader: 'tsx',
+  format: 'cjs'
+});
+const stMod = { exports: {} };
+new Function('module', 'exports', 'require', stOut.code)(stMod, stMod.exports, require);
+const { searchableText } = stMod.exports;
+
+// 关键场景：accounts 是 JSON 字符串（真实存储格式）
+const dataWithStringAccounts = {
+  name: '测试站点',
+  accounts: JSON.stringify([
+    { label: '管理员', account: '7777', password: 'apple', role: [], isDefault: true, note: '', tags: [] }
+  ]),
+  note: '备注'
+};
+const hay1 = searchableText(dataWithStringAccounts).toLowerCase();
+check('字符串 accounts：搜不到密码', !hay1.includes('apple'), hay1);
+check('字符串 accounts：能搜到账号名', hay1.includes('7777'), hay1);
+check('字符串 accounts：能搜到站点名', hay1.includes('测试站点'), hay1);
+
+// 数组格式也要正常
+const dataWithArrayAccounts = {
+  name: '测试站点2',
+  accounts: [{ label: '管理员', account: '8888', password: 'banana', role: [], isDefault: true, note: '', tags: [] }]
+};
+const hay2 = searchableText(dataWithArrayAccounts).toLowerCase();
+check('数组 accounts：搜不到密码', !hay2.includes('banana'), hay2);
+check('数组 accounts：能搜到账号名', hay2.includes('8888'), hay2);
+
+// 顶层密码字段
+const dataWithTopPassword = { name: 'x', password: 'secret123', note: 'y' };
+const hay3 = searchableText(dataWithTopPassword).toLowerCase();
+check('顶层 password：搜不到', !hay3.includes('secret123'), hay3);
+
 const failed = results.filter((r) => !r.ok);
 console.log('===== 账号合并测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));

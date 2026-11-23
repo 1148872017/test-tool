@@ -60,7 +60,19 @@ type Props = {
 function searchableText(data: any): string {
   const out: any = {};
   for (const k of Object.keys(data || {})) {
-    const v = data[k];
+    let v = data[k];
+
+    // 关键：accounts 存的是 **JSON 字符串**（不是数组），
+    // 要先 parse 再处理，否则整个字符串（含密码）会被拼进搜索文本。
+    if (typeof v === 'string' && v.trim().startsWith('[')) {
+      try {
+        const parsed = JSON.parse(v);
+        if (Array.isArray(parsed)) v = parsed;
+      } catch (e) {
+        /* 不是 JSON，保持原样 */
+      }
+    }
+
     // 账号数组：只保留非密码字段
     if (Array.isArray(v) && v.length && typeof v[0] === 'object') {
       out[k] = v.map((item: any) => {
@@ -73,6 +85,7 @@ function searchableText(data: any): string {
       });
       continue;
     }
+
     // 顶层密码类字段
     if (k === 'password' || k === 'secret' || k === 'token') continue;
     out[k] = v;
