@@ -380,12 +380,50 @@ function hydrate(row) {
   };
 }
 
+
+/**
+ * 生成「可搜索的 data 表达式」：把密码字段的值替换成占位符。
+ *
+ * 用 SQLite 的 json_set 把密码字段置空，再转回文本匹配。
+ * 这样搜 "enc:" / "raw:" / 明文密码都搜不到。
+ *
+ * 注意：嵌套路径（accounts[].password）没法用 json_set 简单处理，
+ * 所以对 sites 额外把整个 accounts 字段排除（账号名还能搜，密码搜不到）。
+ */
+function searchableDataExpr(collection) {
+  const secrets = SECRET_KEYS[collection] || [];
+  if (!secrets.length) return 'data';
+
+  // 顶层密码字段：用 json_set 置空
+  const topLevel = secrets.filter((k) => !k.includes('[]'));
+  // 嵌套路径（accounts[].password）：整个数组字段排除
+  const nestedArrays = secrets
+    .filter((k) => k.includes('[]'))
+    .map((k) => k.split('[]')[0]);
+
+  let expr = 'data';
+  const sets = [];
+  for (const k of topLevel) sets.push(`'$.${k}', ''`);
+  for (const k of nestedArrays) sets.push(`'$.${k}', ''`);
+  if (sets.length) {
+    expr = `json_set(data, ${sets.join(', ')})`;
+  }
+  return expr;
+}
+
 function list(collection, opts = {}) {
   const { keyword = '', tag = '', favorite = false } = opts;
   const where = ['collection = ?'];
   const params = [collection];
   if (keyword) {
-    where.push('(title LIKE ? OR tags LIKE ? OR data LIKE ?)');
+    // 搜索范围：标题 + 标签 + data（**排除密码字段**）
+    //
+    // 为什么排除：data 是整段 JSON，密码也在里面。
+    // 虽然密码是 enc: 密文（搜明文搜不到），但：
+    //   1. 搜 "enc:" 能列出所有有密码的记录（信息泄露）
+    //   2. 万一某条是 raw: 前缀（未加密），明文密码会被搜出来
+    // 所以搜索时把密码字段的值替换成占位符再匹配。
+    where.push('(title LIKE ? OR tags LIKE ? OR ' + searchableDataExpr(collection) + ' LIKE ?)');
     const like = `%${keyword}%`;
     params.push(like, like, like);
   }

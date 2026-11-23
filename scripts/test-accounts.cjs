@@ -199,6 +199,30 @@ const formSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 
 check('RecordForm 保存时清理空账号', /dropEmptyAccounts\(String\(payload\[f\.key\]\)\)/.test(formSrc), 'not called');
 check('RecordForm 用 payload 保存', /data: payload/.test(formSrc), 'not using payload');
 
+
+/* ---------- 18. 搜索排除密码（问题 1）---------- */
+const storeSrc4 = fs.readFileSync(path.join(__dirname, '..', 'electron', 'store.js'), 'utf8');
+check('有 searchableDataExpr', /function searchableDataExpr/.test(storeSrc4), 'no helper');
+check('搜索用 searchableDataExpr', /searchableDataExpr\(collection\)/.test(storeSrc4), 'not used');
+check('用 json_set 置空密码', /json_set\(data/.test(storeSrc4), 'no json_set');
+check('嵌套数组字段整体排除', /split\('\[\]'\)\[0\]/.test(storeSrc4), 'no nested handling');
+
+/* ---------- 19. openUrl 自动补协议（问题 2）---------- */
+const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+check('openUrl 自动补 https', /u = 'https:\/\/' \+ u/.test(mainSrc), 'no auto protocol');
+check('openUrl 仍限制 http/https', /if \(!\/\^https\?:/.test(mainSrc), 'no protocol guard');
+check('openUrl 去掉多余斜杠', mainSrc.indexOf("replace(/^\\/+/") >= 0, 'no slash trim');
+
+/* ---------- 20. 备注/标签双模式（问题 3）---------- */
+const editorSrc3 = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'AccountsEditor.tsx'), 'utf8');
+check('AccountRow 有 tags 字段', /tags: string\[\]/.test(editorSrc3), 'no tags field');
+check('parseAccounts 解析 tags', /tags: Array\.isArray\(x\.tags\)/.test(editorSrc3), 'not parsed');
+check('备注填了则标签禁用', /disabled=\{r\.tags\.length > 0\}/.test(editorSrc3), 'note not disabled');
+check('标签选了则备注禁用', /disabled=\{String\(r\.note \|\| ''\)\.trim\(\)\.length > 0\}/.test(editorSrc3), 'tags not disabled');
+check('标签用 mode=tags（可自定义）', /mode="tags"/.test(editorSrc3), 'no tags mode');
+check('表头是「备注 / 标签」', /备注 \/ 标签/.test(editorSrc3), 'no header');
+check('dropEmptyAccounts 把 tags 算非空', /Array\.isArray\(r\.tags\) && r\.tags\.length/.test(editorSrc3), 'tags not counted');
+
 const failed = results.filter((r) => !r.ok);
 console.log('===== 账号合并测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));

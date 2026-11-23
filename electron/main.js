@@ -449,8 +449,15 @@ function registerIpc() {
   });
 
   ipcMain.handle('shell:open', async (e, { url }) => {
-    if (!url || !/^https?:\/\//i.test(String(url))) return false;
-    await shell.openExternal(String(url));
+    let u = String(url || '').trim();
+    if (!u) return false;
+    // 用户常填 www.xxx.com 或 xxx.com（没写协议），自动补 https://
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) {
+      u = 'https://' + u.replace(/^\/+/, '');
+    }
+    // 只允许 http/https（防止 file:// / javascript: 等）
+    if (!/^https?:\/\//i.test(u)) return false;
+    await shell.openExternal(u);
     return true;
   });
 

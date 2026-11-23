@@ -1818,3 +1818,12 @@ body {
   line-height: 16px;
   cursor: help;
 }
+/* 备注 / 标签 双模式行 */
+.note-tag-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.note-tag-row > * {
+  min-width: 0;
+}

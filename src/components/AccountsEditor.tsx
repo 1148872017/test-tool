@@ -11,6 +11,8 @@ export type AccountRow = {
   role: string[];
   isDefault: boolean;
   note: string;
+  /** 标签（和 note 二选一：填了标签就不填备注，反之亦然） */
+  tags: string[];
 };
 
 type Props = {
@@ -35,7 +37,8 @@ export function parseAccounts(raw: string): AccountRow[] {
         password: String(x.password || ''),
         role: Array.isArray(x.role) ? x.role.map(String) : [],
         isDefault: !!x.isDefault,
-        note: String(x.note || '')
+        note: String(x.note || ''),
+        tags: Array.isArray(x.tags) ? x.tags.map(String) : []
       }));
   } catch (e) {
     return [];
@@ -78,6 +81,7 @@ export function dropEmptyAccounts(raw: string): string {
       String(r.account || '').trim() ||
       String(r.password || '').trim() ||
       (Array.isArray(r.role) && r.role.length) ||
+      (Array.isArray(r.tags) && r.tags.length) ||
       String(r.note || '').trim()
   );
   if (!clean.length) return '';
@@ -115,6 +119,11 @@ export default function AccountsEditor({ value, onChange, readOnly }: Props) {
     value: o.value,
     label: o.label || o.value
   }));
+  // 标签选项（设置 → 选项配置里的 tags）
+  const tagOptions = fieldOptions({ key: 'tags', optionsKey: 'tags' } as any, opts).map((o: any) => ({
+    value: o.value,
+    label: o.label || o.value
+  }));
 
   const update = (next: AccountRow[]) => onChange(serializeAccounts(next));
 
@@ -133,7 +142,7 @@ export default function AccountsEditor({ value, onChange, readOnly }: Props) {
   const addRow = () => {
     // 第一条自动设为默认
     const isFirst = rows.length === 0;
-    update(rows.concat([{ label: '', account: '', password: '', role: [], isDefault: isFirst, note: '' }]));
+    update(rows.concat([{ label: '', account: '', password: '', role: [], isDefault: isFirst, note: '', tags: [] }]));
     toast('已添加一个账号，填完记得点「保存」');
   };
 
@@ -165,7 +174,7 @@ export default function AccountsEditor({ value, onChange, readOnly }: Props) {
             <th style={{ width: '18%' }}>账号</th>
             <th style={{ width: '10%' }}>密码</th>
             <th style={{ width: '22%' }}>角色</th>
-            <th>备注</th>
+            <th>备注 / 标签</th>
             <th style={{ width: '8%' }}>默认</th>
           </tr>
         </thead>
@@ -190,7 +199,21 @@ export default function AccountsEditor({ value, onChange, readOnly }: Props) {
               <td>
                 <RoleTags role={r.role} opts={opts} />
               </td>
-              <td className="muted">{r.note || '—'}</td>
+              <td className="muted">
+                {r.note ? (
+                  r.note
+                ) : r.tags && r.tags.length ? (
+                  <span className="role-tags">
+                    {r.tags.map((t) => (
+                      <Tag key={t} style={{ margin: '0 4px 0 0' }}>
+                        {t}
+                      </Tag>
+                    ))}
+                  </span>
+                ) : (
+                  '—'
+                )}
+              </td>
               <td>
                 {r.isDefault ? (
                   <Tooltip title="默认账号（一键启动时用这个）">
@@ -276,13 +299,28 @@ export default function AccountsEditor({ value, onChange, readOnly }: Props) {
               />
             </div>
             <div className="account-field account-field-wide">
-              <label>备注</label>
-              <Input
-                size="small"
-                value={r.note}
-                placeholder="限制、注意事项…"
-                onChange={(e) => setCell(i, 'note', e.target.value)}
-              />
+              <label>备注 / 标签</label>
+              {/* 二选一：填了备注就不能选标签，选了标签就不能填备注 */}
+              <div className="note-tag-row">
+                <Input
+                  size="small"
+                  value={r.note}
+                  placeholder="限制、注意事项…"
+                  disabled={r.tags.length > 0}
+                  onChange={(e) => setCell(i, 'note', e.target.value)}
+                  style={{ flex: 1 }}
+                />
+                <Select
+                  size="small"
+                  mode="tags"
+                  value={r.tags}
+                  placeholder="或选标签"
+                  disabled={String(r.note || '').trim().length > 0}
+                  options={tagOptions}
+                  onChange={(v) => setCell(i, 'tags', v)}
+                  style={{ flex: 1 }}
+                />
+              </div>
             </div>
           </div>
         </div>
