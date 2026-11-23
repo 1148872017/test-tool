@@ -223,6 +223,19 @@ check('标签用 mode=tags（可自定义）', /mode="tags"/.test(editorSrc3), '
 check('表头是「备注 / 标签」', /备注 \/ 标签/.test(editorSrc3), 'no header');
 check('dropEmptyAccounts 把 tags 算非空', /Array\.isArray\(r\.tags\) && r\.tags\.length/.test(editorSrc3), 'tags not counted');
 
+
+/* ---------- 21. 前端搜索也排除密码（关键：之前漏了）---------- */
+const pageSrc4 = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'CollectionPage.tsx'), 'utf8');
+check('前端有 searchableText 函数', /function searchableText/.test(pageSrc4), 'no searchableText');
+check('前端搜索用 searchableText', /searchableText\(r\.data/.test(pageSrc4), 'not used');
+check('前端不再直接 JSON.stringify(data)', !/JSON\.stringify\(r\.data \|\| \{\}\)/.test(pageSrc4), 'still stringify');
+check('searchableText 排除 password', /ik === 'password'/.test(pageSrc4), 'no password exclusion');
+check('searchableText 排除顶层 password', /k === 'password'/.test(pageSrc4), 'no top-level exclusion');
+
+/* ---------- 22. 后端搜索排除密码 ---------- */
+check('后端用 json_set 置空', /json_set\(data/.test(storeSrc4), 'no json_set');
+check('后端排除嵌套数组字段', /split\('\[\]'\)\[0\]/.test(storeSrc4), 'no nested exclusion');
+
 const failed = results.filter((r) => !r.ok);
 console.log('===== 账号合并测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));

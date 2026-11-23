@@ -46,6 +46,40 @@ type Props = {
   onLogRun?: (record: any) => void;
 };
 
+
+/**
+ * 把 data 转成可搜索文本，**排除密码字段**。
+ *
+ * 为什么需要：前端有一层本地过滤（filtered），
+ * 直接 JSON.stringify(data) 会把密码拼进去 → 搜密码明文能命中。
+ *
+ * 排除规则和 store.js 的 searchableDataExpr 保持一致：
+ *   - 顶层 secret 字段（type === 'secret'）→ 排除
+ *   - 嵌套路径（accounts[].password）→ 整个数组字段排除
+ */
+function searchableText(data: any): string {
+  const out: any = {};
+  for (const k of Object.keys(data || {})) {
+    const v = data[k];
+    // 账号数组：只保留非密码字段
+    if (Array.isArray(v) && v.length && typeof v[0] === 'object') {
+      out[k] = v.map((item: any) => {
+        const copy: any = {};
+        for (const ik of Object.keys(item || {})) {
+          if (ik === 'password' || ik === 'secret' || ik === 'token') continue;
+          copy[ik] = item[ik];
+        }
+        return copy;
+      });
+      continue;
+    }
+    // 顶层密码类字段
+    if (k === 'password' || k === 'secret' || k === 'token') continue;
+    out[k] = v;
+  }
+  return JSON.stringify(out);
+}
+
 export default function CollectionPage({
   conf,
   onCounts,
@@ -199,7 +233,12 @@ export default function CollectionPage({
     }
     if (kw) {
       rows = rows.filter((r) => {
-        const hay = [r.title || '', (r.tags || []).join(','), JSON.stringify(r.data || {})].join(' ').toLowerCase();
+        // 搜索范围：标题 + 标签 + data（**排除密码字段**）
+        // 后端 SQL 已经排除了，但前端还有一层本地过滤，这里也要排除，
+        // 否则搜密码明文照样能命中（JSON.stringify 会把密码拼进去）。
+        const hay = [r.title || '', (r.tags || []).join(','), searchableText(r.data || {})]
+          .join(' ')
+          .toLowerCase();
         return hay.includes(kw);
       });
     }
