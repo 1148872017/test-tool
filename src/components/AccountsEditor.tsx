@@ -43,13 +43,35 @@ export function parseAccounts(raw: string): AccountRow[] {
 }
 
 /**
- * 序列化。
+ * 序列化（**编辑时用，不过滤空行**）。
  *
- * **过滤掉完全空的账号**（label/account/password/role/note 全空）——
- * 用户点了「添加账号」但没填就保存，不该存一条全是「—」的记录。
- * 注意：只过滤「全空」的，填了任意一项就保留。
+ * 为什么不过滤：用户点「添加账号」时新行是全空的，
+ * 过滤掉会导致「点了没反应」（行加不进去）—— 这个坑踩过两次（§11.2.6 #63 / #75）。
+ *
+ * 空账号的清理放在**保存时**（见 dropEmptyAccounts）。
  */
 export function serializeAccounts(rows: AccountRow[]): string {
+  if (!rows.length) return '';
+  // 保证有且只有一个默认账号
+  const out = rows.map((r) => Object.assign({}, r));
+  const hasDefault = out.some((r) => r.isDefault);
+  if (!hasDefault) out[0].isDefault = true;
+  let seen = false;
+  for (const r of out) {
+    if (r.isDefault) {
+      if (seen) r.isDefault = false;
+      else seen = true;
+    }
+  }
+  return JSON.stringify(out);
+}
+
+/**
+ * 保存前清理：丢掉完全空的账号（label/account/password/role/note 全空）。
+ * 只过滤「全空」的，填了任意一项就保留（用户可能只填了备注）。
+ */
+export function dropEmptyAccounts(raw: string): string {
+  const rows = parseAccounts(raw);
   const clean = rows.filter(
     (r) =>
       String(r.label || '').trim() ||
@@ -59,17 +81,7 @@ export function serializeAccounts(rows: AccountRow[]): string {
       String(r.note || '').trim()
   );
   if (!clean.length) return '';
-  // 保证有且只有一个默认账号
-  const hasDefault = clean.some((r) => r.isDefault);
-  if (!hasDefault) clean[0] = Object.assign({}, clean[0], { isDefault: true });
-  let seen = false;
-  for (const r of clean) {
-    if (r.isDefault) {
-      if (seen) r.isDefault = false;
-      else seen = true;
-    }
-  }
-  return JSON.stringify(clean);
+  return serializeAccounts(clean);
 }
 
 /** 角色 → 显示标签（显式表达，如「商家」「用户」） */

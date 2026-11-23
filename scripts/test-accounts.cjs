@@ -130,13 +130,16 @@ check('exportAll 深拷贝', /JSON\.parse\(JSON\.stringify\(r\.data/.test(storeS
 
 /* ---------- 12. 空账号不保存（问题 5）---------- */
 const editorSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'AccountsEditor.tsx'), 'utf8');
-check('serializeAccounts 过滤全空账号', /const clean = rows\.filter/.test(editorSrc2), 'no filter');
-check('过滤条件含 label/account/password/role/note', /r\.label.*r\.account.*r\.password/s.test(editorSrc2), 'incomplete filter');
-check('序列化保证有默认账号', /if \(!hasDefault\) clean\[0\]/.test(editorSrc2), 'no default guarantee');
+const serBody = (editorSrc2.match(/export function serializeAccounts[\s\S]*?\n}/) || [''])[0];
+check('serializeAccounts 不过滤（编辑时）', !/rows\.filter/.test(serBody), 'still filtering');
+check('有 dropEmptyAccounts（保存时清理）', /export function dropEmptyAccounts/.test(editorSrc2), 'no dropEmptyAccounts');
+check('序列化保证有默认账号', /if \(!hasDefault\) out\[0\]/.test(editorSrc2), 'no default guarantee');
 
 // 纯函数验证：空账号被过滤
 const emptyRows = [{ label: '', account: '', password: '', role: [], isDefault: true, note: '' }];
-check('全空账号序列化后为空串', serializeAccounts(emptyRows) === '', serializeAccounts(emptyRows));
+// 编辑时：空行必须保留（否则「添加账号」点了没反应）
+check('编辑时空行保留（能加进去）', serializeAccounts(emptyRows) !== '', serializeAccounts(emptyRows));
+check('编辑时空行能反解', parseAccounts(serializeAccounts(emptyRows)).length === 1, parseAccounts(serializeAccounts(emptyRows)));
 
 const filledRows = [{ label: '', account: 'admin', password: '', role: [], isDefault: false, note: '' }];
 check('填了账号就保留', serializeAccounts(filledRows) !== '', serializeAccounts(filledRows));
@@ -159,6 +162,38 @@ check('打开表单时 formSeq +1', /setFormSeq\(\(n\) => n \+ 1\)/.test(pageSrc
 const storeSrc3 = fs.readFileSync(path.join(__dirname, '..', 'electron', 'store.js'), 'utf8');
 check('导出用 applySecretPath 清空嵌套密码', /applySecretPath\(data, key, \(\) => ''\)/.test(storeSrc3), 'export not fixed');
 check('导入用 serialize 加密', /JSON\.stringify\(serialize\(item\.collection/.test(storeSrc3), 'import not encrypting');
+
+
+/* ---------- 16. dropEmptyAccounts（保存时清理）---------- */
+check('有 dropEmptyAccounts 导出', /export function dropEmptyAccounts/.test(editorSrc2), 'no export');
+
+// 从源码提取 dropEmptyAccounts 测试
+const pure2 = editorSrc2
+  .slice(0, editorSrc2.indexOf('export default function AccountsEditor'))
+  .replace(/^import .*$/gm, '')
+  .replace(/export function/g, 'function')
+  .replace(/function RoleTags[\s\S]*?\n}\n/, '');
+const out2 = esbuild.transformSync(pure2 + '\nmodule.exports = { parseAccounts, serializeAccounts, dropEmptyAccounts };', {
+  loader: 'tsx',
+  format: 'cjs'
+});
+const mod2 = { exports: {} };
+new Function('module', 'exports', 'require', out2.code)(mod2, mod2.exports, require);
+const { dropEmptyAccounts } = mod2.exports;
+
+check('dropEmptyAccounts：全空返回空串', dropEmptyAccounts(JSON.stringify([{ label: '', account: '', password: '', role: [], isDefault: true, note: '' }])) === '', 'not empty');
+check('dropEmptyAccounts：有账号保留', dropEmptyAccounts(JSON.stringify([{ label: '', account: 'admin', password: '', role: [], isDefault: true, note: '' }])) !== '', 'dropped');
+check('dropEmptyAccounts：只填备注保留', dropEmptyAccounts(JSON.stringify([{ label: '', account: '', password: '', role: [], isDefault: false, note: '备注' }])) !== '', 'dropped');
+check('dropEmptyAccounts：只填角色保留', dropEmptyAccounts(JSON.stringify([{ label: '', account: '', password: '', role: ['admin'], isDefault: false, note: '' }])) !== '', 'dropped');
+check('dropEmptyAccounts：混合时只留非空', parseAccounts(dropEmptyAccounts(JSON.stringify([
+  { label: '', account: '', password: '', role: [], isDefault: true, note: '' },
+  { label: '管理员', account: 'admin', password: 'p', role: [], isDefault: false, note: '' }
+]))).length === 1, 'wrong count');
+
+/* ---------- 17. 保存时调用 dropEmptyAccounts ---------- */
+const formSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'RecordForm.tsx'), 'utf8');
+check('RecordForm 保存时清理空账号', /dropEmptyAccounts\(String\(payload\[f\.key\]\)\)/.test(formSrc), 'not called');
+check('RecordForm 用 payload 保存', /data: payload/.test(formSrc), 'not using payload');
 
 const failed = results.filter((r) => !r.ok);
 console.log('===== 账号合并测试 =====');

@@ -6,7 +6,7 @@ import { toast } from '../msg';
 import { COLLECTION_MAP } from '../../shared/collections';
 import VarsEditor from './VarsEditor';
 import ScenePicker from './ScenePicker';
-import AccountsEditor from './AccountsEditor';
+import AccountsEditor, { dropEmptyAccounts } from './AccountsEditor';
 import { visibleFields } from '../../shared/runs';
 import { asArray, fieldOptions, getOptionsSync, labelOf, loadOptions, OptionsMap } from '../options';
 
@@ -129,10 +129,17 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
     }
     setSaving(true);
     try {
+      // 保存前清理：丢掉完全空的账号行（编辑时不过滤，保存时才过滤）
+      const payload = Object.assign({}, data);
+      for (const f of conf.fields) {
+        if (f.type === 'accounts' && payload[f.key]) {
+          payload[f.key] = dropEmptyAccounts(String(payload[f.key]));
+        }
+      }
       const saved = await api.saveRecord({
         id: record && record.id,
         collection: conf.key,
-        data,
+        data: payload,
         tags: tagArr,
         favorite
       });
