@@ -1641,32 +1641,36 @@ body {
   font-size: 13px;
   font-weight: 600;
 }
-/* ===== 参数表格：位置/类型列按内容自适应 ===== */
-/* 参数名：最小 120px，最多 30%，超出省略 */
-.json-table-row .param-name {
-  flex: 0 1 auto;
-  min-width: 120px;
-  max-width: 30%;
+/* ===== 参数表格：CSS Grid，所有行共享列宽 ===== */
+/* 为什么用 Grid 不用 flex：
+   flex 每行是独立容器，flex: 0 0 auto 只按「本行」内容算宽度，
+   表头「位置」和数据 query 宽度不同 → 列对不齐。
+   Grid 由容器定义列模板，所有行共享同一套列宽。 */
+.param-grid {
+  display: block;
+}
+.param-grid .json-table-row {
+  display: grid;
+  /* 参数名 自适应(120~30%) | 位置 按内容 | 类型 按内容 | 说明 占满剩余 */
+  grid-template-columns: minmax(120px, 30%) max-content max-content minmax(0, 1fr);
+  align-items: start;
+}
+.param-grid .json-table-row > div {
+  padding: 6px 10px;
+  min-width: 0;
+}
+.param-grid .json-table-row > div + div {
+  border-left: 1px solid #f4f5fa;
+}
+.param-grid .json-table-header > div {
+  font-weight: 600;
+  color: #4a5165;
+}
+.param-grid .json-table-key {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 位置：按内容（Tag 宽度），不换行 */
-.json-table-row .param-in {
-  flex: 0 0 auto;
-  white-space: nowrap;
-  padding-left: 12px;
-  padding-right: 12px;
-}
-/* 类型：按内容，不换行 */
-.json-table-row .param-type {
-  flex: 0 0 auto;
-  white-space: nowrap;
-  padding-left: 12px;
-  padding-right: 12px;
-}
-/* 说明：占满剩余 */
-.json-table-row .param-desc {
-  flex: 1 1 auto;
-  min-width: 0;
+.param-grid .json-table-value {
+  word-break: break-word;
 }

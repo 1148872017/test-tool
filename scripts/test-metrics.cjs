@@ -69,17 +69,20 @@ check('RecordDetail 不再在 body 标签旁渲染 Tag', !/f\.key === 'body' && 
 check('RecordDetail 仍渲染 metrics', /case 'metrics'/.test(detail), 'no metrics case');
 check('RecordDetail 仍渲染 scene', /case 'scene'/.test(detail), 'no scene case');
 
-/* ---------- 5. 参数表格列宽自适应 ---------- */
+/* ---------- 5. 参数表格列宽自适应（CSS Grid）---------- */
 const toggle = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'JsonTableToggle.tsx'), 'utf8');
 const css = fs.readFileSync(path.join(__dirname, '..', 'src', 'styles.css'), 'utf8');
 
 check('参数表格不再用固定 flexBasis 百分比', !/flexBasis: '\d+%'/.test(toggle), 'still has fixed flexBasis');
-check('参数表格用语义化 class', /param-name/.test(toggle) && /param-in/.test(toggle) && /param-type/.test(toggle), 'no semantic class');
-check('位置列按内容自适应', /\.param-in\s*\{[^}]*flex:\s*0 0 auto/.test(css), 'param-in not auto');
-check('类型列按内容自适应', /\.param-type\s*\{[^}]*flex:\s*0 0 auto/.test(css), 'param-type not auto');
-check('位置/类型列不换行', /\.param-in\s*\{[^}]*white-space:\s*nowrap/.test(css) && /\.param-type\s*\{[^}]*white-space:\s*nowrap/.test(css), 'not nowrap');
-check('说明列占满剩余', /\.param-desc\s*\{[^}]*flex:\s*1 1 auto/.test(css), 'param-desc not flex 1');
-check('参数名列有最小宽度', /\.param-name\s*\{[^}]*min-width:\s*120px/.test(css), 'no min-width');
+check('参数表格用 param-grid 类', /param-grid/.test(toggle), 'no param-grid');
+// 关键：必须用 Grid 而不是 flex——flex 每行独立算宽度，列对不齐
+check('参数表格用 CSS Grid', /\.param-grid \.json-table-row\s*\{[^}]*display:\s*grid/.test(css), 'not grid');
+check('Grid 定义 4 列模板', /grid-template-columns:\s*minmax\(120px, 30%\)\s+max-content\s+max-content\s+minmax\(0, 1fr\)/.test(css), 'no grid-template');
+check('位置/类型列用 max-content（按内容）', (css.match(/max-content/g) || []).length >= 2, 'no max-content');
+check('说明列占满剩余（1fr）', /minmax\(0, 1fr\)/.test(css), 'no 1fr');
+check('参数名列有最小宽度', /minmax\(120px, 30%\)/.test(css), 'no minmax');
+check('参数名列超出省略', /\.param-grid \.json-table-key\s*\{[^}]*text-overflow:\s*ellipsis/.test(css), 'no ellipsis');
+check('不再有旧的 param-in/param-type flex 规则', !/\.param-in\s*\{[^}]*flex:/.test(css), 'old flex rule remains');
 
 const failed = results.filter((r) => !r.ok);
 console.log('===== 压测指标 + 场景选择器测试 =====');
