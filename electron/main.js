@@ -19,6 +19,7 @@ const projects = require('./projects');
 const { RUNNERS, listRunners } = require('../shared/runners');
 const codegen = require('../shared/codegen');
 const allure = require('./allure');
+const codescan = require('./codescan');
 const { TOOLS, COLLECTION_MAP } = require('../shared/collections');
 
 const DEBUG = process.env.TT_DEBUG === '1';
@@ -39,7 +40,7 @@ let initialized = false;
 
 /**
  * 默认目录：放在「文档」下，跟着用户走。
- * 不写死 D:\AI_Workspace —— 换机器/换人 clone 下来，首次启动指向自己的文档目录。
+ * 不写死 D:\你的工作区 —— 换机器/换人 clone 下来，首次启动指向自己的文档目录。
  * 用户可以在设置里改成任意路径，改完存库，这里只是首次启动的兜底。
  */
 function defaultWorkspaceDir() {
@@ -152,7 +153,7 @@ function loadSettings() {
     fill('notesDir', 'notes');
   }
 
-  // 代码项目目录：默认 D:\AI_Workspace\Project（和「文档\测试工作台」同级）
+  // 代码项目目录：默认 D:\你的工作区\Project（和「文档\测试工作台」同级）
   if (!settings.projectDir) {
     const guess = path.join(path.dirname(base || ''), 'Project');
     if (base && fs.existsSync(guess)) settings.projectDir = guess;
@@ -1202,6 +1203,48 @@ function registerIpc() {
   // ---- 压测报告导入（jtl / statistics.json）----
 
   /** 扫描报告根目录，列出所有可导入的跑批 */
+  /* ==================== 代码扫描 ==================== *
+   * 覆盖矩阵（接口清单 vs 代码路径）+ 硬编码检查。
+   * ------------------------------------------------ */
+
+  /**
+   * 覆盖矩阵：接口清单 vs 代码里的请求路径。
+   *
+   * payload: { root }  代码根目录（空 = settings.projectDir）
+   */
+  ipcMain.handle('codescan:coverage', async (e, { root } = {}) => {
+    assertUnlocked();
+    const dir = (root && String(root).trim()) || settings.projectDir || '';
+    if (!dir) return { ok: false, message: '没配代码目录' };
+
+    // 接口清单从 apis 集合读
+    const apis = store.list('apis');
+    return codescan.buildCoverage(apis, dir);
+  });
+
+  /**
+   * 硬编码检查。
+   *
+   * payload: { root }  代码根目录
+   */
+  ipcMain.handle('codescan:hardcoded', async (e, { root } = {}) => {
+    assertUnlocked();
+    const dir = (root && String(root).trim()) || settings.projectDir || '';
+    if (!dir) return { ok: false, message: '没配代码目录' };
+    return codescan.scanHardcoded(dir);
+  });
+
+  /** 选代码目录 */
+  ipcMain.handle('codescan:pickDir', async () => {
+    assertUnlocked();
+    const picked = await dialog.showOpenDialog(win, {
+      title: '选择代码目录',
+      properties: ['openDirectory']
+    });
+    if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+    return { ok: true, dir: picked.filePaths[0] };
+  });
+
   /* ==================== Allure 报告解析 ==================== *
    * 解析 allure-results → 失败聚类 + Flaky 追踪。
    * ------------------------------------------------------ */

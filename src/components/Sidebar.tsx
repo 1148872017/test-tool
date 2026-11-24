@@ -15,13 +15,35 @@ export default function Sidebar({ route, onNavigate, counts, onLock }: Props) {
   const jmxItem = { key: 'jmx', name: '压测脚本', icon: 'DashboardOutlined', isJmx: true };
   const kbItem = { key: 'kb', name: '知识库', icon: 'BookOutlined', isKb: true };
   const notesItem = { key: 'notes', name: '测试笔记', icon: 'FileTextOutlined', isNotes: true };
+  /**
+   * 侧栏分组：按「测试工作流」排序。
+   *
+   *   资产   → 网站/账号、接口记录、SQL 片段、测试执行（存什么）
+   *   索引   → 测试用例、压测脚本、知识库、测试笔记（读什么）
+   *   自动化 → 代码生成、代码调试、代码体检、报告分析（写/跑/查）
+   *   辅助   → 测试数据、JSON 工具、工具箱（日常小工具）
+   */
   const groups = [
-    { label: '密码库', items: COLLECTIONS.filter((c: any) => c.group === '密码库') },
+    { label: '资产', items: COLLECTIONS.filter((c: any) => c.group === '资产') },
+    { label: '索引', items: [caseItem, jmxItem, kbItem, notesItem] },
     {
-      label: '记录',
-      items: [caseItem, ...COLLECTIONS.filter((c: any) => c.group === '记录'), jmxItem, kbItem, notesItem]
+      label: '自动化',
+      items: TOOLS.filter((t: any) => t.group === '自动化').map((t: any) => ({
+        key: t.key,
+        name: t.name,
+        icon: t.icon,
+        isTool: true
+      }))
     },
-    { label: '工具', items: TOOLS.map((t: any) => ({ key: t.key, name: t.name, icon: t.icon, isTool: true })) }
+    {
+      label: '辅助',
+      items: TOOLS.filter((t: any) => t.group === '辅助').map((t: any) => ({
+        key: t.key,
+        name: t.name,
+        icon: t.icon,
+        isTool: true
+      }))
+    }
   ];
 
   const isActive = (item: any) => {

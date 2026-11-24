@@ -2392,3 +2392,140 @@ body.has-bg .ant-table-tbody > tr > td {
   border-radius: 50%;
   display: inline-block;
 }
+/* ===== 代码体检 ===== */
+.codescan-page {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+}
+.codescan-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.codescan-view-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.codescan-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 0;
+}
+.codescan-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cov-summary {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.cov-stat {
+  flex: 1;
+  min-width: 90px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid var(--line-soft);
+  text-align: center;
+}
+.cov-stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #3a4055;
+  line-height: 1.3;
+}
+.cov-stat-label {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.cov-section-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #4a5165;
+  padding: 4px 0;
+}
+.cov-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+.cov-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid #f4f5fa;
+  font-size: 12.5px;
+}
+.cov-row:last-child {
+  border-bottom: none;
+}
+.cov-row-miss {
+  background: #fffafa;
+}
+.cov-url {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cov-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.issue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.issue-row {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid var(--line-soft);
+  border-left: 3px solid #e5534b;
+}
+.issue-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #3a4055;
+  margin-left: 4px;
+}
+.issue-file {
+  font-size: 11.5px;
+  margin-left: 8px;
+}
+.issue-snippet {
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #f7f8fc;
+  font-size: 11.5px;
+  color: #5a6072;
+  word-break: break-all;
+}
+.issue-hint {
+  margin-top: 3px;
+  font-size: 11.5px;
+}

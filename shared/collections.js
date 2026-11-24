@@ -79,7 +79,7 @@ const COLLECTIONS = [
   {
     key: 'sites',
     name: '网站管理',
-    group: '密码库',
+    group: '资产',
     icon: 'GlobalOutlined',
     desc: '测试环境地址与登录信息，点开即用',
     titleField: 'name',
@@ -108,7 +108,7 @@ const COLLECTIONS = [
   {
     key: 'sqls',
     name: 'SQL 片段',
-    group: '记录',
+    group: '资产',
     icon: 'ConsoleSqlOutlined',
     desc: '常用查询与变更语句，变量替换后复制',
     titleField: 'name',
@@ -126,7 +126,7 @@ const COLLECTIONS = [
   {
     key: 'apis',
     name: '接口记录',
-    group: '记录',
+    group: '资产',
     icon: 'ApiOutlined',
     desc: '常用接口，一键复制成 cURL；可从 Apifox 导出文件同步',
     titleField: 'name',
@@ -165,7 +165,7 @@ const COLLECTIONS = [
   {
     key: 'runs',
     name: '测试执行',
-    group: '记录',
+    group: '资产',
     icon: 'ThunderboltOutlined',
     desc: '接口测试 / 压测跑一次记一笔：结果、指标、结论，报告留在 Apifox',
     titleField: 'name',
@@ -212,13 +212,25 @@ const COLLECTIONS = [
   // 不再作为数据库集合存在。旧的 notes 记录如果出现在备份 JSON 里，导入时会被跳过。
 ];
 
+/**
+ * 工具分组：按「测试工作流」排序。
+ *
+ *   写代码前  → 代码生成（骨架）
+ *   写代码时  → 代码调试（跑起来看输出）
+ *   写完后    → 代码体检（覆盖 + 硬编码）
+ *   跑完后    → 报告分析（失败聚类 + Flaky）
+ *   日常辅助  → 测试数据 / JSON 转化 / 工具箱
+ */
 const TOOLS = [
-  { key: 'json', name: 'JSON 转化', icon: 'CodeOutlined', desc: '格式化 / 压缩 / 转义 / 校验' },
-  { key: 'data', name: '测试数据', icon: 'ExperimentOutlined', desc: '手机号 / 身份证 / 银行卡 / 地址…' },
-  { key: 'toolbox', name: '工具箱', icon: 'ToolOutlined', desc: 'Base64 / 时间戳 / 哈希 / UUID' },
-  { key: 'runner', name: '代码调试', icon: 'BugOutlined', desc: 'Groovy / Python / pytest / Maven 跑代码看输出' },
-  { key: 'codegen', name: '代码生成', icon: 'FileAddOutlined', desc: '接口/JSON/页面元素 → Java/Python 代码骨架' },
-  { key: 'report', name: '报告分析', icon: 'BarChartOutlined', desc: 'Allure 失败聚类 + Flaky 追踪' }
+  // ---- 自动化工作流 ----
+  { key: 'codegen', name: '代码生成', icon: 'FileAddOutlined', desc: '接口 / JSON / 页面元素 → Java/Python 骨架', group: '自动化' },
+  { key: 'runner', name: '代码调试', icon: 'BugOutlined', desc: 'Groovy / Python / pytest / Maven 跑代码看输出', group: '自动化' },
+  { key: 'codescan', name: '代码体检', icon: 'SafetyOutlined', desc: '接口覆盖矩阵 + 硬编码 / 脆弱定位扫描', group: '自动化' },
+  { key: 'report', name: '报告分析', icon: 'BarChartOutlined', desc: 'Allure 失败聚类 + Flaky 追踪', group: '自动化' },
+  // ---- 日常辅助 ----
+  { key: 'data', name: '测试数据', icon: 'ExperimentOutlined', desc: '手机号 / 身份证 / 银行卡 / 地址…', group: '辅助' },
+  { key: 'json', name: 'JSON 工具', icon: 'CodeOutlined', desc: '格式化 / 压缩 / 转义 / 校验', group: '辅助' },
+  { key: 'toolbox', name: '工具箱', icon: 'ToolOutlined', desc: 'Base64 / 时间戳 / 哈希 / UUID', group: '辅助' }
 ];
 
 const COLLECTION_MAP = COLLECTIONS.reduce((acc, c) => {

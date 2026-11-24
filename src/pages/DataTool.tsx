@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { InputNumber, Button, Select, Space, Tag, Tooltip } from 'antd';
-import { CopyOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { CopyOutlined, ThunderboltOutlined, DownloadOutlined } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
 

@@ -61,6 +61,11 @@ contextBridge.exposeInMainWorld('api', {
   allureParse: (dir) => invoke('allure:parse', { dir }),
   allureFlaky: (dirs) => invoke('allure:flaky', { dirs }),
 
+  // ---- 代码扫描 ----
+  codescanCoverage: (root) => invoke('codescan:coverage', { root }),
+  codescanHardcoded: (root) => invoke('codescan:hardcoded', { root }),
+  codescanPickDir: () => invoke('codescan:pickDir'),
+
   /** 订阅代码运行输出（返回取消订阅函数） */
   onRunnerOutput: (cb) => {
     const handler = (_e, data) => cb(data);

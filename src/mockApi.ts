@@ -264,7 +264,7 @@ const SEED: Record<string, any[]> = {
 /** 预览模式的压测报告（真机上是扫描目录得到的） */
 const MOCK_REPORTS: any[] = [
   {
-    dir: 'D:\\AI_Workspace\\jmx\\压测结果',
+    dir: 'D:\\demo\\jmx\\report',
     name: '压测结果',
     mtime: Date.now() - 3600e3,
     sources: ['statistics.json', 'jtl'],
@@ -284,9 +284,9 @@ const MOCK_REPORTS: any[] = [
     labels: [{ label: '商品详情', samples: 50, fails: 0, errRate: 0, avg: 4.04, p95: 4 }],
     warnings: [],
     files: {
-      jtl: 'D:\\AI_Workspace\\jmx\\压测结果\\result.jtl',
-      statistics: 'D:\\AI_Workspace\\jmx\\压测结果\\html-report\\statistics.json',
-      htmlIndex: 'D:\\AI_Workspace\\jmx\\压测结果\\html-report\\index.html'
+      jtl: 'D:\\demo\\jmx\\report\\result.jtl',
+      statistics: 'D:\\demo\\jmx\\report\\html-report\\statistics.json',
+      htmlIndex: 'D:\\demo\\jmx\\report\\html-report\\index.html'
     }
   }
 ];
@@ -339,12 +339,12 @@ export function installMockIfNeeded() {
   closeAction: 'tray',
     hasPin: false,
     pin: '',
-    casesDir: 'D:\\AI_Workspace\\test_cases',
-    jmxDir: 'D:\\AI_Workspace\\jmx',
+    casesDir: 'D:\\demo\\cases',
+    jmxDir: 'D:\\demo\\jmx',
     jmeterPath: 'D:\\apache-jmeter-5.4.3\\bin\\jmeter.bat',
-    reportDir: 'D:\\AI_Workspace\\jmx\\压测结果',
-    kbDir: 'D:\\AI_Workspace\\知识库',
-    notesDir: 'D:\\AI_Workspace\\notes'
+    reportDir: 'D:\\demo\\jmx\\report',
+    kbDir: 'D:\\demo\\kb',
+    notesDir: 'D:\\demo\\notes'
   };
   let locked = false;
 
@@ -486,6 +486,109 @@ export function installMockIfNeeded() {
       window.open(url, '_blank');
       return true;
     },
+
+    /* ---- 代码调试（mock）---- */
+    runnerList: async () => ({
+      ok: true,
+      runners: [
+        { key: 'groovy', label: 'Groovy（JMeter）', desc: '用 JMeter 自带的 Groovy 跑脚本', ext: '.groovy', needs: ['java', 'jmeter'] },
+        { key: 'python', label: 'Python', desc: '直接跑 Python 脚本', ext: '.py', needs: ['python'] },
+        { key: 'pytest', label: 'Python（pytest）', desc: '用 pytest 跑测试文件', ext: '.py', needs: ['python'] },
+        { key: 'maven', label: 'Java（Maven）', desc: '跑 Maven 项目的测试类', ext: null, needs: ['mvn', 'java'] }
+      ],
+      env: { java: 'C:/mock/java.exe', python: 'C:/mock/python.exe', mvn: 'C:/mock/mvn.cmd', javaHome: 'C:/mock/jdk-17', jmeter: '', playwright: { found: true, dir: 'C:/mock/ms-playwright', browsers: [{ name: 'chromium-1234', size: 427 * 1024 * 1024 }], totalSize: 427 * 1024 * 1024 } },
+      jdks: [{ version: 17, home: 'C:/mock/jdk-17', name: 'jdk-17' }],
+      pythons: [{ version: '3.14', path: 'C:/mock/python.exe', name: 'python' }],
+      manual: { javaHome: '', pythonPath: '', mvnPath: '' }
+    }),
+    runnerRun: async () => ({ ok: true, runId: 'mock-run-1', cmd: 'mock', args: [], cwd: '' }),
+    runnerCancel: async () => ({ ok: true }),
+    projectsScan: async () => ({
+      ok: true,
+      root: 'D:/mock/Project',
+      projects: [
+        { name: 'example', dir: 'D:/mock/Project/example', type: 'maven', frameworks: [{ key: 'rest-assured', label: 'REST Assured', color: 'blue' }, { key: 'testng', label: 'TestNG', color: 'green' }], isTest: true, testDir: '' },
+        { name: 'OTA-automation', dir: 'D:/mock/Project/OTA-automation', type: 'maven', frameworks: [{ key: 'playwright', label: 'Playwright', color: 'purple' }], isTest: true, testDir: '' }
+      ]
+    }),
+    projectsTestClasses: async () => ({ ok: true, classes: ['LoginApiTest', 'RefundApiTest'] }),
+    projectsPickDir: async () => ({ ok: false, canceled: true }),
+    runnerOpenBrowserDir: async () => ({ ok: true, dir: 'C:/mock/ms-playwright' }),
+    pickFile: async () => ({ ok: false, canceled: true }),
+    onRunnerOutput: () => () => {},
+    onRunnerExit: () => () => {},
+
+    /* ---- 代码生成（mock）---- */
+    codegenTargets: async () => ({
+      ok: true,
+      targets: [
+        { key: 'java-restassured', label: 'Java · REST Assured', desc: '接口测试类骨架', lang: 'java', ext: '.java', kind: 'api' },
+        { key: 'python-pytest', label: 'Python · pytest + requests', desc: '接口测试类骨架', lang: 'python', ext: '.py', kind: 'api' },
+        { key: 'playwright-java', label: 'Java · Playwright POM', desc: '页面对象类', lang: 'java', ext: '.java', kind: 'page' },
+        { key: 'playwright-python', label: 'Python · Playwright POM', desc: '页面对象类', lang: 'python', ext: '.py', kind: 'page' },
+        { key: 'pojo-java', label: 'Java · POJO（Lombok）', desc: '从 JSON 生成实体类', lang: 'java', ext: '.java', kind: 'model' },
+        { key: 'dataclass-python', label: 'Python · Pydantic 模型', desc: '从 JSON 生成数据模型', lang: 'python', ext: '.py', kind: 'model' }
+      ]
+    }),
+    codegenPreview: async () => ({
+      ok: true,
+      filename: 'PetApiTest.java',
+      code: 'package com.test.api;\n\npublic class PetApiTest {\n    @Test\n    public void testCreatePet() {\n        // mock 预览\n    }\n}\n'
+    }),
+    codegenSave: async () => ({ ok: false, canceled: true }),
+
+    /* ---- 皮肤（mock）---- */
+    skinPickImage: async () => ({ ok: false, canceled: true }),
+    skinClearImage: async () => ({ ok: true }),
+    skinGetImage: async () => ({ ok: true, url: '' }),
+
+    /* ---- Allure 报告（mock）---- */
+    allureScan: async () => ({ ok: true, dirs: ['D:/mock/Project/example/allure-results'] }),
+    allurePickDir: async () => ({ ok: false, canceled: true }),
+    allureParse: async () => ({
+      ok: true,
+      dir: 'D:/mock/Project/example/allure-results',
+      tests: [
+        { id: '1', name: '正确用户名和密码登录成功', fullName: 't1', status: 'passed', message: '', trace: '', suite: '登录', testClass: 'LoginApiTest', testMethod: 'testLogin', feature: '登录', severity: 'normal', duration: 1200, attachments: [] },
+        { id: '2', name: '空用户名登录失败', fullName: 't2', status: 'broken', message: 'Cannot invoke "Response.getStatusCode()" because "response" is null', trace: '', suite: '登录', testClass: 'LoginApiTest', testMethod: 'testEmpty', feature: '登录', severity: 'normal', duration: 3000, attachments: [] },
+        { id: '3', name: '错误密码登录失败', fullName: 't3', status: 'broken', message: 'Cannot invoke "Response.getStatusCode()" because "response" is null', trace: '', suite: '登录', testClass: 'LoginApiTest', testMethod: 'testWrong', feature: '登录', severity: 'normal', duration: 2800, attachments: [] }
+      ],
+      summary: { total: 3, passed: 1, failed: 0, broken: 2, skipped: 0, unknown: 0, duration: 7000 },
+      clusters: [
+        { key: 'k1', pattern: 'Cannot invoke "<STR>" because "<STR>" is null', count: 2, sample: 'Cannot invoke "Response.getStatusCode()" because "response" is null', tests: [{ id: '2', name: '空用户名登录失败', status: 'broken' }, { id: '3', name: '错误密码登录失败', status: 'broken' }] }
+      ]
+    }),
+    allureFlaky: async () => ({ ok: true, runs: 2, flaky: [{ fullName: 't1', name: '正确用户名和密码登录成功', history: ['passed', 'failed', 'passed'], flaky: true }], errors: [] }),
+
+    /* ---- 代码体检（mock）---- */
+    codescanCoverage: async () => ({
+      ok: true,
+      total: 5,
+      covered: 3,
+      scannedFiles: 12,
+      uncovered: [
+        { id: 'u1', name: '删除用户', method: 'DELETE', url: '/api/v1/user/{id}', module: '用户', hits: 0, files: [] },
+        { id: 'u2', name: '导出报表', method: 'GET', url: '/api/v1/report/export', module: '报表', hits: 0, files: [] }
+      ],
+      coveredList: [
+        { id: 'c1', name: '登录', method: 'POST', url: '/api/login', module: '认证', hits: 2, files: ['D:/mock/Project/example/AuthClient.java'] },
+        { id: 'c2', name: '查用户', method: 'GET', url: '/api/v1/user', module: '用户', hits: 1, files: ['D:/mock/Project/example/UserClient.java'] },
+        { id: 'c3', name: '退款', method: 'POST', url: '/api/v1/refund', module: '退款', hits: 3, files: ['D:/mock/Project/example/RefundClient.java'] }
+      ],
+      codePaths: []
+    }),
+    codescanHardcoded: async () => ({
+      ok: true,
+      scannedFiles: 12,
+      summary: { high: 1, medium: 2, low: 1, total: 4 },
+      issues: [
+        { rule: 'hardcoded-password', label: '硬编码密码', severity: 'high', hint: '密码应放配置/环境变量', file: 'D:/mock/Project/example/LoginApiTest.java', line: 38, snippet: 'correctPassword = "admin123";' },
+        { rule: 'sleep', label: '硬编码 sleep', severity: 'medium', hint: 'sleep 会让测试变慢且不稳定', file: 'D:/mock/Project/example/BaseApiTest.java', line: 64, snippet: 'Thread.sleep(1000L * attempt);' },
+        { rule: 'sleep', label: '硬编码 sleep', severity: 'medium', hint: 'sleep 会让测试变慢且不稳定', file: 'D:/mock/Project/example/BaseApiTest.java', line: 75, snippet: 'Thread.sleep(1000L * attempt);' },
+        { rule: 'absolute-xpath', label: '绝对 XPath', severity: 'low', hint: '绝对 XPath 极易失效', file: 'D:/mock/Project/example/LoginPage.java', line: 12, snippet: 'By.xpath("/html/body/div[1]/span")' }
+      ]
+    }),
+    codescanPickDir: async () => ({ ok: false, canceled: true }),
     hash: async (algo: string, text: string) => {
       const map: Record<string, string> = { md5: 'SHA-256', sha1: 'SHA-1', sha256: 'SHA-256', sha512: 'SHA-512' };
       const buf = await crypto.subtle.digest(map[algo] || 'SHA-256', new TextEncoder().encode(text));
@@ -511,7 +614,7 @@ export function installMockIfNeeded() {
     exportDb: async () => ({ ok: false, message: '预览模式不支持导出整库' }),
     restoreBackup: async () => ({ ok: false, message: '预览模式不支持恢复备份' }),
     caseScan: async () => ({
-      root: 'D:\\AI_Workspace\\test_cases（预览模式模拟）',
+      root: 'D:\\demo\\cases（预览模式模拟）',
       totalCases: 9,
       totalFiles: 4,
       errors: [],
@@ -520,7 +623,7 @@ export function installMockIfNeeded() {
           relPath: '模块A重构/TC_模块C券_20250109.md',
           name: 'TC_模块C券_20250109.md',
           dir: '模块A重构',
-          fullPath: 'D:\\AI_Workspace\\test_cases\\模块A重构\\TC_模块C券_20250109.md',
+          fullPath: 'D:\\demo\\cases\\module-a\\TC_coupon_20250109.md',
           title: '模块C券',
           meta: ['生成日期: 2025-01-09'],
           kind: 'cases',
@@ -579,7 +682,7 @@ export function installMockIfNeeded() {
           relPath: '模块A重构/TC_模块B卡券_核销_20250210.md',
           name: 'TC_模块B卡券_核销_20250210.md',
           dir: '模块A重构',
-          fullPath: 'D:\\AI_Workspace\\test_cases\\模块A重构\\TC_模块B卡券_核销_20250210.md',
+          fullPath: 'D:\\demo\\cases\\module-a\\TC_coupon_redeem_20250210.md',
           title: '模块B卡券核销',
           meta: ['生成日期: 2025-02-10'],
           kind: 'cases',
@@ -638,7 +741,7 @@ export function installMockIfNeeded() {
           relPath: '模块A重构/TC_模块A重构_第三次迭代_混合_2026_10_08_修正版.md',
           name: 'TC_模块A重构_第三次迭代_混合_2026_10_08_修正版.md',
           dir: '模块A重构',
-          fullPath: 'D:\\AI_Workspace\\test_cases\\模块A重构\\TC_模块A重构_第三次迭代_混合_2026_10_08_修正版.md',
+          fullPath: 'D:\\demo\\cases\\module-a\\TC_module_a_iter3_20261008.md',
           title: '模块A重构· 第三次迭代测试用例（修正版）',
           meta: ['生成日期: 2026-10-08', '总计: 56用例 (15高+28中+13低)'],
           kind: 'cases',
@@ -733,7 +836,7 @@ export function installMockIfNeeded() {
           relPath: 'TC_回归测试_极简链路用例_20260701.md',
           name: 'TC_回归测试_极简链路用例_20260701.md',
           dir: '',
-          fullPath: 'D:\\AI_Workspace\\test_cases\\TC_回归测试_极简链路用例_20260701.md',
+          fullPath: 'D:\\demo\\cases\\TC_regression_20260701.md',
           title: '回归测试 — 极简链路用例',
           meta: ['生成日期: 2026-07-01', '用途: 功能上线后核心流程快速回归'],
           kind: 'cases',
@@ -858,7 +961,7 @@ export function installMockIfNeeded() {
       const impact = impactFixture(now() - 60000);
       return {
         ok: true,
-        file: file || 'D:\\AI_Workspace\\_scratch\\2026-11-02\\openapi.json',
+        file: file || 'D:\\demo\\openapi.json',
         doc: { title: '示例 API', version: '1.4.0', baseUrl: 'https://test.merchant.local' },
         stats: {
           total: 128,
@@ -881,7 +984,7 @@ export function installMockIfNeeded() {
     lastSyncChanges: async () => impactFixture(now() - 3600000),
 
     jmxScan: async () => ({
-      root: 'D:\\AI_Workspace\\jmx（预览模式模拟）',
+      root: 'D:\\demo\\jmx（预览模式模拟）',
       totalFiles: 2,
       errors: [],
       jmeter: { path: 'D:\\apache-jmeter-5.4.3\\bin\\jmeter.bat', version: '5.4.3', found: true },
@@ -890,7 +993,7 @@ export function installMockIfNeeded() {
           file: '测试计划.jmx',
           relPath: '测试计划.jmx',
           dir: '',
-          fullPath: 'D:\\AI_Workspace\\jmx\\测试计划.jmx',
+          fullPath: 'D:\\demo\\jmx\\demo-plan.jmx',
           jmeterVersion: '5.4.3',
           testPlanName: '测试计划',
           mtime: Date.now() - 86400000 * 280,
@@ -960,7 +1063,7 @@ export function installMockIfNeeded() {
           file: 'demo测试计划.jmx',
           relPath: 'demo测试计划.jmx',
           dir: '',
-          fullPath: 'D:\\AI_Workspace\\jmx\\demo测试计划.jmx',
+          fullPath: 'D:\\demo\\jmx\\demo-plan-2.jmx',
           jmeterVersion: '5.4.3',
           testPlanName: 'demo测试计划',
           mtime: Date.now() - 86400000 * 283,
@@ -998,7 +1101,7 @@ export function installMockIfNeeded() {
     jmxPickJmeter: async () => ({ ok: false, message: '预览模式请直接编辑输入框' }),
 
     reportScan: async () => ({
-      root: 'D:\\AI_Workspace\\jmx\\压测结果（预览模式模拟）',
+      root: 'D:\\demo\\jmx\\report（预览模式模拟）',
       reports: MOCK_REPORTS,
       errors: []
     }),
@@ -1010,7 +1113,7 @@ export function installMockIfNeeded() {
     reportPickDir: async () => ({ ok: false, message: '预览模式请直接编辑输入框' }),
 
     kbScan: async () => ({
-      root: 'D:\\AI_Workspace\\知识库（预览模式模拟）',
+      root: 'D:\\demo\\kb（预览模式模拟）',
       totalDocs: 2,
       errors: [],
       docs: [
@@ -1018,7 +1121,7 @@ export function installMockIfNeeded() {
           relPath: '业务规则沉淀_模块I公告.md',
           name: '业务规则沉淀_模块I公告.md',
           dir: '',
-          fullPath: 'D:\\AI_Workspace\\知识库\\业务规则沉淀_模块I公告.md',
+          fullPath: 'D:\\demo\\kb\\business-rules_module-i.md',
           title: '业务规则沉淀_模块I公告',
           meta: { updatedAt: '2026-05-27 (新增发布者角色与审批规则)', tags: [] },
           chars: 930,
@@ -1054,7 +1157,7 @@ export function installMockIfNeeded() {
           relPath: '业务规则沉淀_模块D配置.md',
           name: '业务规则沉淀_模块D配置.md',
           dir: '',
-          fullPath: 'D:\\AI_Workspace\\知识库\\业务规则沉淀_模块D配置.md',
+          fullPath: 'D:\\demo\\kb\\business-rules_module-d.md',
           title: '业务规则沉淀_模块D配置',
           meta: { updatedAt: '2026-11-03', tags: [] },
           chars: 43824,
@@ -1085,7 +1188,7 @@ export function installMockIfNeeded() {
     updateInstall: async () => ({ ok: false, message: '预览模式不支持安装' }),
     onUpdateProgress: () => () => {},
     notesScan: async () => ({
-      root: 'D:\\AI_Workspace\\notes（预览模式模拟）',
+      root: 'D:\\demo\\notes（预览模式模拟）',
       totalNotes: 2,
       errors: [],
       notes: [
@@ -1093,7 +1196,7 @@ export function installMockIfNeeded() {
           relPath: '退款并发问题的复现步骤.md',
           name: '退款并发问题的复现步骤.md',
           dir: '',
-          fullPath: 'D:\\AI_Workspace\\notes\\退款并发问题的复现步骤.md',
+          fullPath: 'D:\\demo\\notes\\refund-concurrency-repro.md',
           title: '退款并发问题的复现步骤',
           meta: { updatedAt: '2026-10-15', tags: [] },
           chars: 320,
@@ -1111,7 +1214,7 @@ export function installMockIfNeeded() {
           relPath: '接口联调记录.md',
           name: '接口联调记录.md',
           dir: '',
-          fullPath: 'D:\\AI_Workspace\\notes\\接口联调记录.md',
+          fullPath: 'D:\\demo\\notes\\api-integration-log.md',
           title: '接口联调记录',
           meta: { updatedAt: '2026-11-10', tags: [] },
           chars: 180,
