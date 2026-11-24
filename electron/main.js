@@ -25,6 +25,7 @@ const allure = require('./allure');
 const codescan = require('./codescan');
 const depsCheck = require('./deps');
 const demo = require('./demo');
+const faker = require('../shared/faker');
 const { TOOLS, COLLECTION_MAP } = require('../shared/collections');
 
 const DEBUG = process.env.TT_DEBUG === '1';
@@ -74,6 +75,14 @@ const DEFAULT_SETTINGS = {
   closeAction: 'tray',
   // 内部标记：首次缩托盘时提示过一次（不暴露给前端）
   trayHintShown: false,
+  /**
+   * 工作区根目录（1 级）。
+   *
+   * 下面 7 个目录都是它的子目录，空值时自动推导：
+   *   {workspace}/test_cases、{workspace}/jmx、{workspace}/知识库 …
+   * 用户只需要配这一个，其他都能省。
+   */
+  workspaceDir: '',
   // 空字符串 = 首次启动时按 defaultWorkspaceDir() 算，见 loadSettings()
   casesDir: '',
   jmxDir: '',
@@ -164,6 +173,18 @@ function loadSettings() {
   const saved = store.getMeta('settings', {}) || {};
   settings = Object.assign({}, DEFAULT_SETTINGS, saved);
 
+  /**
+   * 目录推导（1 级 → 2 级）。
+   *
+   * 优先级：
+   *   1. 用户显式配的 2 级目录（settings.xxxDir 有值）
+   *   2. 工作区下的子目录（settings.workspaceDir + 子目录名）
+   *   3. 默认的「文档\测试工作台」
+   *
+   * 这样用户只配一个「工作区」，7 个子目录全自动。
+   */
+  const wsBase = String(settings.workspaceDir || '').trim();
+
   // 首次启动（或用户清空过）时，把四个目录指向「文档\测试工作台\...」
   const base = defaultWorkspaceDir();
   if (base) {
@@ -175,6 +196,25 @@ function loadSettings() {
     fill('reportDir', path.join('jmx', '压测结果'));
     fill('kbDir', '知识库');
     fill('notesDir', 'notes');
+  }
+
+  /**
+   * 工作区优先：用户配了工作区，子目录空值就用工作区推导。
+   *
+   * 注意这是「运行时推导」，不写回 settings ——
+   * 这样用户在设置里清空某个子目录，还能回退到工作区默认值。
+   */
+  if (wsBase) {
+    const derive = (key, sub) => {
+      if (!settings[key]) settings[key] = path.join(wsBase, sub);
+    };
+    derive('casesDir', 'test_cases');
+    derive('jmxDir', 'jmx');
+    derive('reportDir', path.join('jmx', '压测结果'));
+    derive('allureDir', '');
+    derive('kbDir', '知识库');
+    derive('notesDir', 'notes');
+    derive('projectDir', 'Project');
   }
 
   // 代码项目目录：默认 D:\你的工作区\Project（和「文档\测试工作台」同级）
@@ -203,6 +243,7 @@ function publicSettings() {
     clipboardClearSeconds: settings.clipboardClearSeconds,
     openCopyPassword: settings.openCopyPassword !== false,
     closeAction: settings.closeAction === 'quit' ? 'quit' : 'tray',
+    workspaceDir: settings.workspaceDir || '',
     casesDir: settings.casesDir || '',
     jmxDir: settings.jmxDir || '',
     reportDir: settings.reportDir || '',
@@ -484,7 +525,7 @@ function registerIpc() {
   ipcMain.handle('settings:get', async () => publicSettings());
 
   ipcMain.handle('settings:set', async (e, patch) => {
-    const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'closeAction', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'allureDir', 'kbDir', 'notesDir', 'projectDir', 'javaHome', 'pythonPath', 'mvnPath', 'themeColor', 'bgImage', 'bgOpacity', 'bgTextMode', 'bgOverlay', 'bgOverlayColor'];
+    const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'closeAction', 'workspaceDir', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'allureDir', 'kbDir', 'notesDir', 'projectDir', 'javaHome', 'pythonPath', 'mvnPath', 'themeColor', 'bgImage', 'bgOpacity', 'bgTextMode', 'bgOverlay', 'bgOverlayColor'];
     for (const key of allowed) {
       if (patch && patch[key] !== undefined) settings[key] = patch[key];
     }
@@ -1177,6 +1218,22 @@ function registerIpc() {
    *   filters  文件类型过滤（[{name, extensions}]）
    *   defaultPath 默认路径
    */
+  /**
+   * 通用目录选择器（给「工作区目录」这种跨模块配置用）。
+   *
+   * payload: { title, defaultPath }
+   */
+  ipcMain.handle('util:pickDir', async (e, payload = {}) => {
+    assertUnlocked();
+    const picked = await dialog.showOpenDialog(win, {
+      title: String(payload.title || '选择目录'),
+      defaultPath: String(payload.defaultPath || ''),
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+    return { ok: true, dir: picked.filePaths[0] };
+  });
+
   ipcMain.handle('util:pickFile', async (e, payload = {}) => {
     assertUnlocked();
     const picked = await dialog.showOpenDialog(win, {
@@ -1454,6 +1511,88 @@ function registerIpc() {
    * 只看「同一声明出现多次 / 版本不一致 / 占位符没定义」，
    * 不做传递依赖分析（那要联网查 Maven Central，成本远超收益）。
    */
+  /* ==================== 大批量造数（写文件） ==================== *
+   * 数量大时不塞进前端内存，Node 侧生成 + 直接写文件。
+   * ------------------------------------------------------------ */
+
+  /**
+   * 生成测试数据文件。
+   *
+   * payload:
+   *   mode    'single'（单类型）| 'multi'（多字段组合）
+   *   type    单类型时的类型 key
+   *   fields  多字段时的字段定义 [{name, type, fixed}]
+   *   count   行数
+   *   format  'csv' | 'json'
+   *   from/to 日期范围（date 类型用）
+   *   dir     输出目录（空 = 工作区根目录）
+   */
+  ipcMain.handle('data:genFile', async (e, payload = {}) => {
+    assertUnlocked();
+
+    const count = Math.max(1, Math.min(1000000, Number(payload.count) || 1));
+    const format = payload.format === 'json' ? 'json' : 'csv';
+    const mode = payload.mode === 'multi' ? 'multi' : 'single';
+
+    /**
+     * 输出目录：显式传的 > 工作区根目录。
+     * 都没有就回一个标记，让前端弹「去设置配工作区」。
+     */
+    const dir = String(payload.dir || '').trim() || String(settings.workspaceDir || '').trim();
+    if (!dir) {
+      return { ok: false, needWorkspace: true, message: '没有工作区目录，请先去设置里配' };
+    }
+
+    // 生成数据
+    let headers = [];
+    let rows = [];
+    try {
+      if (mode === 'multi') {
+        const fields = Array.isArray(payload.fields) ? payload.fields : [];
+        const valid = fields.filter((f) => f && String(f.name || '').trim());
+        if (!valid.length) return { ok: false, message: '至少填一个字段名' };
+        headers = valid.map((f) => String(f.name).trim());
+        rows = faker.genRows(valid, count, { from: payload.from, to: payload.to });
+      } else {
+        const t = faker.TYPE_MAP[String(payload.type || '')] || faker.TYPES[0];
+        headers = [t.label];
+        rows = faker.genColumn(t.value, count, { from: payload.from, to: payload.to });
+      }
+    } catch (err) {
+      return { ok: false, message: '生成失败：' + (err && err.message) };
+    }
+
+    // 序列化
+    const content = format === 'csv' ? faker.toCsv(headers, rows) : faker.toJson(headers, rows);
+
+    // 文件名
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').replace(/\..+/, '');
+    const baseName = mode === 'multi' ? 'multi-data' : String((faker.TYPE_MAP[payload.type] || faker.TYPES[0]).value);
+    const fileName = `${baseName}-${count}-${stamp}.${format}`;
+
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const full = path.join(dir, fileName);
+      fs.writeFileSync(full, content, 'utf8');
+      return { ok: true, file: full, count, bytes: Buffer.byteLength(content, 'utf8') };
+    } catch (err) {
+      return { ok: false, message: '写文件失败：' + (err && err.message) };
+    }
+  });
+
+  /** 打开工作区目录（造数导出后给个「去看看」的入口） */
+  ipcMain.handle('data:openDir', async (e, { dir } = {}) => {
+    assertUnlocked();
+    const target = String(dir || '').trim() || String(settings.workspaceDir || '').trim();
+    if (!target) return { ok: false, message: '没有目录' };
+    try {
+      await shell.openPath(target);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, message: String(err && err.message) };
+    }
+  });
+
   /* ==================== 示例数据 ==================== *
    * 首次启动写入 11 条示例（可一键清除）。
    * ------------------------------------------------ */

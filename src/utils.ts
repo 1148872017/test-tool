@@ -77,22 +77,101 @@ export function fillVars(text: string, map: Record<string, string>): string {
 export function recordToText(rec: any, conf: any, linkMap: Record<string, string> = {}): string {
   const d = rec.data || {};
   const lines: string[] = [`【${conf.name}】${rec.title}`];
+
+  /** options 里的 label */
+  const label = (f: any, x: any) => (f.options || []).find((o: any) => o.value === x)?.label || String(x);
+
+  /**
+   * 账号列表 → 人话。
+   *
+   * 存的是 JSON 字符串，直接 String() 出来是一串 [{"label":"管理员",...}]，
+   * 粘给人看很丑（用户要求「账号：123 密码：456」这种）。
+   */
+  const fmtAccounts = (raw: any): string => {
+    let list: any[] = [];
+    try {
+      list = JSON.parse(String(raw || '[]'));
+    } catch (e) {
+      return String(raw || '');
+    }
+    if (!Array.isArray(list) || !list.length) return '';
+    return list
+      .filter((a) => a && (a.account || a.label))
+      .map((a) => {
+        const head = String(a.label || '账号');
+        const acc = String(a.account || '—');
+        const pwd = a.password ? `  密码：${a.password}` : '';
+        const role = Array.isArray(a.role) && a.role.length ? `  角色：${a.role.join('/')}` : '';
+        const def = a.isDefault ? '（默认）' : '';
+        const note = a.note ? `  备注：${a.note}` : '';
+        return `  ${head}${def}：账号 ${acc}${pwd}${role}${note}`;
+      })
+      .join('\n');
+  };
+
+  /**
+   * 变量表 → 人话（同理，存的是 JSON）。
+   */
+  const fmtVars = (raw: any): string => {
+    let list: any[] = [];
+    try {
+      list = JSON.parse(String(raw || '[]'));
+    } catch (e) {
+      return String(raw || '');
+    }
+    if (!Array.isArray(list) || !list.length) return '';
+    return list
+      .filter((v) => v && v.name)
+      .map((v) => {
+        const val = v.value ? ` = ${v.value}` : '';
+        const desc = v.desc ? `   // ${v.desc}` : '';
+        return `  {{${v.name}}}${val}${desc}`;
+      })
+      .join('\n');
+  };
+
   for (const f of conf.fields) {
     if (f.key === conf.titleField) continue;
     const v = d[f.key];
     if (v === undefined || v === null || v === '') continue;
     if (Array.isArray(v) && !v.length) continue;
-    const label = (x: any) => (f.options || []).find((o: any) => o.value === x)?.label || String(x);
+
+    // 账号列表：多行展开
+    if (f.type === 'accounts') {
+      const txt = fmtAccounts(v);
+      if (txt) lines.push(`${f.label}:\n${txt}`);
+      continue;
+    }
+
+    // 变量表：多行展开
+    if (f.type === 'vars') {
+      const txt = fmtVars(v);
+      if (txt) lines.push(`${f.label}:\n${txt}`);
+      continue;
+    }
+
+    // 指标表 / 场景：存的是 JSON，尽量给个可读形式
+    if (f.type === 'metrics' || f.type === 'scene') {
+      try {
+        const obj = typeof v === 'string' ? JSON.parse(v) : v;
+        lines.push(`${f.label}: ${JSON.stringify(obj)}`);
+      } catch (e) {
+        lines.push(`${f.label}: ${String(v)}`);
+      }
+      continue;
+    }
+
     const text =
       f.type === 'link'
         ? linkMap[String(v)] || String(v)
         : Array.isArray(v)
-        ? v.map(label).join(' / ')
+        ? v.map((x: any) => label(f, x)).join(' / ')
         : f.type === 'select'
-        ? label(v)
+        ? label(f, v)
         : String(v);
     lines.push(`${f.label}: ${text}`);
   }
+
   if (rec.tags && rec.tags.length) lines.push(`标签: ${rec.tags.join(', ')}`);
   return lines.join('\n');
 }

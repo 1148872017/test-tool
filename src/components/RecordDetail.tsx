@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Drawer, Button, Tag, Space, Popconfirm } from 'antd';
+import { Drawer, Button, Tag, Space, Popconfirm, Select } from 'antd';
 import {
   CopyOutlined,
   EditOutlined,
@@ -42,6 +42,8 @@ type Props = {
 
 export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, onDeleted, onLogRun }: Props) {
   const [showSecret, setShowSecret] = useState<Record<string, boolean>>({});
+  /** 复制整条的格式：详情（人话）/ JSON / cURL（只有接口记录有） */
+  const [copyFormat, setCopyFormat] = useState<'text' | 'json' | 'curl'>('text');
   const [varOpen, setVarOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [linkRows, setLinkRows] = useState<any[]>([]);
@@ -52,6 +54,27 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
   const [opts, setOpts] = useState<OptionsMap>(getOptionsSync());
 
   const isApis = conf.key === 'apis';
+
+  /**
+   * 按当前格式复制整条。
+   *
+   * 三种格式的用途不同（用户反馈原来只有一种，粘出来是 JSON，不好读）：
+   *   text → 给人看的（账号按「账号：xxx 密码：yyy」展开）
+   *   json → 给程序/接口调试用（完整原始数据）
+   *   curl → 只有接口记录有，直接粘终端能跑
+   */
+  const copyAsFormat = async () => {
+    const d = record.data || {};
+    if (copyFormat === 'json') {
+      await copy(JSON.stringify(d, null, 2), true, 'JSON 已复制');
+      return;
+    }
+    if (copyFormat === 'curl') {
+      await copy(buildCurl(record), false, 'cURL 已复制');
+      return;
+    }
+    await copy(recordToText(record, conf, links), true, '整条已复制');
+  };
   const recordId = record ? record.id : '';
 
   useEffect(() => {
@@ -335,19 +358,29 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
             打开地址
           </Button>
         ) : null}
-        {conf.key === 'apis' ? (
-          <Button size="small" icon={<CopyOutlined />} onClick={() => copy(buildCurl(record), false, 'cURL 已复制')}>
-            复制 cURL
-          </Button>
-        ) : null}
+        {/* 原来这里有独立的「复制 cURL」按钮，已经并进下面的格式下拉了 */}
         {conf.key === 'sqls' ? (
           <Button size="small" icon={<CopyOutlined />} onClick={() => setVarOpen(true)}>
             填充变量并复制
           </Button>
         ) : null}
-        <Button size="small" icon={<CopyOutlined />} onClick={() => copy(recordToText(record, conf, links), true, '整条已复制')}>
-          复制整条
-        </Button>
+        {/* 复制整条：先选格式再复制（用户要求加下拉） */}
+        <Space.Compact size="small">
+          <Select
+            size="small"
+            value={copyFormat}
+            onChange={(v) => setCopyFormat(v as any)}
+            style={{ width: 120 }}
+            options={[
+              { value: 'text', label: '整条详情' },
+              { value: 'json', label: 'JSON' },
+              ...(isApis ? [{ value: 'curl', label: 'cURL' }] : [])
+            ]}
+          />
+          <Button icon={<CopyOutlined />} onClick={copyAsFormat}>
+            复制
+          </Button>
+        </Space.Compact>
       </div>
 
       {conf.fields

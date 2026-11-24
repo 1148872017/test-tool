@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('api', {
   projectsPickDir: () => invoke('projects:pickDir'),
   runnerOpenBrowserDir: () => invoke('runner:openBrowserDir'),
   pickFile: (payload) => invoke('util:pickFile', payload),
+  pickDir: (payload) => invoke('util:pickDir', payload),
 
   // ---- OpenAPI 文件直接解析 ----
   openapiPickFile: () => invoke('openapi:pickFile'),
@@ -81,6 +82,8 @@ contextBridge.exposeInMainWorld('api', {
   codescanDeps: (root) => invoke('codescan:deps', { root }),
 
   // ---- 示例数据 ----
+  dataGenFile: (payload) => invoke('data:genFile', payload),
+  dataOpenDir: (dir) => invoke('data:openDir', { dir }),
   demoCount: () => invoke('demo:count'),
   demoClear: () => invoke('demo:clear'),
   demoPaths: () => invoke('demo:paths'),

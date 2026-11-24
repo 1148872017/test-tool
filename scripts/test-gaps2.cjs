@@ -11,13 +11,15 @@ const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: con
  * ============================================================ */
 {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'DataTool.tsx'), 'utf8');
-  check('genDate 接受 from/to', /function genDate\(from, to\)/.test(src), 'no params');
+  // genDate 已抽到 shared/faker.js（前后端共用）
+  const fakerSrc = fs.readFileSync(path.join(__dirname, '..', 'shared', 'faker.js'), 'utf8');
+  check('genDate 接受 from/to', /function genDate\(from, to\)/.test(fakerSrc), 'no params');
   check('有 dateFrom 状态', /dateFrom/.test(src), 'no state');
   check('有 dateTo 状态', /dateTo/.test(src), 'no state');
   check('日期范围 UI 存在', src.includes('dateFrom') && src.includes('dateTo') && src.includes('type="date"'), 'no ui');
   check('单类型用自定义范围', /def\.value === 'date' \? genDate\(dateFrom, dateTo\)/.test(src), 'not used');
   check('多字段也用自定义范围', /t\.value === 'date' \? \(\) => genDate\(dateFrom, dateTo\)/.test(src), 'not used');
-  check('范围非法时兜底', /endMs <= startMs/.test(src), 'no fallback');
+  check('范围非法时兜底', /endMs <= startMs/.test(fakerSrc), 'no fallback');
 }
 
 /* ============================================================

@@ -204,6 +204,31 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   check('closeAction 可切 quit', stQuit.closeAction === 'quit', stQuit.closeAction);
   const stBad = await call('settings:set', { closeAction: 'nonsense' });
   check('closeAction 非法值回落 tray', stBad.closeAction === 'tray', stBad.closeAction);
+
+  /* ---------- 目录类设置：存进去要能读回来（踩坑 #100）----------
+   * 用户报「填了 allure 目录，切页面再回来就空了」，
+   * 先确认后端存取链路是通的（前端保存时机另测）。
+   */
+  {
+    const dirKeys = [
+      'casesDir', 'jmxDir', 'reportDir', 'allureDir',
+      'kbDir', 'notesDir', 'projectDir', 'workspaceDir'
+    ];
+    const patch = {};
+    for (const k of dirKeys) patch[k] = 'D:/tt-test/' + k;
+    const saved = await call('settings:set', patch);
+    const got = await call('settings:get');
+
+    const missingInSave = dirKeys.filter((k) => saved[k] !== patch[k]);
+    check('settings:set 返回所有目录字段', missingInSave.length === 0, missingInSave);
+
+    const missingInGet = dirKeys.filter((k) => got[k] !== patch[k]);
+    check('settings:get 能读回所有目录字段', missingInGet.length === 0, missingInGet);
+
+    // publicSettings 有没有漏（这是白名单最容易漏的地方）
+    const inPublic = dirKeys.filter((k) => !(k in got));
+    check('publicSettings 暴露所有目录字段', inPublic.length === 0, inPublic);
+  }
   await call('settings:set', { closeAction: 'tray' });
 
   const info = await call('app:info');

@@ -203,7 +203,11 @@ export default function EnvCard({ saveSettings, settings }: Props) {
             }
           />
 
-          {/* JMeter */}
+          {/*
+            JMeter：检测 + 手动指定都在这一个地方。
+            原来这里只是一行状态、「设置」里还有一张独立的 JMeter 卡片，
+            同一件事分散在两处，用户得来回找（踩坑 #101）。
+          */}
           <Row
             label="JMeter"
             ok={!!settings.jmeterPath}
@@ -211,8 +215,34 @@ export default function EnvCard({ saveSettings, settings }: Props) {
               settings.jmeterPath ? (
                 <span className="mono">{settings.jmeterPath}</span>
               ) : (
-                <span className="muted">未配置（在「压测」卡片里配）</span>
+                <span className="muted">
+                  未配置。点右边「选择…」指定 bin\jmeter.bat（生成 jmx 和跑 Groovy 脚本都要它）
+                </span>
               )
+            }
+            extra={
+              <Space size={4}>
+                <Button
+                  size="small"
+                  icon={<FolderOpenOutlined />}
+                  onClick={async () => {
+                    try {
+                      const picked = await api.pickFile({
+                        title: '选择 jmeter.bat',
+                        filters: [{ name: 'JMeter 启动脚本', extensions: ['bat', 'cmd', 'sh', 'exe', ''] }]
+                      });
+                      if (picked && picked.ok && picked.path) {
+                        saveSettings({ jmeterPath: picked.path });
+                        load();
+                      }
+                    } catch (e: any) {
+                      toast('选择失败：' + (e && e.message ? e.message : e), 'error');
+                    }
+                  }}
+                >
+                  选择…
+                </Button>
+              </Space>
             }
           />
 

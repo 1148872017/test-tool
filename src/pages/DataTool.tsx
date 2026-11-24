@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { InputNumber, Input, Button, Select, Space, Tag, Tooltip, Segmented } from 'antd';
+import { InputNumber, Input, Button, Select, Space, Tag, Tooltip, Segmented, Modal, Alert } from 'antd';
 import {
   CopyOutlined,
   ThunderboltOutlined,
@@ -10,121 +10,9 @@ import {
 import api from '../api';
 import { toast } from '../msg';
 
-const SURNAMES = '赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜'.split('');
-const GIVEN = ['伟', '芳', '娜', '敏', '静', '丽', '强', '磊', '军', '洋', '勇', '艳', '杰', '娟', '涛', '明', '超', '霞', '平', '刚', '桂英', '建国', '文', '辉', '雪', '鹏'];
-const CITIES = ['北京', '上海', '广州', '深圳', '杭州', '成都', '武汉', '南京', '西安', '苏州'];
-const ROADS = ['中山路', '人民路', '解放路', '建设路', '长江路', '黄河路', '科技大道', '高新路'];
-const COMPANY_PRE = ['华', '中', '恒', '远', '天', '创', '诚', '汇', '鑫', '博'];
-const COMPANY_MID = ['联', '信', '达', '泰', '通', '科', '网', '盛'];
-const COMPANY_SUF = ['科技有限公司', '网络技术有限公司', '信息技术有限公司', '电子商务有限公司'];
+// 生成逻辑抽到 shared/faker.js，前后端共用（大数量在 Node 侧生成写文件）
+import { TYPES, TYPE_MAP, genOne, genDate, toCsv, toJson } from '../../shared/faker';
 
-const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
-const digits = (n: number) => Array.from({ length: n }, () => Math.floor(Math.random() * 10)).join('');
-
-function genName() {
-  return pick(SURNAMES) + pick(GIVEN);
-}
-
-function genPhone() {
-  return '1' + pick('3456789'.split('')) + digits(9);
-}
-
-function genEmail() {
-  const pool = ['test', 'qa', 'dev', 'auto', 'demo', 'case'];
-  return `${pick(pool)}${digits(4)}@${pick(['example.com', 'test.com', 'mail.com', 'corp.cn'])}`;
-}
-
-function genIdCard() {
-  const area = pick(['110101', '310101', '440305', '330106', '510107', '420106']);
-  const year = 1970 + Math.floor(Math.random() * 35);
-  const month = String(1 + Math.floor(Math.random() * 12)).padStart(2, '0');
-  const day = String(1 + Math.floor(Math.random() * 28)).padStart(2, '0');
-  const body = area + year + month + day + digits(3);
-  const weights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
-  const sum = body.split('').reduce((acc, ch, i) => acc + Number(ch) * weights[i], 0);
-  const check = '10X98765432'[sum % 11];
-  return body + check;
-}
-
-function luhnCheckDigit(partial: string) {
-  let sum = 0;
-  let double = true;
-  for (let i = partial.length - 1; i >= 0; i--) {
-    let d = Number(partial[i]);
-    if (double) {
-      d *= 2;
-      if (d > 9) d -= 9;
-    }
-    sum += d;
-    double = !double;
-  }
-  return String((10 - (sum % 10)) % 10);
-}
-
-function genBankCard() {
-  const partial = '62' + digits(13);
-  return partial + luhnCheckDigit(partial);
-}
-
-function genAddress() {
-  return `${pick(CITIES)}市${pick(['朝阳区', '海淀区', '浦东新区', '天河区', '西湖区'])}${pick(ROADS)}${1 + Math.floor(Math.random() * 200)}号`;
-}
-
-function genCompany() {
-  return pick(COMPANY_PRE) + pick(COMPANY_MID) + pick(COMPANY_PRE) + pick(COMPANY_SUF);
-}
-
-function genUuid() {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
-/**
- * 日期生成。
- *
- * 规划要求「指定范围的时间戳」，所以支持传起止日期。
- * 不传就退回默认范围（2020-01-01 ~ 今天）。
- *
- * @param {string} from 起始日期 YYYY-MM-DD（含）
- * @param {string} to   结束日期 YYYY-MM-DD（含）
- */
-function genDate(from, to) {
-  const startMs = from ? new Date(from + 'T00:00:00').getTime() : new Date(2020, 0, 1).getTime();
-  const endMs = to ? new Date(to + 'T23:59:59').getTime() : Date.now();
-  // 范围非法（或者反了）时退回默认，避免生成 Invalid Date
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
-    const s0 = new Date(2020, 0, 1).getTime();
-    const e0 = Date.now();
-    return new Date(s0 + Math.random() * (e0 - s0)).toISOString().slice(0, 10);
-  }
-  return new Date(startMs + Math.random() * (endMs - startMs)).toISOString().slice(0, 10);
-}
-
-function genAmount() {
-  return (Math.random() * 9999 + 0.01).toFixed(2);
-}
-
-function genOrderNo() {
-  return 'SO' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + digits(6);
-}
-
-const TYPES = [
-  { value: 'name', label: '中文姓名', fn: genName },
-  { value: 'phone', label: '手机号', fn: genPhone },
-  { value: 'email', label: '邮箱', fn: genEmail },
-  { value: 'idcard', label: '身份证号', fn: genIdCard },
-  { value: 'bank', label: '银行卡号', fn: genBankCard },
-  { value: 'address', label: '地址', fn: genAddress },
-  { value: 'company', label: '公司名', fn: genCompany },
-  { value: 'uuid', label: 'UUID', fn: genUuid },
-  { value: 'date', label: '日期', fn: genDate },
-  { value: 'amount', label: '金额', fn: genAmount },
-  { value: 'order', label: '订单号', fn: genOrderNo }
-];
 
 /** 多字段组合里的一个字段 */
 type Field = {
@@ -142,6 +30,19 @@ const DEFAULT_FIELDS: Field[] = [
   { name: 'idCard', type: 'idcard', fixed: '' }
 ];
 
+/**
+ * 「大数量」分界线。
+ *
+ * 为什么不展示：
+ *   10 万行塞进 React state 会卡死（每行一个 DOM 节点）。
+ *   2000 行大约 200KB，渲染还能接受；再多就走「直接导出文件」。
+ *
+ * 这个数字怎么定的：
+ *   按「一屏能看多少行」倒推——正常屏幕 20 行，2000 行是 100 屏，
+ *   已经远超「肉眼检查」的需求，再多就该给别人/给程序用了。
+ */
+const LARGE_THRESHOLD = 2000;
+
 export default function DataTool() {
   // 单类型模式
   const [type, setType] = useState('phone');
@@ -153,6 +54,9 @@ export default function DataTool() {
   const [multiRows, setMultiRows] = useState<string[][]>([]);
 
   const [count, setCount] = useState(5);
+  /** 最近一次「大数量导出」的结果 */
+  const [lastExport, setLastExport] = useState<{ file: string; count: number; bytes: number } | null>(null);
+  const [busyFile, setBusyFile] = useState(false);
   /** 日期范围（只在「日期」类型时用） */
   const [dateFrom, setDateFrom] = useState('2020-01-01');
   const [dateTo, setDateTo] = useState('2026-12-31');
@@ -160,8 +64,68 @@ export default function DataTool() {
   /** 上限 10 万（CSV 导出用，太多会卡） */
   const normalizeCount = () => Math.max(1, Math.min(100000, Number(count) || 1));
 
-  const generate = () => {
+  /**
+   * 大数量：不塞进页面，直接生成文件到工作区。
+   *
+   * 没配工作区就拦下来，引导去设置（不静默失败）。
+   */
+  const generateToFile = async (n: number) => {
+    const payload: any = {
+      mode,
+      type,
+      fields: fields.filter((f) => f.name.trim()),
+      count: n,
+      format: 'csv',
+      from: dateFrom,
+      to: dateTo
+    };
+
+    setBusyFile(true);
+    try {
+      const res = await api.dataGenFile(payload);
+      if (res && res.needWorkspace) {
+        Modal.warning({
+          title: '还没配工作区目录',
+          content: (
+            <div style={{ lineHeight: 1.8 }}>
+              <div>
+                生成 <b>{n.toLocaleString()}</b> 条数据不会显示在页面上，而是直接写成文件。
+              </div>
+              <div>文件要放在「工作区」目录下，但你还没配。</div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                去 <b>设置 → 目录配置 → 工作区目录</b> 配一个就行（配了之后下面 7 个子目录也会自动推导）。
+              </div>
+            </div>
+          ),
+          okText: '知道了'
+        });
+        return;
+      }
+      if (!res || !res.ok) {
+        toast((res && res.message) || '生成失败', 'error');
+        return;
+      }
+      setLastExport({ file: res.file, count: res.count, bytes: res.bytes });
+      setRows([]);
+      setMultiRows([]);
+      toast(`已生成 ${res.count.toLocaleString()} 条 → ${res.file}`);
+    } catch (e: any) {
+      toast('生成失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      setBusyFile(false);
+    }
+  };
+
+  const generate = async () => {
     const n = normalizeCount();
+
+    // 大数量：走文件导出，不渲染
+    if (n > LARGE_THRESHOLD) {
+      await generateToFile(n);
+      return;
+    }
+
+    setLastExport(null);
 
     if (mode === 'single') {
       const def = TYPES.find((t) => t.value === type) || TYPES[0];
@@ -346,10 +310,35 @@ export default function DataTool() {
           ) : null}
           <Space size={6}>
             <span className="muted">数量</span>
-            <InputNumber min={1} max={100000} value={count} onChange={(v) => setCount(Number(v) || 1)} style={{ width: 100 }} />
+            <InputNumber
+              min={1}
+              max={1000000}
+              value={count}
+              onChange={(v) => setCount(Number(v) || 1)}
+              style={{ width: 110 }}
+            />
+            {count > LARGE_THRESHOLD ? (
+              <Tooltip
+                title={
+                  <div style={{ lineHeight: 1.7 }}>
+                    超过 {LARGE_THRESHOLD.toLocaleString()} 条时不显示在页面上（会卡），
+                    直接写成 CSV 文件放到「工作区」目录。
+                  </div>
+                }
+              >
+                <Tag color="orange" style={{ fontSize: 11 }}>
+                  走文件
+                </Tag>
+              </Tooltip>
+            ) : null}
           </Space>
-          <Button type="primary" icon={<ThunderboltOutlined />} onClick={generate}>
-            生成
+          <Button
+            type="primary"
+            icon={<ThunderboltOutlined />}
+            onClick={generate}
+            loading={busyFile}
+          >
+            {count > LARGE_THRESHOLD ? `生成并导出（${count.toLocaleString()} 条）` : '生成'}
           </Button>
           <Button icon={<CopyOutlined />} onClick={copyAll} disabled={!hasData}>
             {mode === 'multi' ? '复制（TSV）' : '复制全部'}
@@ -419,6 +408,51 @@ export default function DataTool() {
           </>
         ) : null}
       </div>
+
+      {/* 大数量导出的结果 */}
+      {lastExport ? (
+        <Alert
+          type="success"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={`已生成 ${lastExport.count.toLocaleString()} 条，存到：`}
+          description={
+            <div style={{ fontSize: 12, lineHeight: 1.7 }}>
+              <div className="mono" style={{ wordBreak: 'break-all' }}>
+                {lastExport.file}
+              </div>
+              <div className="muted">
+                大小 {(lastExport.bytes / 1024).toFixed(1)} KB · 用 Excel 或 CSV Data Set 直接打开
+              </div>
+              <Space size={8} style={{ marginTop: 6 }}>
+                <Button
+                  size="small"
+                  onClick={async () => {
+                    try {
+                      await api.dataOpenDir('');
+                    } catch (e) {
+                      /* ignore */
+                    }
+                  }}
+                >
+                  打开工作区
+                </Button>
+                <Button
+                  size="small"
+                  onClick={async () => {
+                    await api.copy(lastExport.file, false);
+                    toast('路径已复制');
+                  }}
+                >
+                  复制路径
+                </Button>
+              </Space>
+            </div>
+          }
+          closable
+          onClose={() => setLastExport(null)}
+        />
+      ) : null}
 
       <div className="panel">
         <div className="panel-head">

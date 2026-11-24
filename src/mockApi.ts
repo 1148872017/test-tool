@@ -408,6 +408,7 @@ export function installMockIfNeeded() {
         clipboardClearSeconds: settings.clipboardClearSeconds,
         openCopyPassword: settings.openCopyPassword, closeAction: settings.closeAction,
         hasPin: settings.hasPin,
+        workspaceDir: settings.workspaceDir,
         casesDir: settings.casesDir,
         jmxDir: settings.jmxDir,
         jmeterPath: settings.jmeterPath,
@@ -451,10 +452,14 @@ export function installMockIfNeeded() {
       settings.pin = '';
       return { ok: true };
     },
-    settings: async () => ({ autoLockMinutes: settings.autoLockMinutes, clipboardClearSeconds: settings.clipboardClearSeconds, openCopyPassword: settings.openCopyPassword, closeAction: settings.closeAction, hasPin: settings.hasPin }),
+    /**
+     * 返回完整 settings（原来是白名单，加新字段就会漏 —— 踩坑 #100）。
+     * 真机的 settings:get 返回的就是全部字段，预览也该一致。
+     */
+    settings: async () => ({ ...settings }),
     saveSettings: async (patch: any) => {
       settings = { ...settings, ...patch };
-      return { autoLockMinutes: settings.autoLockMinutes, clipboardClearSeconds: settings.clipboardClearSeconds, openCopyPassword: settings.openCopyPassword, closeAction: settings.closeAction, hasPin: settings.hasPin };
+      return { ...settings };
     },
     records: async (collection: string) => clone(findCollection(collection)),
     record: async (id: string) => {
@@ -553,6 +558,7 @@ export function installMockIfNeeded() {
     projectsPickDir: async () => ({ ok: false, canceled: true }),
     runnerOpenBrowserDir: async () => ({ ok: true, dir: 'C:/mock/ms-playwright' }),
     pickFile: async () => ({ ok: false, canceled: true }),
+    pickDir: async () => ({ ok: false, canceled: true }),
     onRunnerOutput: () => () => {},
     onRunnerExit: () => () => {},
 
@@ -676,6 +682,12 @@ export function installMockIfNeeded() {
         { rule: 'absolute-xpath', label: '绝对 XPath', severity: 'low', hint: '绝对 XPath 极易失效', file: 'D:/mock/Project/example/LoginPage.java', line: 12, snippet: 'By.xpath("/html/body/div[1]/span")' }
       ]
     }),
+    dataGenFile: async (payload: any) => {
+      if (!payload || !payload.count) return { ok: false, message: '参数错' };
+      return { ok: true, file: 'D:/demo/multi-data-' + payload.count + '-2026-11-24.csv', count: payload.count, bytes: payload.count * 20 };
+    },
+    dataOpenDir: async () => ({ ok: true }),
+
     demoCount: async () => ({ ok: true, count: 11 }),
     demoClear: async () => ({ ok: true, removed: 11, errors: [] }),
     demoPaths: async () => ({

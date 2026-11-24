@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Button, Select, Input, Modal, Tag, Popconfirm, Space, Alert, Switch, Segmented, Progress, Tooltip } from 'antd';
 import {
   LockOutlined,
@@ -65,12 +65,14 @@ export default function SettingsPage({ boot, onChanged }: Props) {
   const [oldPin, setOldPin] = useState('');
   const [newPin, setNewPin] = useState('');
   const [pinBusy, setPinBusy] = useState(false);
+  const [workspaceDir, setWorkspaceDir] = useState('');
   const [casesDir, setCasesDir] = useState('');
   const [jmxDir, setJmxDir] = useState('');
   const [jmeterPath, setJmeterPath] = useState('');
   const [jmeterVersion, setJmeterVersion] = useState('');
   const [reportDir, setReportDir] = useState('');
   const [allureDir, setAllureDir] = useState('');
+  const [projectDir, setProjectDir] = useState('');
   /** 示例数据：条数 + 清除中 */
   const [demoCount, setDemoCount] = useState(0);
   const [demoBusy, setDemoBusy] = useState(false);
@@ -99,14 +101,36 @@ export default function SettingsPage({ boot, onChanged }: Props) {
 
   const settings = boot.settings || {};
 
+  /**
+   * 目录类设置的初始化。
+   *
+   * 踩坑 #100：原来这里漏了 workspaceDir / allureDir / projectDir ——
+   * 它们从来没被赋过值，所以「填完切换页面再回来就变空」
+   * （组件重挂载时 state 回到初始的空串）。
+   *
+   * 以后加新目录字段，只要往这里补一行 + 依赖数组补一项。
+   */
   useEffect(() => {
+    setWorkspaceDir(settings.workspaceDir || '');
     setCasesDir(settings.casesDir || '');
     setJmxDir(settings.jmxDir || '');
     setJmeterPath(settings.jmeterPath || '');
     setReportDir(settings.reportDir || '');
+    setAllureDir(settings.allureDir || '');
     setKbDir(settings.kbDir || '');
     setNotesDir(settings.notesDir || '');
-  }, [settings.casesDir, settings.jmxDir, settings.jmeterPath, settings.reportDir, settings.allureDir, settings.kbDir, settings.notesDir]);
+    setProjectDir(settings.projectDir || '');
+  }, [
+    settings.workspaceDir,
+    settings.casesDir,
+    settings.jmxDir,
+    settings.jmeterPath,
+    settings.reportDir,
+    settings.allureDir,
+    settings.kbDir,
+    settings.notesDir,
+    settings.projectDir
+  ]);
 
   /** 检查更新 */
   const doCheckUpdate = async (force?: boolean) => {
@@ -275,6 +299,50 @@ export default function SettingsPage({ boot, onChanged }: Props) {
     }
   };
 
+  /**
+   * 目录输入框的「边输边存」。
+   *
+   * 为什么不用 onBlur（踩坑 #100）：
+   *   用户填完目录直接点侧栏切页面时，blur 不一定触发，
+   *   或者触发了但保存还没完成，回来就变空了。
+   *   改成输入后 600ms 自动静默保存，怎么切都不会丢。
+   */
+  const dirSaveTimer = useRef<any>(null);
+  const saveDirDebounced = (key: string, value: string) => {
+    if (dirSaveTimer.current) clearTimeout(dirSaveTimer.current);
+    dirSaveTimer.current = setTimeout(() => {
+      saveSettings({ [key]: value }, true);
+    }, 600);
+  };
+
+  /** 选工作区目录（通用选择器） */
+  const doPickWorkspaceDir = async () => {
+    try {
+      const res = await api.pickDir({ title: '选择工作区目录' });
+      if (res && res.ok) {
+        setWorkspaceDir(res.dir || '');
+        saveSettings({ workspaceDir: res.dir || '' });
+        toast('工作区已设置，子目录会自动推导');
+      }
+    } catch (e: any) {
+      toast('选择失败：' + (e && e.message ? e.message : e), 'error');
+    }
+  };
+
+  /** 选项目代码目录 */
+  const doPickProjectDir = async () => {
+    try {
+      const res = await api.pickDir({ title: '选择项目代码目录' });
+      if (res && res.ok) {
+        setProjectDir(res.dir || '');
+        saveSettings({ projectDir: res.dir || '' });
+        toast('项目目录已更新');
+      }
+    } catch (e: any) {
+      toast('选择失败：' + (e && e.message ? e.message : e), 'error');
+    }
+  };
+
   const doPickAllureDir = async () => {
     try {
       const res = await api.allurePickDir();
@@ -361,10 +429,17 @@ export default function SettingsPage({ boot, onChanged }: Props) {
     refreshInfo();
   }, []);
 
-  const saveSettings = async (patch: any) => {
+  /**
+   * 保存设置。
+   *
+   * @param patch   要改的字段
+   * @param silent  静默（不弹「已保存」）——给 debounce 自动保存用。
+   *                不加这个的话，输入框每敲一下都会刷一条 toast。
+   */
+  const saveSettings = async (patch: any, silent = false) => {
     try {
       await api.saveSettings(patch);
-      toast('已保存');
+      if (!silent) toast('已保存');
       onChanged();
     } catch (e: any) {
       toast('保存失败：' + (e && e.message ? e.message : e), 'error');
@@ -545,167 +620,154 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         <div className="tool-card-title">
           <FolderOpenOutlined /> 目录配置
         </div>
-        <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-          这 6 个目录都是<b>只读索引</b>：平台只扫描，不修改、不复制你的文件。
+        <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
+          这里全是<b>只读索引</b>：平台只扫描，不修改、不复制你的文件。
         </div>
 
-        <div
-          className="dir-row"
-        >
-          <div className="dir-row-label">{'用例目录'}</div>
-          <Input
-            style={{ flex: 1, maxWidth: 620 }}
-            value={casesDir}
-            placeholder="例如 D:\你的目录\test_cases"
-            onChange={(e) => setCasesDir(e.target.value)}
-            onBlur={() => {
-              if (casesDir !== (settings.casesDir || '')) saveSettings({ casesDir });
-            }}
-          />
-          <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickCasesDir}>
-            选择…
-          </Button>
-        </div>
-        <div className="dir-row-hint muted">{'测试用例页：索引 markdown 用例'}</div>
-
-        <div
-          className="dir-row"
-          style={{ borderTop: '1px solid #f0f2f8' }}
-        >
-          <div className="dir-row-label">{'jmx 目录'}</div>
-          <Input
-            style={{ flex: 1, maxWidth: 620 }}
-            value={jmxDir}
-            placeholder="例如 D:\你的目录\jmx"
-            onChange={(e) => setJmxDir(e.target.value)}
-            onBlur={() => {
-              if (jmxDir !== (settings.jmxDir || '')) saveSettings({ jmxDir });
-            }}
-          />
-          <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickJmxDir}>
-            选择…
-          </Button>
-        </div>
-        <div className="dir-row-hint muted">{'压测脚本页：索引 .jmx 脚本'}</div>
-
-        <div
-          className="dir-row"
-          style={{ borderTop: '1px solid #f0f2f8' }}
-        >
-          <div className="dir-row-label">{'压测报告目录'}</div>
-          <Input
-            style={{ flex: 1, maxWidth: 620 }}
-            value={reportDir}
-            placeholder="例如 D:\你的目录\jmx\压测结果"
-            onChange={(e) => setReportDir(e.target.value)}
-            onBlur={() => {
-              if (reportDir !== (settings.reportDir || '')) saveSettings({ reportDir });
-            }}
-          />
-          <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickReportDir}>
-            选择…
-          </Button>
-        </div>
-        <div className="dir-row-hint muted">{'「测试执行 → 导入压测报告」默认扫这里；每个子目录算一次跑批（含 result.jtl 或 html-report）'}</div>
-
-        <div
-          className="dir-row"
-          style={{ borderTop: '1px solid #f0f2f8' }}
-        >
-          <div className="dir-row-label">{'Allure 报告目录'}</div>
-          <Input
-            style={{ flex: 1, maxWidth: 620 }}
-            value={allureDir}
-            placeholder="例如 D:\你的目录\Project（会自动找里面的 allure-results）"
-            onChange={(e) => setAllureDir(e.target.value)}
-            onBlur={() => {
-              if (allureDir !== (settings.allureDir || '')) saveSettings({ allureDir });
-            }}
-          />
-          <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickAllureDir}>
-            选择…
-          </Button>
-        </div>
-        <div className="dir-row-hint muted">{'「报告分析」打开时默认扫这里（递归找 allure-results）；仍然可以手动「选目录」'}</div>
-
-        <div
-          className="dir-row"
-          style={{ borderTop: '1px solid #f0f2f8' }}
-        >
-          <div className="dir-row-label">{'知识库目录'}</div>
-          <Input
-            style={{ flex: 1, maxWidth: 620 }}
-            value={kbDir}
-            placeholder="例如 D:\你的目录\知识库"
-            onChange={(e) => setKbDir(e.target.value)}
-            onBlur={() => {
-              if (kbDir !== (settings.kbDir || '')) saveSettings({ kbDir });
-            }}
-          />
-          <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickKbDir}>
-            选择…
-          </Button>
-        </div>
-        <div className="dir-row-hint muted">{'知识库页：索引 markdown（业务规则沉淀等），自动跳过 _archive / _review 归档目录'}</div>
-
-        <div
-          className="dir-row"
-          style={{ borderTop: '1px solid #f0f2f8' }}
-        >
-          <div className="dir-row-label">{'笔记目录'}</div>
-          <Input
-            style={{ flex: 1, maxWidth: 620 }}
-            value={notesDir}
-            placeholder="例如 D:\你的目录\notes"
-            onChange={(e) => setNotesDir(e.target.value)}
-            onBlur={() => {
-              if (notesDir !== (settings.notesDir || '')) saveSettings({ notesDir });
-            }}
-          />
-          <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickNotesDir}>
-            选择…
-          </Button>
-        </div>
-        <div className="dir-row-hint muted">{'测试笔记页：索引 markdown；用 Typora 改，平台只读。「导入 md」会把外部文件移动到这里'}</div>
-      </div>
-
-      <div id="sec-env">
-        <EnvCard saveSettings={saveSettings} settings={settings} />
-
-        {/* JMeter 单独一行：它不在 EnvCard 的通用探测里（要选 jmeter.bat） */}
-        <div className="tool-card" style={{ marginBottom: 14 }}>
-          <div className="tool-card-title">
-            <DashboardOutlined /> JMeter
-          </div>
+        {/* ===== 1 级：工作区 ===== */}
+        <div className="dir-level-1">
+          <div className="dir-level-badge">1 级</div>
           <div className="dir-row" style={{ borderTop: 'none' }}>
-            <div className="dir-row-label">jmeter.bat</div>
+            <div className="dir-row-label">工作区目录</div>
             <Input
               style={{ flex: 1, maxWidth: 620 }}
-              value={jmeterPath}
-              placeholder="留空自动探测（支持 JMETER_HOME 环境变量）"
-              onChange={(e) => setJmeterPath(e.target.value)}
-              onBlur={() => {
-                if (jmeterPath !== (settings.jmeterPath || '')) saveSettings({ jmeterPath });
+              value={workspaceDir}
+              placeholder="例如 D:\\你的工作区（配这一个，下面 7 个自动推导）"
+              onChange={(e) => {
+                setWorkspaceDir(e.target.value);
+                saveDirDebounced('workspaceDir', e.target.value);
               }}
             />
-            <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickJmeter}>
+            <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickWorkspaceDir}>
               选择…
             </Button>
           </div>
           <div className="dir-row-hint muted">
-            {jmeterPath ? (
-              <span style={{ color: '#3fbf7f' }}>
-                <CheckCircleOutlined /> 已配置
-                {jmeterVersion ? ` · JMeter ${jmeterVersion}` : ''}
-                {' '}（生成的 .jmx 会用这个版本号，打开时不提示版本不一致）
-              </span>
-            ) : (
-              <span style={{ color: '#f5a623' }}>
-                <WarningOutlined /> 未找到 JMeter —— 点「选择…」指定 bin\jmeter.bat，否则「启动 JMeter」按钮不可用
-              </span>
-            )}
+            配了工作区后，下面的子目录<b>留空就自动用</b>「工作区/子目录名」——通常你只需要配这一个
           </div>
         </div>
+
+        {/* ===== 2 级：子目录 ===== */}
+        <div className="dir-level-2">
+          <div className="dir-level-badge">2 级</div>
+          <div className="dir-level-title muted">子目录（留空 = 用工作区下的默认名）</div>
+          <div className="dir-row dir-sub-row">
+            <div className="dir-row-label">测试用例</div>
+            <Input
+              style={{ flex: 1, maxWidth: 620 }}
+              value={casesDir}
+              placeholder="留空 → 工作区/test_cases"
+              onChange={(e) => {
+                setCasesDir(e.target.value);
+                saveDirDebounced('casesDir', e.target.value);
+              }}
+            />
+            <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickCasesDir}>
+              选择…
+            </Button>
+          </div>
+          <div className="dir-row-hint muted">测试用例页：索引 markdown 用例</div>
+          <div className="dir-row dir-sub-row">
+            <div className="dir-row-label">压测脚本</div>
+            <Input
+              style={{ flex: 1, maxWidth: 620 }}
+              value={jmxDir}
+              placeholder="留空 → 工作区/jmx"
+              onChange={(e) => {
+                setJmxDir(e.target.value);
+                saveDirDebounced('jmxDir', e.target.value);
+              }}
+            />
+            <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickJmxDir}>
+              选择…
+            </Button>
+          </div>
+          <div className="dir-row-hint muted">压测脚本页：索引 .jmx 脚本</div>
+          <div className="dir-row dir-sub-row">
+            <div className="dir-row-label">压测报告</div>
+            <Input
+              style={{ flex: 1, maxWidth: 620 }}
+              value={reportDir}
+              placeholder="留空 → 工作区/jmx/压测结果"
+              onChange={(e) => {
+                setReportDir(e.target.value);
+                saveDirDebounced('reportDir', e.target.value);
+              }}
+            />
+            <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickReportDir}>
+              选择…
+            </Button>
+          </div>
+          <div className="dir-row-hint muted">「测试执行 → 导入压测报告」默认扫这里</div>
+          <div className="dir-row dir-sub-row">
+            <div className="dir-row-label">Allure 报告</div>
+            <Input
+              style={{ flex: 1, maxWidth: 620 }}
+              value={allureDir}
+              placeholder="留空 → 不推导（通常指向项目里的 allure-results）"
+              onChange={(e) => {
+                setAllureDir(e.target.value);
+                saveDirDebounced('allureDir', e.target.value);
+              }}
+            />
+            <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickAllureDir}>
+              选择…
+            </Button>
+          </div>
+          <div className="dir-row-hint muted">「报告分析」打开时递归找 allure-results</div>
+          <div className="dir-row dir-sub-row">
+            <div className="dir-row-label">知识库</div>
+            <Input
+              style={{ flex: 1, maxWidth: 620 }}
+              value={kbDir}
+              placeholder="留空 → 工作区/知识库"
+              onChange={(e) => {
+                setKbDir(e.target.value);
+                saveDirDebounced('kbDir', e.target.value);
+              }}
+            />
+            <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickKbDir}>
+              选择…
+            </Button>
+          </div>
+          <div className="dir-row-hint muted">知识库页：索引 markdown，跳过 _archive / _review</div>
+          <div className="dir-row dir-sub-row">
+            <div className="dir-row-label">测试笔记</div>
+            <Input
+              style={{ flex: 1, maxWidth: 620 }}
+              value={notesDir}
+              placeholder="留空 → 工作区/notes"
+              onChange={(e) => {
+                setNotesDir(e.target.value);
+                saveDirDebounced('notesDir', e.target.value);
+              }}
+            />
+            <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickNotesDir}>
+              选择…
+            </Button>
+          </div>
+          <div className="dir-row-hint muted">测试笔记页：用 Typora 改，平台只读</div>
+          <div className="dir-row dir-sub-row">
+            <div className="dir-row-label">项目代码</div>
+            <Input
+              style={{ flex: 1, maxWidth: 620 }}
+              value={projectDir}
+              placeholder="留空 → 工作区/Project"
+              onChange={(e) => {
+                setProjectDir(e.target.value);
+                saveDirDebounced('projectDir', e.target.value);
+              }}
+            />
+            <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickProjectDir}>
+              选择…
+            </Button>
+          </div>
+          <div className="dir-row-hint muted"><b>代码体检 / 代码调试</b> 默认扫这里（可临时改单个页面的扫描目录）</div>
+        </div>
+      </div>
+
+      <div id="sec-env">
+        <EnvCard saveSettings={saveSettings} settings={settings} />
       </div>
 
       <div id="sec-skin">

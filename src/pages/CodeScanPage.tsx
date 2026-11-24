@@ -61,19 +61,31 @@ export default function CodeScanPage() {
   const doCoverage = async (kind?: 'api' | 'page') => {
     const k = kind || covKind;
     setCovKind(k);
+
+    /**
+     * **先切视图，再发请求**。
+     *
+     * 原来的顺序是「请求成功才切视图」，结果：
+     *   点接口覆盖（成功）→ 点硬编码（成功）→ 再点接口覆盖（**失败**）
+     *   → 视图停在硬编码上，用户看到的是硬编码结果，以为"结果乱串"。
+     *
+     * 正确语义：点哪个按钮就看哪个视图，成功就填数据、失败就显示错误。
+     */
+    setView('coverage');
     setBusy(true);
     try {
       const res = await api.codescanCoverage(root || undefined, k);
       if (!res.ok) {
         toast(res.message || '扫描失败', 'error');
+        setCov(null); // 清掉旧结果，别让人误以为这是本次的
         return;
       }
       setCov(res);
-      setView('coverage');
       const label = k === 'page' ? '页面' : '接口';
       toast(`${label}覆盖：${res.covered}/${res.total}（扫描 ${res.scannedFiles} 个文件）`);
     } catch (e: any) {
       toast('扫描失败：' + (e && e.message ? e.message : e), 'error');
+      setCov(null);
     } finally {
       setBusy(false);
     }
@@ -81,18 +93,20 @@ export default function CodeScanPage() {
 
   /* ---------- 硬编码 ---------- */
   const doHardcoded = async () => {
+    setView('hardcoded'); // 先切视图（理由见 doCoverage）
     setBusy(true);
     try {
       const res = await api.codescanHardcoded(root || undefined);
       if (!res.ok) {
         toast(res.message || '扫描失败', 'error');
+        setScan(null);
         return;
       }
       setScan(res);
-      setView('hardcoded');
       toast(`扫描 ${res.scannedFiles} 个文件，发现 ${res.summary.total} 个问题`);
     } catch (e: any) {
       toast('扫描失败：' + (e && e.message ? e.message : e), 'error');
+      setScan(null);
     } finally {
       setBusy(false);
     }
@@ -100,19 +114,21 @@ export default function CodeScanPage() {
 
   /* ---------- 依赖检查 ---------- */
   const doDeps = async () => {
+    setView('deps'); // 先切视图（理由见 doCoverage）
     setBusy(true);
     try {
       const res = await api.codescanDeps(root || undefined);
       if (!res.ok) {
         toast(res.message || '检查失败', 'error');
+        setDeps(null);
         return;
       }
       setDeps(res);
-      setView('deps');
       if (res.message) toast(res.message, 'info');
       else toast(`检查 ${res.poms} 个 pom + ${res.reqs} 个 requirements，发现 ${res.summary.total} 个问题`);
     } catch (e: any) {
       toast('检查失败：' + (e && e.message ? e.message : e), 'error');
+      setDeps(null);
     } finally {
       setBusy(false);
     }
@@ -158,30 +174,87 @@ export default function CodeScanPage() {
           <Button size="small" icon={<FolderOpenOutlined />} onClick={doPick}>
             选目录
           </Button>
-          <Button
-            size="small"
-            type={covKind === 'api' ? 'primary' : 'default'}
-            icon={<FileSearchOutlined />}
-            onClick={() => doCoverage('api')}
-            loading={busy}
+          {/* 四个检查项各做什么，光看按钮名不够清楚（用户要求加提示） */}
+          <Tooltip
+            title={
+              <div style={{ lineHeight: 1.7 }}>
+                <div>扫代码里的<b>接口请求路径</b>，和「接口记录」对比</div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  · 左边清单 = 接口记录里同步的接口
+                  <br />· 右边实现 = 代码里的 .get/post("...") / requests.xxx()
+                  <br />· 标红 = 文档有但代码没测到的「漏网之鱼」
+                </div>
+              </div>
+            }
           >
-            接口覆盖
-          </Button>
-          <Button
-            size="small"
-            type={covKind === 'page' ? 'primary' : 'default'}
-            icon={<AppstoreOutlined />}
-            onClick={() => doCoverage('page')}
-            loading={busy}
+            <Button
+              size="small"
+              type={covKind === 'api' ? 'primary' : 'default'}
+              icon={<FileSearchOutlined />}
+              onClick={() => doCoverage('api')}
+              loading={busy}
+            >
+              接口覆盖
+            </Button>
+          </Tooltip>
+
+          <Tooltip
+            title={
+              <div style={{ lineHeight: 1.7 }}>
+                <div>扫代码里的<b>页面跳转</b>，和「页面元素」对比</div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  · 左边清单 = 页面元素里维护的页面
+                  <br />· 右边实现 = 代码里的 page.goto/navigate("...")
+                  <br />· 标红 = 清单里有但没写自动化脚本的页面
+                </div>
+              </div>
+            }
           >
-            页面覆盖
-          </Button>
-          <Button size="small" icon={<SafetyOutlined />} onClick={doHardcoded} loading={busy}>
-            硬编码检查
-          </Button>
-          <Button size="small" icon={<ApartmentOutlined />} onClick={doDeps} loading={busy}>
-            依赖检查
-          </Button>
+            <Button
+              size="small"
+              type={covKind === 'page' ? 'primary' : 'default'}
+              icon={<AppstoreOutlined />}
+              onClick={() => doCoverage('page')}
+              loading={busy}
+            >
+              页面覆盖
+            </Button>
+          </Tooltip>
+
+          <Tooltip
+            title={
+              <div style={{ lineHeight: 1.7 }}>
+                <div>扫<b>代码里的坏味道</b>，按严重程度分级</div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  · 高危：硬编码密码 / Token
+                  <br />· 中危：硬编码 URL / Thread.sleep / 断言过弱（只校验状态码）
+                  <br />· 低危：绝对 XPath / 深层 CSS 选择器
+                </div>
+              </div>
+            }
+          >
+            <Button size="small" icon={<SafetyOutlined />} onClick={doHardcoded} loading={busy}>
+              硬编码检查
+            </Button>
+          </Tooltip>
+
+          <Tooltip
+            title={
+              <div style={{ lineHeight: 1.7 }}>
+                <div>扫 <b>pom.xml / requirements.txt</b> 的依赖冲突</div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  · 同一声明出现多次
+                  <br />· 同一依赖写了不同版本
+                  <br />· version 里的占位符没定义
+                  <br />· 不做传递依赖分析（用 mvn dependency:tree 更准）
+                </div>
+              </div>
+            }
+          >
+            <Button size="small" icon={<ApartmentOutlined />} onClick={doDeps} loading={busy}>
+              依赖检查
+            </Button>
+          </Tooltip>
         </Space>
       </div>
 

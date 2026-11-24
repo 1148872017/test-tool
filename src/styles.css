@@ -2871,3 +2871,72 @@ body.has-bg .ant-table-tbody > tr > td {
   padding-bottom: 4px;
   line-height: 1.5;
 }
+
+
+/* ============================================================
+ * 设置页：目录层级（1 级工作区 → 2 级子目录）
+ *
+ * 为什么要有层级：
+ *   7 个目录平铺时用户不知道谁管谁，也不知道「配了工作区就不用配子目录」。
+ *   视觉上分出 1 级 / 2 级 + 缩进竖线，一眼看出归属关系。
+ * ============================================================ */
+.dir-level-1 {
+  position: relative;
+  padding: 6px 10px 8px;
+  border-radius: 10px;
+  background: #f7f8fc;
+  border: 1px solid var(--line-soft);
+}
+
+.dir-level-badge {
+  display: inline-block;
+  font-size: 10.5px;
+  line-height: 16px;
+  padding: 0 7px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  margin-bottom: 2px;
+}
+
+/* 2 级：左边一条竖线，表示「挂在 1 级下面」 */
+.dir-level-2 {
+  position: relative;
+  margin-top: 12px;
+  padding-left: 18px;
+  border-left: 2px solid var(--line);
+  margin-left: 10px;
+}
+
+.dir-level-2 .dir-level-badge {
+  background: #e6e8f5;
+  color: #4a5165;
+}
+
+.dir-level-title {
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+/* 2 级行再缩进一格，和竖线对齐 */
+.dir-sub-row .dir-row-label {
+  width: 100px;
+  flex: 0 0 100px;
+}
+
+.dir-sub-row .dir-row-hint {
+  padding-left: 112px;
+}
+
+/* 竖线末端收个圆角，看起来像树 */
+.dir-level-2::after {
+  content: '';
+  position: absolute;
+  left: -2px;
+  bottom: 0;
+  width: 2px;
+  height: 12px;
+  background: linear-gradient(180deg, var(--line), transparent);
+}
