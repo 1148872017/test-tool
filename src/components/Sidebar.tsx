@@ -1,6 +1,7 @@
 import React from 'react';
-import { SettingOutlined, LockOutlined, ThunderboltFilled } from '@ant-design/icons';
+import { SettingOutlined, LockOutlined } from '@ant-design/icons';
 import Icon from '../icons';
+import { BRAND_ICON } from '../assets/brand';
 import { COLLECTIONS, TOOLS } from '../../shared/collections';
 
 type Props = {
@@ -67,8 +68,9 @@ export default function Sidebar({ route, onNavigate, counts, onLock }: Props) {
   return (
     <aside className="sidebar">
       <div className="brand">
+        {/* 品牌图标：用户提供的立绘（裁成正方形 + 内联 base64） */}
         <div className="brand-mark">
-          <ThunderboltFilled />
+          <img src={BRAND_ICON} alt="" className="brand-mark-img" />
         </div>
         <div className="brand-text">
           <b>测试工作台</b>
