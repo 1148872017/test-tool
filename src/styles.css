@@ -2641,3 +2641,20 @@ body.has-bg .ant-table-tbody > tr > td {
   font-weight: 600;
   color: #4a5165;
 }
+/* ===== 皮肤：低透明度时的文字清晰度 ===== */
+/* 有背景图时，给面板里的文字加白色阴影（由 JS 按透明度注入强度） */
+body.has-bg .panel,
+body.has-bg .tool-card,
+body.has-bg .sidebar,
+body.has-bg .nav-item,
+body.has-bg .page-title,
+body.has-bg .tool-card-title,
+body.has-bg .nav-group-label {
+  text-shadow: var(--skin-text-shadow, none);
+}
+
+/* 侧栏标题（分组名）在小字号下最容易糊，单独给更重的字重 */
+body.has-bg .nav-group-label {
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}

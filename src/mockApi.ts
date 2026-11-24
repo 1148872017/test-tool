@@ -352,15 +352,24 @@ export function installMockIfNeeded() {
     autoLockMinutes: 10,
     clipboardClearSeconds: 30,
     openCopyPassword: true,
-  closeAction: 'tray',
+    closeAction: 'tray',
     hasPin: false,
     pin: '',
     casesDir: 'D:\\demo\\cases',
+    allureDir: '',
     jmxDir: 'D:\\demo\\jmx',
     jmeterPath: 'D:\\apache-jmeter-5.4.3\\bin\\jmeter.bat',
     reportDir: 'D:\\demo\\jmx\\report',
     kbDir: 'D:\\demo\\kb',
-    notesDir: 'D:\\demo\\notes'
+    notesDir: 'D:\\demo\\notes',
+    projectDir: 'D:\\demo\\Project',
+    javaHome: 'C:/mock/jdk-17',
+    pythonPath: 'C:/mock/python.exe',
+    mvnPath: 'C:/mock/mvn.cmd',
+    themeColor: 'purple',
+    bgImage: '',
+    bgOpacity: 85,
+    bgTextMode: 'auto'
   };
   let locked = false;
 
@@ -401,8 +410,17 @@ export function installMockIfNeeded() {
         jmxDir: settings.jmxDir,
         jmeterPath: settings.jmeterPath,
         reportDir: settings.reportDir,
+        allureDir: settings.allureDir,
         kbDir: settings.kbDir,
-        notesDir: settings.notesDir
+        notesDir: settings.notesDir,
+        projectDir: settings.projectDir,
+        javaHome: settings.javaHome,
+        pythonPath: settings.pythonPath,
+        mvnPath: settings.mvnPath,
+        themeColor: settings.themeColor,
+        bgImage: settings.bgImage,
+        bgOpacity: settings.bgOpacity,
+        bgTextMode: settings.bgTextMode
       }
     }),
     lock: async () => {
@@ -537,6 +555,7 @@ export function installMockIfNeeded() {
     /* ---- JMeter 脚本生成（mock）---- */
     jmxgenPreview: async () => ({
       ok: true,
+      jmeterVersion: '5.6.3',
       filename: '压测计划.jmx',
       xml: '<?xml version="1.0" encoding="UTF-8"?>\n<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">\n  <hashTree>\n    <!-- mock 预览 -->\n  </hashTree>\n</jmeterTestPlan>\n'
     }),

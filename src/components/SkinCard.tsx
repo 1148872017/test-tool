@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Slider, Tooltip, Alert } from 'antd';
+import { Button, Slider, Tooltip, Alert, Segmented } from 'antd';
 import { BgColorsOutlined, PictureOutlined, DeleteOutlined, CheckOutlined } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
@@ -21,9 +21,35 @@ type Props = {
 export default function SkinCard({ saveSettings, settings }: Props) {
   const [bgUrl, setBgUrl] = useState('');
   const [busy, setBusy] = useState(false);
+  /** 拖动中的临时值（松手才保存，避免每帧都 toast「已保存」） */
+  const [opacityDraft, setOpacityDraft] = useState<number | null>(null);
 
   const themeColor = settings.themeColor || 'purple';
   const bgOpacity = settings.bgOpacity === undefined ? 85 : settings.bgOpacity;
+  const bgTextMode = settings.bgTextMode || 'auto';
+  /** 滑块显示的值：拖动中优先用草稿 */
+  const shownOpacity = opacityDraft === null ? bgOpacity : opacityDraft;
+
+  /**
+   * 拖动中实时预览：直接改 CSS 变量，不走保存。
+   * 松手（onChangeComplete）才真正写库。
+   */
+  const previewOpacity = (v: number) => {
+    setOpacityDraft(v);
+    const alpha = 0.62 + (Math.max(0, Math.min(100, v)) / 100) * 0.38;
+    document.documentElement.style.setProperty('--panel-alpha', String(alpha));
+    const shadow = v >= 80 ? 0 : Math.round(((80 - v) / 80) * 6) / 10;
+    document.documentElement.style.setProperty(
+      '--skin-text-shadow',
+      shadow > 0 ? `0 1px 2px rgba(255,255,255,${shadow})` : 'none'
+    );
+  };
+
+  /** 松手：保存 */
+  const commitOpacity = (v: number) => {
+    setOpacityDraft(null);
+    saveSettings({ bgOpacity: v });
+  };
 
   /* ---------- 加载背景图 ---------- */
   const loadBg = async () => {
@@ -131,19 +157,42 @@ export default function SkinCard({ saveSettings, settings }: Props) {
           <Slider
             min={0}
             max={100}
-            value={bgOpacity}
-            onChange={(v) => saveSettings({ bgOpacity: v })}
+            value={shownOpacity}
+            onChange={previewOpacity}
+            onChangeComplete={commitOpacity}
             style={{ flex: 1, maxWidth: 320 }}
             tooltip={{ formatter: (v) => `${v}%` }}
           />
           <span className="muted" style={{ fontSize: 12, minWidth: 40 }}>
-            {bgOpacity}%
+            {shownOpacity}%
           </span>
         </div>
       </div>
 
+      {/* 文字颜色 */}
+      <div className="skin-row">
+        <div className="skin-row-label">文字颜色</div>
+        <Segmented
+          size="small"
+          value={bgTextMode}
+          onChange={(v) => saveSettings({ bgTextMode: String(v) })}
+          options={[
+            { label: '自动', value: 'auto' },
+            { label: '加深', value: 'deep' },
+            { label: '默认', value: 'normal' }
+          ]}
+        />
+        <span className="muted" style={{ fontSize: 11.5 }}>
+          {bgTextMode === 'auto'
+            ? '透明度低于 70% 时自动加深，保证看得清'
+            : bgTextMode === 'deep'
+              ? '强制加深（背景图很花时用）'
+              : '保持默认颜色'}
+        </span>
+      </div>
+
       <div className="skin-hint muted">
-        透明度越低，面板越透（背景图越明显）。设为 100% 时面板完全不透明。
+        透明度越低面板越透。为了让文字始终清晰，平台会自动加深文字并加轻微白色阴影；面板最透时仍保留 62% 白底。
       </div>
 
       {!bgUrl ? (

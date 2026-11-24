@@ -70,6 +70,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
   const [jmeterPath, setJmeterPath] = useState('');
   const [jmeterVersion, setJmeterVersion] = useState('');
   const [reportDir, setReportDir] = useState('');
+  const [allureDir, setAllureDir] = useState('');
   const [kbDir, setKbDir] = useState('');
   const [notesDir, setNotesDir] = useState('');
 
@@ -102,7 +103,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
     setReportDir(settings.reportDir || '');
     setKbDir(settings.kbDir || '');
     setNotesDir(settings.notesDir || '');
-  }, [settings.casesDir, settings.jmxDir, settings.jmeterPath, settings.reportDir, settings.kbDir, settings.notesDir]);
+  }, [settings.casesDir, settings.jmxDir, settings.jmeterPath, settings.reportDir, settings.allureDir, settings.kbDir, settings.notesDir]);
 
   /** 检查更新 */
   const doCheckUpdate = async (force?: boolean) => {
@@ -237,6 +238,19 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         setKbDir(res.dir || '');
         toast('知识库目录已更新');
         onChanged();
+      }
+    } catch (e: any) {
+      toast('选择失败：' + (e && e.message ? e.message : e), 'error');
+    }
+  };
+
+  const doPickAllureDir = async () => {
+    try {
+      const res = await api.allurePickDir();
+      if (res && res.ok) {
+        setAllureDir(res.dir || '');
+        saveSettings({ allureDir: res.dir || '' });
+        toast('Allure 报告目录已更新');
       }
     } catch (e: any) {
       toast('选择失败：' + (e && e.message ? e.message : e), 'error');
@@ -590,6 +604,26 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         </div>
         <div className="muted" style={{ fontSize: 12, paddingLeft: 134 }}>
           「测试执行 → 导入压测报告」默认扫这个目录；每个子目录算一次跑批（含 result.jtl 或 html-report）
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '6px 0', borderTop: '1px solid #f0f2f8' }}>
+          <div style={{ width: 120 }} className="muted">
+            Allure 报告目录
+          </div>
+          <Input
+            style={{ flex: 1, maxWidth: 560 }}
+            value={allureDir}
+            placeholder="例如 D:\你的目录\Project（会自动找里面的 allure-results）"
+            onChange={(e) => setAllureDir(e.target.value)}
+            onBlur={() => {
+              if (allureDir !== (settings.allureDir || '')) saveSettings({ allureDir });
+            }}
+          />
+          <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickAllureDir}>
+            选择…
+          </Button>
+        </div>
+        <div className="muted" style={{ fontSize: 12, paddingLeft: 134 }}>
+          「报告分析」打开时默认扫这个目录（递归找 allure-results）；仍然可以手动「选目录」
         </div>
         <div style={{ paddingLeft: 134, fontSize: 12, marginTop: 4 }}>
           {jmeterPath ? (

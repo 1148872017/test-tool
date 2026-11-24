@@ -224,6 +224,7 @@ function sampleXml(api, depth, rtLimit) {
  *   - port        默认端口
  *   - onError     出错时（continue / startnextloop / stopthread）
  *   - rtLimit     RT 上限（毫秒，0 = 不生成持续时间断言）
+ *   - jmeterVersion  JMeter 版本（从设置里的 jmeterPath 读，默认 5.6.3）
  * @returns {{ok: boolean, xml?: string, filename?: string, message?: string}}
  */
 function generateJmx(opts = {}) {
@@ -240,6 +241,16 @@ function generateJmx(opts = {}) {
   // RT 上限（毫秒）：0 = 不生成持续时间断言
   const rtLimit = Math.max(0, Number(opts.rtLimit) || 0);
 
+  /**
+   * JMeter 版本：写进 jmeterTestPlan 的 jmeter 属性。
+   *
+   * 为什么要跟设置走：
+   *   JMeter 打开版本不一致的 jmx 会弹「This file was created with a different
+   *   version of JMeter」，用户还得手动确认一次。
+   *   从设置的 jmeterPath 读出版本写进去，就不弹了。
+   */
+  const jmeterVersion = String(opts.jmeterVersion || '').trim() || '5.6.3';
+
   // 默认域名/端口：从第一个接口取
   const first = splitUrl(apis[0].data ? apis[0].data.url : apis[0].url);
   const defaultDomain = String(opts.domain || first.domain || '127.0.0.1');
@@ -247,7 +258,7 @@ function generateJmx(opts = {}) {
 
   const L = [];
   L.push('<?xml version="1.0" encoding="UTF-8"?>');
-  L.push('<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">');
+  L.push(`<jmeterTestPlan version="1.2" properties="5.0" jmeter="${esc(jmeterVersion)}">`);
   L.push(`${pad(1)}<hashTree>`);
   L.push(`${pad(2)}<TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="${esc(planName)}" enabled="true">`);
   L.push(`${pad(3)}<stringProp name="TestPlan.comments"></stringProp>`);

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Input, InputNumber, Select, Alert, Space, Segmented, Checkbox } from 'antd';
+import { Button, Input, InputNumber, Select, Alert, Space, Segmented, Checkbox, Tag } from 'antd';
 import {
   PlayCircleOutlined,
   SaveOutlined,
@@ -39,6 +39,8 @@ export default function ScriptGenPage() {
   const [onError, setOnError] = useState('continue');
   const [jmxCode, setJmxCode] = useState('');
   const [jmxFile, setJmxFile] = useState('');
+  /** 生成时用的 JMeter 版本（从设置里的 jmeterPath 读） */
+  const [jmeterVersion, setJmeterVersion] = useState('');
 
   /* ============ MySQL SQL ============ */
   const [sqlMode, setSqlMode] = useState<'snapshot' | 'cleanup' | 'restore'>('snapshot');
@@ -91,7 +93,8 @@ export default function ScriptGenPage() {
       }
       setJmxCode(res.xml);
       setJmxFile(res.filename);
-      toast('生成成功');
+      if (res.jmeterVersion) setJmeterVersion(String(res.jmeterVersion));
+      toast(`生成成功（JMeter ${res.jmeterVersion || '5.6.3'}）`);
     } catch (e: any) {
       toast('生成失败：' + (e && e.message ? e.message : e), 'error');
     } finally {
@@ -298,6 +301,22 @@ export default function ScriptGenPage() {
               <div className="scriptgen-field">
                 <label>端口（空=从接口取）</label>
                 <Input size="small" value={port} onChange={(e) => setPort(e.target.value)} placeholder="自动" />
+              </div>
+            </div>
+
+            <div className="scriptgen-field">
+              <label>JMeter 版本</label>
+              <div className="muted" style={{ fontSize: 12 }}>
+                {jmeterVersion ? (
+                  <>
+                    <Tag color="green" style={{ marginRight: 6 }}>
+                      {jmeterVersion}
+                    </Tag>
+                    （已写入脚本，打开不会提示版本不一致）
+                  </>
+                ) : (
+                  '生成时自动从「设置 → 压测」的 JMeter 路径读取'
+                )}
               </div>
             </div>
 

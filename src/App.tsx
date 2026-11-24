@@ -60,11 +60,48 @@ function useSkin(settings: any) {
   // 背景 + 透明度
   React.useEffect(() => {
     const opacity = settings && settings.bgOpacity !== undefined ? Number(settings.bgOpacity) : 85;
-    // 面板 alpha：0% → 0.35（太透看不清），100% → 1
-    const alpha = 0.35 + (Math.max(0, Math.min(100, opacity)) / 100) * 0.65;
+    const v = Math.max(0, Math.min(100, opacity));
+
+    /**
+     * 面板 alpha：0% → 0.62，100% → 1。
+     *
+     * 为什么下限是 0.62 而不是 0.35：
+     *   0.35 太透，背景图的明暗会透到文字下面，侧栏标题之类的
+     *   小字号、细字重直接糊成一团（用户实测反馈）。
+     *   0.62 能保证白底占主导，文字仍然清晰。
+     */
+    const alpha = 0.62 + (v / 100) * 0.38;
+
+    /**
+     * 文字阴影：透明度越低，阴影越强。
+     * 目的：即使背景图很花，文字边缘也能和背景分开。
+     */
+    const shadowStrength = v >= 80 ? 0 : Math.round(((80 - v) / 80) * 6) / 10;
+
+    /**
+     * 文字加深档位：
+     *   auto（默认）→ 透明度 < 70% 时自动加深
+     *   deep        → 强制加深（背景图特别花时手动选）
+     *   normal      → 保持原色
+     */
+    const textMode = String((settings && settings.bgTextMode) || 'auto');
+    const needDeep = textMode === 'deep' || (textMode === 'auto' && v < 70);
+
     const root = document.documentElement;
     root.style.setProperty('--panel-alpha', String(alpha));
     root.style.setProperty('--panel-rgb', '255, 255, 255');
+    root.style.setProperty(
+      '--skin-text-shadow',
+      shadowStrength > 0 ? `0 1px 2px rgba(255,255,255,${shadowStrength})` : 'none'
+    );
+
+    if (needDeep) {
+      root.style.setProperty('--text', '#10141f');
+      root.style.setProperty('--muted', '#5a6173');
+    } else {
+      root.style.removeProperty('--text');
+      root.style.removeProperty('--muted');
+    }
 
     if (bgUrl) {
       document.body.classList.add('has-bg');
@@ -73,7 +110,7 @@ function useSkin(settings: any) {
       document.body.classList.remove('has-bg');
       document.body.style.backgroundImage = '';
     }
-  }, [bgUrl, settings && settings.bgOpacity]);
+  }, [bgUrl, settings && settings.bgOpacity, settings && settings.bgTextMode]);
 
   return bgUrl;
 }

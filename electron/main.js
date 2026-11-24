@@ -64,6 +64,8 @@ const DEFAULT_SETTINGS = {
   casesDir: '',
   jmxDir: '',
   reportDir: '',
+  // Allure 报告根目录（报告分析默认扫这里，仍可手动选）
+  allureDir: '',
   kbDir: '',
   notesDir: '',
   // 代码项目根目录（代码调试用）
@@ -76,6 +78,8 @@ const DEFAULT_SETTINGS = {
   themeColor: 'purple',
   bgImage: '',
   bgOpacity: 85,
+  // 文字颜色：auto（透明度低时自动加深）/ deep（强制加深）/ normal（默认）
+  bgTextMode: 'auto',
   jmeterPath: '',
   pin: null
 };
@@ -175,6 +179,7 @@ function publicSettings() {
     themeColor: settings.themeColor || 'purple',
     bgImage: settings.bgImage || '',
     bgOpacity: settings.bgOpacity === undefined ? 85 : settings.bgOpacity,
+    bgTextMode: settings.bgTextMode || 'auto',
     autoLockMinutes: settings.autoLockMinutes,
     clipboardClearSeconds: settings.clipboardClearSeconds,
     openCopyPassword: settings.openCopyPassword !== false,
@@ -182,6 +187,7 @@ function publicSettings() {
     casesDir: settings.casesDir || '',
     jmxDir: settings.jmxDir || '',
     reportDir: settings.reportDir || '',
+    allureDir: settings.allureDir || '',
     kbDir: settings.kbDir || '',
     notesDir: settings.notesDir || '',
     jmeterPath: settings.jmeterPath || '',
@@ -429,7 +435,7 @@ function registerIpc() {
   ipcMain.handle('settings:get', async () => publicSettings());
 
   ipcMain.handle('settings:set', async (e, patch) => {
-    const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'closeAction', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'kbDir', 'notesDir', 'projectDir', 'javaHome', 'pythonPath', 'mvnPath', 'themeColor', 'bgImage', 'bgOpacity'];
+    const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'closeAction', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'allureDir', 'kbDir', 'notesDir', 'projectDir', 'javaHome', 'pythonPath', 'mvnPath', 'themeColor', 'bgImage', 'bgOpacity', 'bgTextMode'];
     for (const key of allowed) {
       if (patch && patch[key] !== undefined) settings[key] = patch[key];
     }
@@ -875,7 +881,10 @@ function registerIpc() {
     }
     if (!apis.length) return { ok: false, message: '选中的接口都不存在' };
 
-    return jmxgen.generateJmx({
+    // JMeter 版本从设置里的 jmeterPath 读（避免打开时弹「版本不一致」）
+    const jmeterVersion = settings.jmeterPath ? jmeterVersionOf(settings.jmeterPath) : '';
+
+    const gen = jmxgen.generateJmx({
       apis,
       name: payload.name,
       threads: payload.threads,
@@ -885,8 +894,10 @@ function registerIpc() {
       rtLimit: payload.rtLimit,
       domain: payload.domain,
       port: payload.port,
-      onError: payload.onError
+      onError: payload.onError,
+      jmeterVersion
     });
+    return Object.assign({}, gen, { jmeterVersion: jmeterVersion || '5.6.3' });
   });
 
   /** 生成 jmx 并保存 */
@@ -902,6 +913,8 @@ function registerIpc() {
     }
     if (!apis.length) return { ok: false, message: '选中的接口都不存在' };
 
+    const jmeterVersion = settings.jmeterPath ? jmeterVersionOf(settings.jmeterPath) : '';
+
     const gen = jmxgen.generateJmx({
       apis,
       name: payload.name,
@@ -912,7 +925,8 @@ function registerIpc() {
       rtLimit: payload.rtLimit,
       domain: payload.domain,
       port: payload.port,
-      onError: payload.onError
+      onError: payload.onError,
+      jmeterVersion
     });
     if (!gen.ok) return gen;
 
@@ -1393,7 +1407,9 @@ function registerIpc() {
   /** 扫描根目录下所有 allure-results */
   ipcMain.handle('allure:scan', async (e, { root } = {}) => {
     assertUnlocked();
-    const dir = (root && String(root).trim()) || settings.projectDir || '';
+    // 优先级：显式传的 root > 设置里的 allureDir > 项目目录
+    const dir =
+      (root && String(root).trim()) || settings.allureDir || settings.projectDir || '';
     return allure.scanAllureRoots(dir);
   });
 

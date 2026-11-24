@@ -1,7 +1,7 @@
 {
   "name": "test-tool",
   "productName": "测试工作台",
-  "version": "0.36.0",
+  "version": "0.36.1",
   "description": "本地测试工作台：密码库 / 测试账号 / SQL 片段 / 接口记录 / 测试笔记",
   "author": "",
   "license": "MIT",
@@ -17,7 +17,7 @@
     "test:links": "node scripts/test-links.cjs",
     "test:openapi": "node scripts/test-openapi.cjs",
     "test:jmx": "node scripts/test-jmx.cjs",
-    "test": "node scripts/test-main.cjs && node scripts/test-migrate.cjs && node scripts/test-cases.cjs && node scripts/test-links.cjs && node scripts/test-openapi.cjs && node scripts/test-jmx.cjs && node scripts/test-jtl.cjs && node scripts/test-templates.cjs && node scripts/test-knowledge.cjs && node scripts/test-notes.cjs && node scripts/test-updater.cjs && node scripts/test-curl.cjs && node scripts/test-json-table.cjs && node scripts/test-vars.cjs && node scripts/test-metrics.cjs && node scripts/test-installer.cjs && node scripts/test-accounts.cjs && node scripts/test-runner.cjs && node scripts/test-codegen.cjs && node scripts/test-skin.cjs && node scripts/test-allure.cjs && node scripts/test-codescan.cjs && node scripts/test-scriptgen.cjs && node scripts/test-gaps.cjs",
+    "test": "node scripts/test-main.cjs && node scripts/test-migrate.cjs && node scripts/test-cases.cjs && node scripts/test-links.cjs && node scripts/test-openapi.cjs && node scripts/test-jmx.cjs && node scripts/test-jtl.cjs && node scripts/test-templates.cjs && node scripts/test-knowledge.cjs && node scripts/test-notes.cjs && node scripts/test-updater.cjs && node scripts/test-curl.cjs && node scripts/test-json-table.cjs && node scripts/test-vars.cjs && node scripts/test-metrics.cjs && node scripts/test-installer.cjs && node scripts/test-accounts.cjs && node scripts/test-runner.cjs && node scripts/test-codegen.cjs && node scripts/test-skin.cjs && node scripts/test-allure.cjs && node scripts/test-codescan.cjs && node scripts/test-scriptgen.cjs && node scripts/test-gaps.cjs && node scripts/test-fixes-361.cjs",
     "dist": "npm run build:renderer && electron-builder --win portable --x64",
     "test:jtl": "node scripts/test-jtl.cjs",
     "test:templates": "node scripts/test-templates.cjs",
@@ -38,7 +38,8 @@
     "test:allure": "node scripts/test-allure.cjs",
     "test:codescan": "node scripts/test-codescan.cjs",
     "test:scriptgen": "node scripts/test-scriptgen.cjs",
-    "test:gaps": "node scripts/test-gaps.cjs"
+    "test:gaps": "node scripts/test-gaps.cjs",
+    "test:fixes": "node scripts/test-fixes-361.cjs"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.8.15",
