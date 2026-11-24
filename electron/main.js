@@ -59,16 +59,19 @@ const DEFAULT_SETTINGS = {
   clipboardClearSeconds: 30,
   openCopyPassword: true,
   /**
-   * 点 X 时的行为：'quit' 直接退出（默认）/ 'tray' 缩到托盘。
+   * 点 X 时的行为：'tray' 缩到托盘（默认）/ 'quit' 直接退出。
    *
-   * 为什么默认改成 quit（踩坑 #93）：
-   *   原来是 'tray'，结果用户点 X 后以为关了，实际进程还在跑：
-   *   - 安装新版时提示「程序正在运行」，用户觉得是误报
-   *   - 任务管理器里看到好几个 test-tool.exe 不知道哪来的
-   *   - 数据也不会丢（每次修改 400ms 后已落盘），所以没必要强留进程
-   *   想要托盘常驻的，去设置里明确打开就行。
+   * 为什么默认是 tray：
+   *   用户日常会频繁切回平台（查密码、看接口），缩托盘能 Ctrl+Alt+T 秒开，
+   *   比重新启动（几十秒）快得多。
+   *
+   * 代价：点 X 后进程还在（这是托盘的正常行为），
+   *       装新版本时会提示「程序正在运行」——见 installer.nsh 的提示文案。
+   *       想改的直接去「设置 → 选项 → 点 X 时」选「退出程序」。
    */
-  closeAction: 'quit',
+  closeAction: 'tray',
+  // 内部标记：首次缩托盘时提示过一次（不暴露给前端）
+  trayHintShown: false,
   // 空字符串 = 首次启动时按 defaultWorkspaceDir() 算，见 loadSettings()
   casesDir: '',
   jmxDir: '',
@@ -192,7 +195,7 @@ function publicSettings() {
     autoLockMinutes: settings.autoLockMinutes,
     clipboardClearSeconds: settings.clipboardClearSeconds,
     openCopyPassword: settings.openCopyPassword !== false,
-    closeAction: settings.closeAction === 'tray' ? 'tray' : 'quit',
+    closeAction: settings.closeAction === 'quit' ? 'quit' : 'tray',
     casesDir: settings.casesDir || '',
     jmxDir: settings.jmxDir || '',
     reportDir: settings.reportDir || '',
@@ -337,12 +340,42 @@ function createWindow() {
    * 默认 'tray'：本地工具常驻托盘更顺手（热键 Ctrl+Alt+T 随时唤）。
    */
   win.on('close', (e) => {
-    const action = settings.closeAction === 'tray' ? 'tray' : 'quit';
+    const action = settings.closeAction === 'quit' ? 'quit' : 'tray';
     if (action === 'quit') return; // 走默认关闭流程
     if (app.isQuitting) return; // 托盘菜单「退出」时放行
     e.preventDefault();
     win.hide();
     logStartup('window hidden to tray');
+
+    /**
+     * 首次缩托盘时提示一次。
+     *
+     * 为什么需要：
+     *   用户点 X 后以为关了，实际进程还在（托盘的正常行为）。
+     *   结果装新版本时看到「程序正在运行」觉得是 bug（踩坑 #93）。
+     *   提示一次就能让用户记住「缩托盘 = 还在跑」。
+     *
+     * 只提示一次，之后不再打扰。
+     */
+    if (!settings.trayHintShown) {
+      settings.trayHintShown = true;
+      try {
+        store.setMeta('settings', settings);
+        store.persist();
+      } catch (err) {
+        /* 存不上也不影响功能 */
+      }
+      try {
+        if (tray && typeof tray.displayBalloon === 'function') {
+          tray.displayBalloon({
+            title: '已缩到托盘，程序还在跑',
+            content: '右键托盘图标可退出；Ctrl+Alt+T 唤回窗口。装新版本前记得先退出。'
+          });
+        }
+      } catch (err) {
+        logStartup('tray balloon failed: ' + (err && err.message));
+      }
+    }
   });
 
   if (DEBUG) {

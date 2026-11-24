@@ -352,7 +352,7 @@ export function installMockIfNeeded() {
     autoLockMinutes: 10,
     clipboardClearSeconds: 30,
     openCopyPassword: true,
-    closeAction: 'quit',
+    closeAction: 'tray',
     hasPin: false,
     pin: '',
     casesDir: 'D:\\demo\\cases',

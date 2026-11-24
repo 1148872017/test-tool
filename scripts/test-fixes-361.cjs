@@ -24,14 +24,15 @@ check('进程检测仍用 find 退出码', /find \/I/.test(nsisSrc), 'no find');
 check('进程检测用 StrCmp \$R2', /StrCmp \$R2 "0"/.test(nsisSrc), 'no strcmp');
 check('托盘菜单有退出', /label: '退出'/.test(mainSrc), 'no quit menu');
 
-// #1 的根治方案：默认 closeAction 改成 quit
-check('默认 closeAction 是 quit', /closeAction: 'quit',/.test(mainSrc), 'still tray');
-check('读取逻辑 tray 优先', /closeAction === 'tray' \? 'tray' : 'quit'/.test(mainSrc), 'wrong fallback');
+// #1：默认保持 tray（用户要求保留托盘功能），只是把提示说清楚
+check('默认 closeAction 是 tray', /closeAction: 'tray',/.test(mainSrc), 'changed default');
+check('读取逻辑 quit 优先判断', /closeAction === 'quit' \? 'quit' : 'tray'/.test(mainSrc), 'wrong fallback');
+check('设置里还能选两种行为', /value: 'tray'/.test(settingsSrc) && /value: 'quit'/.test(settingsSrc), 'options missing');
 check('安装提示说清是正常行为', /这是正常行为，不是没关掉/.test(nsisSrc), 'no clarification');
 check('安装提示给出误报出口', /误报/.test(nsisSrc), 'no false-positive exit');
-check('设置页默认值同步', /closeAction === 'tray' \? 'tray' : 'quit'/.test(settingsSrc), 'ui not synced');
+check('设置页显示逻辑同步', /closeAction === 'quit' \? 'quit' : 'tray'/.test(settingsSrc), 'ui not synced');
 check('设置页说明提到后台进程', /会在后台留进程/.test(settingsSrc), 'no hint');
-check('mock 默认也是 quit', /closeAction: 'quit'/.test(
+check('mock 默认也是 tray', /closeAction: 'tray'/.test(
   fs.readFileSync(path.join(__dirname, '..', 'src', 'mockApi.ts'), 'utf8')
 ), 'mock not synced');
 
