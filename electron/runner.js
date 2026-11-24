@@ -28,9 +28,38 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { buildTaskkillArgs } = require('../shared/codelab');
 
 /** 默认超时：5 分钟 */
 const DEFAULT_TIMEOUT = 5 * 60 * 1000;
+
+/**
+ * 杀掉一个进程**和它的整棵进程树**。
+ *
+ * 为什么不能只 `proc.kill()`（Windows）：
+ *   java / mvn / taskkill 这些程序自己还会 fork 孙子进程，
+ *   Node 的 kill 只打到直接子进程。父进程一死，孙子进程变成孤儿继续跑，
+ *   端口被占、临时文件被锁，用户点「再跑一次」就失败，只能重启应用。
+ *   所以 Windows 统一走 `taskkill /PID <pid> /T /F`（/T = 连树一起）。
+ *
+ * @param {import('child_process').ChildProcess} proc
+ * @returns {boolean} 是否发出过 kill（进程可能已经自己退出了）
+ */
+function killTree(proc) {
+  if (!proc || !proc.pid) return false;
+  try {
+    if (process.platform === 'win32') {
+      const args = buildTaskkillArgs(proc.pid);
+      if (!args.length) return false;
+      spawn('taskkill', args, { windowsHide: true });
+      return true;
+    }
+    proc.kill('SIGKILL');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
 
 /** 当前正在跑的进程（id → { proc, timer }） */
 const running = new Map();
@@ -376,22 +405,13 @@ function run(opts) {
     return id;
   }
 
-  // 超时 kill
-  const timer = setTimeout(() => {
-    try {
-      if (isWin) {
-        // Windows：连子进程一起杀
-        spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t'], { windowsHide: true });
-      } else {
-        proc.kill('SIGKILL');
-      }
-    } catch (e) {
-      /* ignore */
-    }
-    timedOut = true;
-  }, timeout);
-
   let timedOut = false;
+
+  // 超时 kill（连进程树一起杀，见 killTree）
+  const timer = setTimeout(() => {
+    timedOut = true;
+    killTree(proc);
+  }, timeout);
 
   // 输出解码：Windows 中文是 GBK
   const decode = (buf) => {
@@ -451,15 +471,8 @@ function run(opts) {
 function cancel(id) {
   const hit = running.get(id);
   if (!hit) return false;
-  try {
-    if (process.platform === 'win32') {
-      spawn('taskkill', ['/pid', String(hit.proc.pid), '/f', '/t'], { windowsHide: true });
-    } else {
-      hit.proc.kill('SIGKILL');
-    }
-  } catch (e) {
-    /* ignore */
-  }
+  // 取消也要杀整棵树：否则孙子进程留在后台继续占端口
+  killTree(hit.proc);
   clearTimeout(hit.timer);
   running.delete(id);
   return true;
@@ -474,6 +487,7 @@ module.exports = {
   run,
   cancel,
   cancelAll,
+  killTree,
   detect,
   detectAll,
   detectJavaHome,

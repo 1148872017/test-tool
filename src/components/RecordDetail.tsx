@@ -190,14 +190,15 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
     toast('已用浏览器打开');
   };
 
+  /** 删除 = 移入回收站（软删除）：说清楚「还能找回」，别让人以为数据没了 */
   const remove = async () => {
     setDeleting(true);
     try {
       await api.removeRecord(record.id);
-      toast('已删除');
+      toast('已移入回收站');
       onDeleted();
     } catch (e: any) {
-      toast('删除失败：' + (e && e.message ? e.message : e), 'error');
+      toast('移入回收站失败：' + (e && e.message ? e.message : e), 'error');
     } finally {
       setDeleting(false);
     }
@@ -346,8 +347,14 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
           <Button size="small" icon={<EditOutlined />} onClick={onEdit}>
             编辑
           </Button>
-          <Popconfirm title="删除这条记录？" okText="删除" cancelText="取消" onConfirm={remove}>
-            <Button size="small" danger icon={<DeleteOutlined />} loading={deleting} />
+          <Popconfirm
+            title="移入回收站？"
+            description="之后可以在回收站里恢复"
+            okText="移入回收站"
+            cancelText="取消"
+            onConfirm={remove}
+          >
+            <Button size="small" danger icon={<DeleteOutlined />} title="移入回收站" loading={deleting} />
           </Popconfirm>
         </Space>
       }

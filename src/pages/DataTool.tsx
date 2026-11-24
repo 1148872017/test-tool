@@ -131,8 +131,9 @@ export default function DataTool() {
 
       if (mode === 'single') {
         const def = TYPES.find((t) => t.value === type) || TYPES[0];
-        const gen = () => (def.value === 'date' ? genDate(dateFrom, dateTo) : def.fn());
-        setRows(Array.from({ length: previewCount }, gen));
+        // 传行号：边界值是有序循环，不能每条都从第 0 个开始
+        const gen = (index: number) => (def.value === 'date' ? genDate(dateFrom, dateTo) : def.fn(index));
+        setRows(Array.from({ length: previewCount }, (_, i) => gen(i)));
       } else {
         const valid = fields.filter((f) => f.name.trim());
         const resolved = valid.map((f) => {
@@ -140,7 +141,9 @@ export default function DataTool() {
           return { fixed: f.fixed, fn: t.value === 'date' ? () => genDate(dateFrom, dateTo) : t.fn };
         });
         setMultiRows(
-          Array.from({ length: previewCount }, () => resolved.map((r) => (r.fixed ? r.fixed : r.fn())))
+          Array.from({ length: previewCount }, (_, i) =>
+            resolved.map((r) => (r.fixed ? r.fixed : r.fn(i)))
+          )
         );
       }
 
@@ -153,8 +156,9 @@ export default function DataTool() {
     if (mode === 'single') {
       const def = TYPES.find((t) => t.value === type) || TYPES[0];
       // 日期类型用自定义范围；其他类型传 undefined，忽略
-      const gen = () => (def.value === 'date' ? genDate(dateFrom, dateTo) : def.fn());
-      setRows(Array.from({ length: n }, gen));
+      // 行号一路传下去：边界值按行取池子里的下一个
+      const gen = (index: number) => (def.value === 'date' ? genDate(dateFrom, dateTo) : def.fn(index));
+      setRows(Array.from({ length: n }, (_, i) => gen(i)));
       return;
     }
 
@@ -173,7 +177,7 @@ export default function DataTool() {
       };
     });
     setMultiRows(
-      Array.from({ length: n }, () => resolved.map((r) => (r.fixed ? r.fixed : r.fn())))
+      Array.from({ length: n }, (_, i) => resolved.map((r) => (r.fixed ? r.fixed : r.fn(i))))
     );
   };
 

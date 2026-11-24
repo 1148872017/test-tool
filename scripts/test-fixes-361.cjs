@@ -5,7 +5,7 @@ const path = require('path');
 const results = [];
 const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });
 
-const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+const mainSrc = require('./_electron-src.cjs').readElectronSource();
 const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
 const skinSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'SkinCard.tsx'), 'utf8');
 const appSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 'utf8');

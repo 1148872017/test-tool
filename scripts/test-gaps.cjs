@@ -196,7 +196,7 @@ check('pages 有 elements 字段', pagesConf && pagesConf.fields.some((f) => f.k
  * 五、IPC 已注册
  * ============================================================ */
 
-const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+const mainSrc = require('./_electron-src.cjs').readElectronSource();
 check('有 openapi:pickFile', /ipcMain\.handle\('openapi:pickFile'/.test(mainSrc), 'no pickFile');
 check('有 openapi:parseFile', /ipcMain\.handle\('openapi:parseFile'/.test(mainSrc), 'no parseFile');
 check('codegen:preview 支持 apiData', /payload\.apiData/.test(mainSrc), 'no apiData');

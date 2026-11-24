@@ -222,7 +222,7 @@ CREATE TABLE \`t_order\` (
  * 7. IPC / preload
  * ============================================================ */
 {
-  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+  const mainSrc = require('./_electron-src.cjs').readElectronSource();
   const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
 
   check('有 codescan:deps', /ipcMain\.handle\('codescan:deps'/.test(mainSrc), 'no deps ipc');

@@ -4,6 +4,7 @@
  */
 
 import { COLLECTION_MAP } from '../shared/collections';
+import { buildTemplate, templateFileName } from '../shared/importTemplate';
 
 const now = () => Date.now();
 const uid = () => 'r_' + now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -397,6 +398,15 @@ export function installMockIfNeeded() {
 
   const clone = (v: any) => JSON.parse(JSON.stringify(v));
 
+/** 这条记录是不是在回收站里（关联查询要据此过滤） */
+const isTrashed = (id: string) => {
+  for (const key of Object.keys(db)) {
+    const hit = db[key].find((r: any) => r.id === id);
+    if (hit) return (hit.deleted_at || 0) > 0;
+  }
+  return true;
+};
+
   const api = {
     init: async () => ({
       locked,
@@ -461,10 +471,12 @@ export function installMockIfNeeded() {
       settings = { ...settings, ...patch };
       return { ...settings };
     },
-    records: async (collection: string) => clone(findCollection(collection)),
+    records: async (collection: string) =>
+      // 回收站里的不出现（和真机 store.list 一致）
+      clone(findCollection(collection).filter((r: any) => !(r.deleted_at || 0))),
     record: async (id: string) => {
       for (const key of Object.keys(db)) {
-        const hit = db[key].find((r) => r.id === id);
+        const hit = db[key].find((r: any) => r.id === id && !(r.deleted_at || 0));
         if (hit) return clone(hit);
       }
       return null;
@@ -498,23 +510,87 @@ export function installMockIfNeeded() {
         data: clone(input.data),
         tags: input.tags || [],
         favorite: !!input.favorite,
+        deleted_at: 0,
         created_at: now(),
         updated_at: now()
       };
       list.unshift(created);
       return clone(created);
     },
+    /** 删除 = 移入回收站（软删除），和真实 store 语义一致：只打 deleted_at */
     removeRecord: async (id: string) => {
+      let hit: any = null;
       for (const key of Object.keys(db)) {
-        db[key] = db[key].filter((r) => r.id !== id);
+        const row = db[key].find((r: any) => r.id === id);
+        if (row) {
+          hit = row;
+          break;
+        }
       }
-      // 接口记录被删 → 指向它的关联一起清掉
-      linkRows = linkRows.filter((r) => r.api_id !== id);
+      if (!hit) return false;
+      if (!hit.deleted_at) hit.deleted_at = now(); // 已删过不刷新时间（幂等）
       return true;
+    },
+
+    /* ---- 回收站（deleted_at > 0 就是在回收站里）---- */
+    trashList: async () => {
+      const out: any[] = [];
+      for (const key of Object.keys(db)) {
+        for (const r of db[key]) if ((r.deleted_at || 0) > 0) out.push(r);
+      }
+      out.sort((a, b) => (b.deleted_at || 0) - (a.deleted_at || 0));
+      return clone(out);
+    },
+    trashCount: async () => {
+      let n = 0;
+      for (const key of Object.keys(db)) {
+        for (const r of db[key]) if ((r.deleted_at || 0) > 0) n++;
+      }
+      return n;
+    },
+    trashRestore: async (id: string) => {
+      for (const key of Object.keys(db)) {
+        const row = db[key].find((r: any) => r.id === id && (r.deleted_at || 0) > 0);
+        if (row) {
+          row.deleted_at = 0;
+          return true;
+        }
+      }
+      return false;
+    },
+    trashPurge: async (id: string) => {
+      let found = false;
+      for (const key of Object.keys(db)) {
+        const before = db[key].length;
+        db[key] = db[key].filter((r: any) => r.id !== id);
+        if (db[key].length !== before) found = true;
+      }
+      if (found) linkRows = linkRows.filter((r) => r.api_id !== id);
+      return found;
+    },
+    trashClear: async () => {
+      let removed = 0;
+      const purgedApis: string[] = [];
+      for (const key of Object.keys(db)) {
+        const keep: any[] = [];
+        for (const r of db[key]) {
+          if ((r.deleted_at || 0) > 0) {
+            removed++;
+            if (r.collection === 'apis') purgedApis.push(r.id);
+          } else {
+            keep.push(r);
+          }
+        }
+        db[key] = keep;
+      }
+      if (purgedApis.length) linkRows = linkRows.filter((r) => purgedApis.indexOf(r.api_id) < 0);
+      return { removed };
     },
     counts: async () => {
       const out: Record<string, number> = {};
-      for (const key of Object.keys(db)) out[key] = db[key].length;
+      for (const key of Object.keys(db)) {
+        out[key] = db[key].filter((r: any) => !(r.deleted_at || 0)).length;
+      }
       return out;
     },
     copy: async (text: string) => {
@@ -688,6 +764,29 @@ export function installMockIfNeeded() {
     },
     dataOpenWorkspace: async () => ({ ok: true }),
 
+    runnerDetect: async () => ({
+      node: { ok: true, path: 'C:/mock/node.exe', viaElectron: false },
+      python: { ok: true, path: 'C:/mock/python.exe' },
+      java: { ok: true, java: 'C:/mock/jdk-17/bin/java.exe', javac: 'C:/mock/jdk-17/bin/javac.exe' },
+      supported: ['javascript', 'python', 'java']
+    }),
+
+    importTemplate: async (collection?: string) => {
+      const conf: any = collection ? (COLLECTION_MAP as any)[collection] : null;
+      if (!conf) return { ok: false, message: '不认识的集合：' + (collection || '(空)') };
+      const text = buildTemplate(conf);
+      const name = templateFileName(conf);
+      const blob = new Blob([text], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      return { ok: true, file: name, count: 1, bytes: blob.size, collection: conf.key };
+    },
+
     demoCount: async () => ({ ok: true, count: 11 }),
     demoClear: async () => ({ ok: true, removed: 11, errors: [] }),
     demoPaths: async () => ({
@@ -705,6 +804,34 @@ export function installMockIfNeeded() {
         { name: '认证', count: 2 },
         { name: '订单', count: 2 },
         { name: '退款', count: 1 }
+      ]
+    }),
+
+    codescanRules: async () => ({
+      ok: true,
+      total: 17,
+      packs: [
+        { id: 'audit', label: '代码体检', count: 12 },
+        { id: 'coverage', label: '接口覆盖取数', count: 5 }
+      ],
+      rules: [
+        { id: 'ui-hard-sleep', pack: 'audit', category: 'ui', severity: 'medium', title: '硬编码等待', desc: '写死 sleep / waitForTimeout：慢机器上偶发失败，快机器上白等。改成显式等待或轮询条件。' },
+        { id: 'ui-abs-xpath', pack: 'audit', category: 'ui', severity: 'low', title: '绝对 XPath', desc: '以 /html/body 开头的绝对路径，页面结构一变就整条失效。改用相对定位或 data-testid。' },
+        { id: 'ui-deep-css', pack: 'audit', category: 'ui', severity: 'low', title: '深层 CSS 选择器', desc: '四级以上 a > b > c > d > e 对 DOM 层级高度敏感，加一层包裹就全挂。' },
+        { id: 'ui-fragile-locator', pack: 'audit', category: 'ui', severity: 'medium', title: '按下标定位', desc: '用 [n] / :nth-child 按下标取元素，列表插一个节点就错位。改用 data-testid。' },
+        { id: 'ui-text-locator', pack: 'audit', category: 'ui', severity: 'low', title: '按界面文案定位', desc: 'linkText / By.text 依赖文案，改个文案或被翻译就挂。改用 data-testid。' },
+        { id: 'sec-hardcoded-url', pack: 'audit', category: 'secret', severity: 'medium', title: '硬编码地址', desc: '把环境地址写进代码，换环境要改代码。改成配置或变量占位。' },
+        { id: 'sec-token-literal', pack: 'audit', category: 'secret', severity: 'high', title: '硬编码令牌', desc: 'token / secret / apiKey 直接写字符串，提交进仓库即泄露。' },
+        { id: 'sec-password-literal', pack: 'audit', category: 'secret', severity: 'high', title: '硬编码口令', desc: 'password / pwd 写成字面量，等于把测试账号公开。' },
+        { id: 'sec-intranet-ip', pack: 'audit', category: 'secret', severity: 'medium', title: '内网 IP 直连', desc: '10./192.168./172.16-31. 网段写死，换环境即不可用。' },
+        { id: 'assert-status-only', pack: 'audit', category: 'assert', severity: 'medium', title: '只断言状态码', desc: '只校验 HTTP 状态码，不校验响应体：200 但业务 code=500 时抓不到。' },
+        { id: 'assert-truthy-only', pack: 'audit', category: 'assert', severity: 'medium', title: '只判真假', desc: 'assert xxx 只是「有值/非空」，证明不了「值对」。' },
+        { id: 'assert-no-assertion', pack: 'audit', category: 'assert', severity: 'high', title: '断言缺失', desc: '测试方法里一条断言都没有：这条用例永远「通过」，等于没测。' },
+        { id: 'cov-spring-mapping', pack: 'coverage', category: 'coverage', severity: 'low', title: 'Spring 映射路径', desc: '@GetMapping/@PostMapping 上的路径原文。' },
+        { id: 'cov-restassured', pack: 'coverage', category: 'coverage', severity: 'low', title: '链式客户端调用', desc: 'RestAssured / axios 的 .get("/x") 链式调用。' },
+        { id: 'cov-python-requests', pack: 'coverage', category: 'coverage', severity: 'low', title: 'Python requests 调用', desc: 'requests.get/post/put/delete("…")。' },
+        { id: 'cov-url-literal', pack: 'coverage', category: 'coverage', severity: 'low', title: '.url("/x") 字面量', desc: 'HttpRequest.url("/x") 这类显式设置路径的写法。' },
+        { id: 'cov-path-literal', pack: 'coverage', category: 'coverage', severity: 'low', title: '路径字面量', desc: '任何形如 "/api/..." 的字符串字面量，以及 page.goto 的路径。' }
       ]
     }),
 
@@ -1052,12 +1179,15 @@ export function installMockIfNeeded() {
     caseReveal: async () => ({ ok: true }),
     casePickDir: async () => ({ ok: false, message: '预览模式请直接编辑输入框' }),
 
-    linksForApi: async (apiId: string) => clone(linkRows.filter((r) => r.api_id === apiId)),
+    linksForApi: async (apiId: string) =>
+      clone(linkRows.filter((r) => r.api_id === apiId && !isTrashed(r.api_id))),
     linksForCase: async (filePath: string, caseTitle: string) =>
-      clone(linkRows.filter((r) => r.file_path === filePath && r.case_title === caseTitle)),
+      clone(
+        linkRows.filter((r) => r.file_path === filePath && r.case_title === caseTitle && !isTrashed(r.api_id))
+      ),
     linkCounts: async () => {
       const out: Record<string, number> = {};
-      for (const r of linkRows) out[r.api_id] = (out[r.api_id] || 0) + 1;
+      for (const r of linkRows) if (!isTrashed(r.api_id)) out[r.api_id] = (out[r.api_id] || 0) + 1;
       return out;
     },
     linkSave: async (apiId: string, targets: any[]) => {

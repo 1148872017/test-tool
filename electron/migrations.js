@@ -21,7 +21,7 @@
 
 const { OPTION_SETS } = require('../shared/collections');
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 /**
  * 用例 ↔ 接口关联表（唯一事实源，DDL 只写这一份）
@@ -41,6 +41,19 @@ CREATE TABLE IF NOT EXISTS case_api_links (
   created_at  INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_link ON case_api_links(file_path, case_title, api_id);
+`;
+
+/**
+ * 回收站相关 DDL（唯一事实源，DDL 只写这一份）
+ *
+ * deleted_at 这一列由迁移 v6 补（ALTER TABLE 幂等），索引这里单独建。
+ * 为什么不把索引塞进 store.js 的 SCHEMA：
+ *   老库的 records 表还没有 deleted_at 列时，
+ *   `CREATE INDEX ... ON records(deleted_at)` 会在建表那一步就炸，
+ *   根本轮不到迁移补列。所以索引必须在「迁移之后」再建 —— store.ensureTrashSchema()。
+ */
+const TRASH_DDL = `
+CREATE INDEX IF NOT EXISTS idx_records_deleted ON records(deleted_at);
 `;
 
 /**
@@ -260,7 +273,25 @@ const MIGRATIONS = [
       // 4. 删掉 accounts 集合的所有记录
       api.sql("DELETE FROM records WHERE collection = 'accounts'");
     }
+  },
+  {
+    to: 6,
+    note: '回收站：records 加 deleted_at（0 = 未删除，老数据按未删除处理）',
+    run(api) {
+      /**
+       * 幂等：字段已经存在就跳过。
+       * 用 PRAGMA 查而不是 try/catch 吞异常 —— 吞异常会把「磁盘坏了」
+       * 这类真错误一起掩盖掉。
+       */
+      const cols = api.query('PRAGMA table_info(records)').map((c) => String(c.name));
+      if (cols.indexOf('deleted_at') < 0) {
+        api.sql('ALTER TABLE records ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0');
+      }
+      // 老数据没有这一列时补出来是 NULL 的话，统一按「未删除」处理
+      api.sql('UPDATE records SET deleted_at = 0 WHERE deleted_at IS NULL');
+      api.sql(TRASH_DDL);
+    }
   }
 ];
 
-module.exports = { SCHEMA_VERSION, MIGRATIONS, LINK_DDL };
+module.exports = { SCHEMA_VERSION, MIGRATIONS, LINK_DDL, TRASH_DDL };

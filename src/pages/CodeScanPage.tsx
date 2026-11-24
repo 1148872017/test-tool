@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Input, Tag, Alert, Space, Empty, Segmented, Progress, Tooltip, Select } from 'antd';
+import { Button, Input, Tag, Alert, Space, Empty, Segmented, Progress, Tooltip, Select, Checkbox } from 'antd';
 import {
   FolderOpenOutlined,
   ReloadOutlined,
@@ -9,7 +9,8 @@ import {
   WarningOutlined,
   FileSearchOutlined,
   AppstoreOutlined,
-  ApartmentOutlined
+  ApartmentOutlined,
+  FilterOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
@@ -26,6 +27,7 @@ type CoverageItem = {
 
 type Issue = {
   rule: string;
+  ruleId?: string;
   label: string;
   severity: 'high' | 'medium' | 'low';
   hint: string;
@@ -34,11 +36,29 @@ type Issue = {
   snippet: string;
 };
 
+/** 规则表条目（codescan:rules 返回） */
+type ScanRule = {
+  id: string;
+  pack: 'audit' | 'coverage';
+  category: string;
+  severity: 'high' | 'medium' | 'low';
+  title: string;
+  desc: string;
+};
+
 /** 严重程度 → 颜色 + 文案 */
 const sevMeta = (s: string) => {
   if (s === 'high') return { color: 'red', label: '高' };
   if (s === 'medium') return { color: 'orange', label: '中' };
   return { color: 'default', label: '低' };
+};
+
+/** 规则分类 → 展示名 + 排序（和 electron/scan-rules.js 的 category 对应） */
+const CATEGORY_META: Record<string, { label: string; order: number }> = {
+  ui: { label: 'UI 自动化反模式', order: 0 },
+  secret: { label: '硬编码敏感信息', order: 1 },
+  assert: { label: '断言质量', order: 2 },
+  coverage: { label: '覆盖取数', order: 3 }
 };
 
 export default function CodeScanPage() {
@@ -54,12 +74,71 @@ export default function CodeScanPage() {
   const [noModuleCount, setNoModuleCount] = useState(0);
   const [busy, setBusy] = useState(false);
 
+  /** 规则表 + 勾选状态（默认全选） */
+  const [rules, setRules] = useState<ScanRule[]>([]);
+  const [ruleIds, setRuleIds] = useState<string[]>([]);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [rulesError, setRulesError] = useState('');
+
   // 覆盖矩阵
   const [cov, setCov] = useState<any>(null);
 
   // 硬编码
   const [scan, setScan] = useState<any>(null);
   const [sevFilter, setSevFilter] = useState('');
+
+  /* ---------- 规则表 ---------- */
+  const loadRules = async () => {
+    try {
+      // 老 preload / 预览模式可能还没有这个通道：读不到就退回「全部规则」，不要挡住扫描
+      const fn = (api as any).codescanRules;
+      if (typeof fn !== 'function') {
+        setRulesError('当前环境没有规则表通道（codescan:rules），扫描时按全部规则执行');
+        return;
+      }
+      const res = await fn();
+      const list: ScanRule[] = (res && res.rules) || [];
+      if (!list.length) {
+        setRulesError('规则表为空，扫描时按全部规则执行');
+        return;
+      }
+      setRules(list);
+      setRuleIds(list.map((r) => r.id));
+      setRulesError('');
+    } catch (e: any) {
+      setRulesError('规则表读取失败，扫描时按全部规则执行');
+    }
+  };
+
+  /** 本次要跑的规则 id；规则表没加载到时返回 undefined（= 后端默认全跑） */
+  const idsForPack = (pack: 'audit' | 'coverage'): string[] | undefined => {
+    if (!rules.length) return undefined;
+    return ruleIds.filter((id) => {
+      const r = rules.find((x) => x.id === id);
+      return !!r && r.pack === pack;
+    });
+  };
+
+  const toggleRule = (id: string) => {
+    setRuleIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  /** 按 category 分组（面板展示用） */
+  const ruleGroups = useMemo(() => {
+    const map = new Map<string, ScanRule[]>();
+    for (const r of rules) {
+      if (!map.has(r.category)) map.set(r.category, []);
+      map.get(r.category)!.push(r);
+    }
+    return [...map.entries()]
+      .map(([category, list]) => ({
+        category,
+        label: (CATEGORY_META[category] || { label: category }).label,
+        order: (CATEGORY_META[category] || { order: 9 }).order,
+        rules: list
+      }))
+      .sort((a, b) => a.order - b.order);
+  }, [rules]);
 
   /* ---------- 模块列表（给范围筛选用）---------- */
   const loadModules = async (kind: 'api' | 'page') => {
@@ -93,9 +172,17 @@ export default function CodeScanPage() {
      * 正确语义：点哪个按钮就看哪个视图，成功就填数据、失败就显示错误。
      */
     setView('coverage');
+
+    // 一条取数规则都没勾 → 扫了也是空结果，直接拦下来（别让人以为「代码里没请求」）
+    const covIds = idsForPack('coverage');
+    if (covIds && !covIds.length) {
+      toast('至少勾一条「覆盖取数」规则，否则扫了也是空结果', 'error');
+      return;
+    }
+
     setBusy(true);
     try {
-      const res = await api.codescanCoverage(root || undefined, k, pickedModules);
+      const res = await api.codescanCoverage(root || undefined, k, pickedModules, covIds);
       if (!res.ok) {
         toast(res.message || '扫描失败', 'error');
         setCov(null); // 清掉旧结果，别让人误以为这是本次的
@@ -112,12 +199,19 @@ export default function CodeScanPage() {
     }
   };
 
-  /* ---------- 硬编码 ---------- */
+  /* ---------- 代码体检（原「硬编码检查」）---------- */
   const doHardcoded = async () => {
     setView('hardcoded'); // 先切视图（理由见 doCoverage）
+
+    const auditIds = idsForPack('audit');
+    if (auditIds && !auditIds.length) {
+      toast('至少勾一条规则，否则扫了也是空结果', 'error');
+      return;
+    }
+
     setBusy(true);
     try {
-      const res = await api.codescanHardcoded(root || undefined);
+      const res = await api.codescanHardcoded(root || undefined, auditIds);
       if (!res.ok) {
         toast(res.message || '扫描失败', 'error');
         setScan(null);
@@ -155,9 +249,10 @@ export default function CodeScanPage() {
     }
   };
 
-  /* 首次进入加载接口模块列表 */
+  /* 首次进入加载接口模块列表 + 规则表 */
   React.useEffect(() => {
     loadModules('api');
+    loadRules();
   }, []);
 
   /* ---------- 选目录 ---------- */
@@ -228,9 +323,9 @@ export default function CodeScanPage() {
             </Button>
           </Tooltip>
 
-          <Tooltip title="密码/Token/URL 写死、sleep、弱断言 —— 按高中低危分级">
+          <Tooltip title="密码/Token/URL 写死、脆弱定位、弱断言 —— 按规则表逐条查，按高中低危分级">
             <Button size="small" icon={<SafetyOutlined />} onClick={doHardcoded} loading={busy}>
-              硬编码检查
+              代码体检
             </Button>
           </Tooltip>
 
@@ -239,8 +334,73 @@ export default function CodeScanPage() {
               依赖检查
             </Button>
           </Tooltip>
+
+          {/* 规则勾选入口：默认全选，缩起来不挡视线 */}
+          <Button
+            size="small"
+            icon={<FilterOutlined />}
+            type={rulesOpen ? 'primary' : 'default'}
+            onClick={() => setRulesOpen((v) => !v)}
+          >
+            规则{rules.length ? ` ${ruleIds.length}/${rules.length}` : ''}
+          </Button>
         </Space>
       </div>
+
+      {/* 规则勾选面板 */}
+      {rulesOpen ? (
+        <div className="rule-panel">
+          <Alert
+            type="info"
+            showIcon
+            message="启发式检查，不是语法树分析：可能误报，也会漏报"
+            description="规则都是正则 + 条件判断，命中只代表「这里值得看一眼」；确认是误报就取消勾选这类规则再扫。"
+          />
+          {rulesError ? <Alert type="warning" showIcon message={rulesError} /> : null}
+
+          <div className="rule-panel-head">
+            <span className="muted" style={{ fontSize: 11.5 }}>
+              已勾选 {ruleIds.length} / {rules.length} 条
+              {rules.length ? `（代码体检 ${idsForPack('audit')?.length || 0} 条 · 覆盖取数 ${idsForPack('coverage')?.length || 0} 条）` : ''}
+            </span>
+            <Space size={6}>
+              <Button size="small" onClick={() => setRuleIds(rules.map((r) => r.id))}>
+                全选
+              </Button>
+              <Button size="small" onClick={() => setRuleIds([])}>
+                全不选
+              </Button>
+            </Space>
+          </div>
+
+          <div className="rule-groups">
+            {ruleGroups.map((g) => (
+              <div className="rule-group" key={g.category}>
+                <div className="rule-group-title">
+                  {g.label} <span className="muted">({g.rules.length})</span>
+                </div>
+                {g.rules.map((r) => {
+                  const m = sevMeta(r.severity);
+                  return (
+                    <div className="rule-row" key={r.id}>
+                      <Checkbox checked={ruleIds.includes(r.id)} onChange={() => toggleRule(r.id)}>
+                        <span className="rule-title">{r.title}</span>
+                      </Checkbox>
+                      <Tag color={m.color} className="rule-sev">
+                        {m.label}
+                      </Tag>
+                      {r.pack === 'coverage' ? <Tag className="rule-pack">覆盖取数</Tag> : null}
+                      <Tooltip title={r.desc}>
+                        <span className="rule-desc muted">{r.desc}</span>
+                      </Tooltip>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {/* 视图切换 */}
       {cov || scan || deps ? (
@@ -254,7 +414,7 @@ export default function CodeScanPage() {
                 label: `${covKind === 'page' ? '页面' : '接口'}覆盖${cov && cov.kind === covKind ? ` (${cov.covered}/${cov.total})` : ''}`,
                 value: 'coverage'
               },
-              { label: `硬编码${scan ? ` (${scan.summary.total})` : ''}`, value: 'hardcoded' },
+              { label: `代码体检${scan ? ` (${scan.summary.total})` : ''}`, value: 'hardcoded' },
               { label: `依赖${deps ? ` (${deps.summary.total})` : ''}`, value: 'deps' }
             ]}
           />
@@ -442,11 +602,11 @@ export default function CodeScanPage() {
         )
       ) : null}
 
-      {/* 硬编码 */}
+      {/* 代码体检 */}
       {view === 'hardcoded' ? (
         !scan ? (
           <div className="codescan-empty">
-            <Empty description="点「硬编码检查」扫描代码问题" />
+            <Empty description="点「代码体检」按勾选的规则扫代码问题" />
           </div>
         ) : (
           <>
@@ -469,9 +629,22 @@ export default function CodeScanPage() {
               </div>
               <div className="cov-stat" style={{ flex: 2 }}>
                 <div className="cov-stat-value">{scan.summary.total}</div>
-                <div className="cov-stat-label">问题总数（扫描 {scan.scannedFiles} 个文件）</div>
+                <div className="cov-stat-label">
+                  问题总数（扫描 {scan.scannedFiles} 个文件
+                  {Array.isArray(scan.rulesRun) ? ` · ${scan.rulesRun.length} 条规则` : ''}）
+                </div>
               </div>
             </div>
+
+            {/* 截断必须说清楚：为什么少、少在哪 —— 不能让人以为这就是全部 */}
+            {scan.truncated ? (
+              <Alert
+                type="warning"
+                showIcon
+                message={'结果被截断：' + (scan.truncatedReason || '达到扫描上限')}
+                description="命中数可能偏少。可以少勾几条规则、缩小目录，或分批扫。"
+              />
+            ) : null}
 
             <div className="codescan-filter">
               <Segmented
@@ -485,10 +658,24 @@ export default function CodeScanPage() {
                   { label: `低危 (${scan.summary.low})`, value: 'low' }
                 ]}
               />
+              {scan.suppressed ? (
+                <span className="muted" style={{ fontSize: 11.5 }}>
+                  另有 {scan.suppressed} 条同类命中未展示（每规则每文件最多 3 条）
+                </span>
+              ) : null}
             </div>
 
             {!filteredIssues.length ? (
-              <Alert type="success" showIcon message="没有发现问题" />
+              scan.summary.total === 0 ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="勾选的规则一条都没命中"
+                  description="注意这是启发式检查：没命中不等于没问题。规则只看正则能识别到的写法，漏报是常态。"
+                />
+              ) : (
+                <Alert type="success" showIcon message="当前严重程度筛选下没有条目" />
+              )
             ) : (
               <div className="issue-list">
                 {filteredIssues.map((it: Issue, i: number) => {

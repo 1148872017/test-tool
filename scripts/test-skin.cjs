@@ -29,7 +29,7 @@ check('getTheme 未知返回默认', getTheme('nonexistent').key === 'purple', g
 check('getTheme 正常返回', getTheme('blue').primary === '#2f80ed', getTheme('blue').primary);
 
 /* ---------- 2. settings 字段 ---------- */
-const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+const mainSrc = require('./_electron-src.cjs').readElectronSource();
 check('DEFAULT_SETTINGS 有 themeColor', /themeColor: 'purple'/.test(mainSrc), 'no themeColor');
 check('DEFAULT_SETTINGS 有 bgImage', /bgImage: ''/.test(mainSrc), 'no bgImage');
 check('DEFAULT_SETTINGS 有 bgOpacity', /bgOpacity: 85/.test(mainSrc), 'no bgOpacity');

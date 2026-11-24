@@ -9,13 +9,17 @@ type Props = {
   onNavigate: (route: any) => void;
   counts: Record<string, number>;
   onLock: () => void;
+  /** 回收站条数（单独传：它不在 counts 里，counts 只统计各集合的未删除记录） */
+  trashCount?: number;
 };
 
-export default function Sidebar({ route, onNavigate, counts, onLock }: Props) {
+export default function Sidebar({ route, onNavigate, counts, onLock, trashCount = 0 }: Props) {
   const caseItem = { key: 'cases', name: '测试用例', icon: 'ProfileOutlined', isCase: true };
   const jmxItem = { key: 'jmx', name: '压测脚本', icon: 'DashboardOutlined', isJmx: true };
   const kbItem = { key: 'kb', name: '知识库', icon: 'BookOutlined', isKb: true };
   const notesItem = { key: 'notes', name: '测试笔记', icon: 'FileTextOutlined', isNotes: true };
+  /** 回收站：独立一项，挂在「资产」组最后 —— 删掉的东西就在资产里，找回去最顺手 */
+  const trashItem = { key: 'trash', name: '回收站', icon: 'DeleteOutlined', isTrash: true };
   /**
    * 侧栏分组：按「测试工作流」排序。
    *
@@ -25,7 +29,7 @@ export default function Sidebar({ route, onNavigate, counts, onLock }: Props) {
    *   辅助   → 测试数据、JSON 工具、工具箱（日常小工具）
    */
   const groups = [
-    { label: '资产', items: COLLECTIONS.filter((c: any) => c.group === '资产') },
+    { label: '资产', items: [...COLLECTIONS.filter((c: any) => c.group === '资产'), trashItem] },
     { label: '索引', items: [caseItem, jmxItem, kbItem, notesItem] },
     {
       label: '自动化',
@@ -53,6 +57,7 @@ export default function Sidebar({ route, onNavigate, counts, onLock }: Props) {
     if (item.isJmx) return route.type === 'jmx';
     if (item.isKb) return route.type === 'kb';
     if (item.isNotes) return route.type === 'notes';
+    if (item.isTrash) return route.type === 'trash';
     return route.type === 'collection' && route.key === item.key;
   };
 
@@ -62,7 +67,15 @@ export default function Sidebar({ route, onNavigate, counts, onLock }: Props) {
     else if (item.isJmx) onNavigate({ type: 'jmx' });
     else if (item.isKb) onNavigate({ type: 'kb' });
     else if (item.isNotes) onNavigate({ type: 'notes' });
+    else if (item.isTrash) onNavigate({ type: 'trash' });
     else onNavigate({ type: 'collection', key: item.key });
+  };
+
+  /** 角标数字：回收站自己一份，其他按集合计数 */
+  const badgeOf = (item: any) => {
+    if (item.isTrash) return Number(trashCount) || 0;
+    if (item.isTool || item.isCase || item.isJmx || item.isKb || item.isNotes) return 0;
+    return Number(counts[item.key]) || 0;
   };
 
   return (
@@ -92,9 +105,7 @@ export default function Sidebar({ route, onNavigate, counts, onLock }: Props) {
                   <Icon name={item.icon} />
                 </span>
                 <span className="nav-name">{item.name}</span>
-                {!item.isTool && !item.isCase && !item.isJmx && !item.isKb && !item.isNotes && counts[item.key] ? (
-                  <span className="nav-count">{counts[item.key]}</span>
-                ) : null}
+                {badgeOf(item) ? <span className="nav-count">{badgeOf(item)}</span> : null}
               </div>
             ))}
           </div>

@@ -108,7 +108,7 @@ check('不存在目录解析失败', allure.parseAllureDir('D:/nonexistent-xyz')
 fs.rmSync(tmp, { recursive: true, force: true });
 
 /* ---------- 6. IPC 已注册 ---------- */
-const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+const mainSrc = require('./_electron-src.cjs').readElectronSource();
 check('有 allure:scan', /ipcMain\.handle\('allure:scan'/.test(mainSrc), 'no scan');
 check('有 allure:parse', /ipcMain\.handle\('allure:parse'/.test(mainSrc), 'no parse');
 check('有 allure:flaky', /ipcMain\.handle\('allure:flaky'/.test(mainSrc), 'no flaky');

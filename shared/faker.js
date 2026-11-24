@@ -25,6 +25,10 @@ const ROADS = ['中山路', '人民路', '解放路', '建设路', '长江路', 
 const COMPANY_PRE = ['华', '中', '恒', '远', '天', '创', '诚', '汇', '鑫', '博'];
 const COMPANY_MID = ['联', '信', '达', '泰', '通', '科', '网', '盛'];
 const COMPANY_SUF = ['科技有限公司', '网络技术有限公司', '信息技术有限公司', '电子商务有限公司'];
+/** 车牌省份简称（只取常见的 10 个，够覆盖测试用例） */
+const PLATE_PROVINCES = ['京', '沪', '粤', '浙', '苏', '川', '鄂', '湘', '鲁', '豫'];
+/** 车牌发牌机关字母：去掉 I / O，避免和 1 / 0 看混 */
+const PLATE_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ'.split('');
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const digits = (n) => Array.from({ length: n }, () => Math.floor(Math.random() * 10)).join('');
@@ -125,6 +129,73 @@ function genOrderNo() {
 }
 
 /* ============================================================
+ * v0.42.0 新增：边界值 / 车牌号 / MAC 地址
+ * ============================================================ */
+
+/**
+ * 边界值池（**有序**，不随机）。
+ *
+ * 为什么固定而不是随机：边界值是用来「一条一条怼接口」的，
+ * 必须可预期——第 n 条永远是池子里第 n 个，跑出来的用例顺序稳定。
+ *
+ * 覆盖：空串 / 空白 / 0 / 负数 / 9 位 / int32 上下边界 / 浮点边界 /
+ *       超长串 / 中英混排 / emoji / 全角 / 字面量 null、undefined / 单条 SQL 边界。
+ */
+const BOUNDARY_VALUES = [
+  '', // 空串
+  ' ', // 单个空格
+  '0',
+  '-1',
+  '999999999',
+  '2147483647', // int32 最大值
+  '2147483648', // int32 最大值 +1，溢出边界
+  '1e308', // 浮点边界（接近 Number.MAX_VALUE）
+  'a'.repeat(1000), // 超长字符串
+  '测试Test123', // 中英混排
+  '😀😀😀', // emoji（4 字节字符）
+  'ＡＢＣ１２３', // 全角字符
+  'null', // 字面量字符串
+  'undefined', // 字面量字符串
+  "' OR '1'='1" // 单条经典 SQL 边界（不放整段注入载荷）
+];
+
+/**
+ * 取边界值（按索引循环）。
+ *
+ * @param {number} index 第几条（从 0 开始），缺省 0
+ */
+function genBoundary(index = 0) {
+  const i = Number.isFinite(index) ? Math.abs(Math.trunc(index)) : 0;
+  return BOUNDARY_VALUES[i % BOUNDARY_VALUES.length];
+}
+
+/**
+ * 车牌号（国内格式）。
+ *
+ * 普通：省份简称 + 字母 + 5 位数字（京A12345）
+ * 新能源：省份简称 + 字母 + D/F + 5 位数字（沪AD12345）
+ */
+function genPlate() {
+  const head = pick(PLATE_PROVINCES) + pick(PLATE_LETTERS);
+  // 新能源和普通各占一半，保证两种格式都能造出来
+  return Math.random() < 0.5 ? head + pick(['D', 'F']) + digits(5) : head + digits(5);
+}
+
+/** MAC 地址：6 组大写十六进制，冒号分隔（AA:BB:CC:DD:EE:FF） */
+function genMac() {
+  const groups = [];
+  for (let i = 0; i < 6; i++) {
+    groups.push(
+      Math.floor(Math.random() * 256)
+        .toString(16)
+        .toUpperCase()
+        .padStart(2, '0')
+    );
+  }
+  return groups.join(':');
+}
+
+/* ============================================================
  * 类型清单（前后端共用）
  * ============================================================ */
 
@@ -139,7 +210,10 @@ const TYPES = [
   { value: 'uuid', label: 'UUID', fn: genUuid },
   { value: 'date', label: '日期', fn: genDate },
   { value: 'amount', label: '金额', fn: genAmount },
-  { value: 'order', label: '订单号', fn: genOrderNo }
+  { value: 'order', label: '订单号', fn: genOrderNo },
+  { value: 'boundary', label: '边界值', fn: genBoundary },
+  { value: 'plate', label: '车牌号', fn: genPlate },
+  { value: 'mac', label: 'MAC 地址', fn: genMac }
 ];
 
 const TYPE_MAP = TYPES.reduce((acc, t) => {
@@ -152,11 +226,14 @@ const TYPE_MAP = TYPES.reduce((acc, t) => {
  *
  * @param {string} type   类型 key
  * @param {object} opts   { from, to }（date 类型用）
+ * @param {number} index  第几条（从 0 开始）。
+ *                        只有「边界值」这种有序类型会用到；其他类型忽略，
+ *                        所以老代码 t.fn() 不传也不会坏。
  */
-function genOne(type, opts = {}) {
+function genOne(type, opts = {}, index = 0) {
   const t = TYPE_MAP[type] || TYPES[0];
   if (t.value === 'date') return genDate(opts.from, opts.to);
-  return t.fn();
+  return t.fn(index);
 }
 
 /**
@@ -186,7 +263,8 @@ function genRows(fields, count, opts = {}) {
       resolved.map((r) => {
         if (r.fixed) return r.fixed;
         if (r.isDate) return genDate(opts.from, opts.to);
-        return r.fn();
+        // 传行号：边界值这种有序类型要按行推进，不能每行都从第 0 个开始
+        return r.fn(i);
       })
     );
   }
@@ -196,6 +274,8 @@ function genRows(fields, count, opts = {}) {
 /**
  * 生成单类型多行（转成 CSV 用的二维数组）。
  *
+ * 注意：必须把行号透传给 genOne，否则 boundary 每行都会取到第 0 个值。
+ *
  * @param {string} type
  * @param {number} count
  * @param {object} opts
@@ -203,7 +283,7 @@ function genRows(fields, count, opts = {}) {
  */
 function genColumn(type, count, opts = {}) {
   const out = [];
-  for (let i = 0; i < count; i++) out.push([genOne(type, opts)]);
+  for (let i = 0; i < count; i++) out.push([genOne(type, opts, i)]);
   return out;
 }
 
@@ -245,6 +325,8 @@ function toJson(headers, rows) {
 module.exports = {
   TYPES,
   TYPE_MAP,
+  BOUNDARY_VALUES,
+  PLATE_PROVINCES,
   genOne,
   genRows,
   genColumn,
@@ -261,5 +343,8 @@ module.exports = {
   genUuid,
   genDate,
   genAmount,
-  genOrderNo
+  genOrderNo,
+  genBoundary,
+  genPlate,
+  genMac
 };

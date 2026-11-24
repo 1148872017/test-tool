@@ -18,6 +18,13 @@ contextBridge.exposeInMainWorld('api', {
   record: (id) => invoke('records:get', { id }),
   saveRecord: (record) => invoke('records:save', record),
   removeRecord: (id) => invoke('records:remove', { id }),
+
+  // ---- 回收站（软删除，30 天自动清理）----
+  trashList: () => invoke('records:trash-list'),
+  trashCount: () => invoke('records:trash-count'),
+  trashRestore: (id) => invoke('records:trash-restore', { id }),
+  trashPurge: (id) => invoke('records:trash-purge', { id }),
+  trashClear: () => invoke('records:trash-clear'),
   counts: () => invoke('records:counts'),
 
   copy: (text, secret) => invoke('clipboard:copy', { text, secret: !!secret }),
@@ -32,6 +39,7 @@ contextBridge.exposeInMainWorld('api', {
   saveOptions: (key, items) => invoke('options:save', { key, items }),
   exportData: (includeSecrets, collection) => invoke('data:export', { includeSecrets: !!includeSecrets, collection }),
   importData: (collection) => invoke('data:import', { collection }),
+  importTemplate: (collection) => invoke('data:importTemplate', { collection }),
   exportDb: () => invoke('data:exportDb'),
   restoreBackup: (file) => invoke('backup:restore', { file }),
 
@@ -39,6 +47,7 @@ contextBridge.exposeInMainWorld('api', {
   runnerList: () => invoke('runner:list'),
   runnerRun: (payload) => invoke('runner:run', payload),
   runnerCancel: (runId) => invoke('runner:cancel', { runId }),
+  runnerDetect: () => invoke('runner:detect'),
   projectsScan: (root) => invoke('projects:scan', { root }),
   projectsTestClasses: (dir) => invoke('projects:testClasses', { dir }),
   projectsPickDir: () => invoke('projects:pickDir'),
@@ -76,9 +85,10 @@ contextBridge.exposeInMainWorld('api', {
   allureFlaky: (dirs) => invoke('allure:flaky', { dirs }),
 
   // ---- 代码扫描 ----
-  codescanCoverage: (root, kind, modules) => invoke('codescan:coverage', { root, kind, modules }),
+  codescanRules: () => invoke('codescan:rules'),
+  codescanCoverage: (root, kind, modules, ruleIds) => invoke('codescan:coverage', { root, kind, modules, ruleIds }),
   codescanModules: (kind) => invoke('codescan:modules', { kind }),
-  codescanHardcoded: (root) => invoke('codescan:hardcoded', { root }),
+  codescanHardcoded: (root, ruleIds) => invoke('codescan:hardcoded', { root, ruleIds }),
   codescanPickDir: () => invoke('codescan:pickDir'),
   codescanDeps: (root) => invoke('codescan:deps', { root }),
 

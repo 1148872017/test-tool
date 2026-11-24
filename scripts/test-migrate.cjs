@@ -1,6 +1,7 @@
-/* 数据结构升级测试：造一个 v1 老库，跑真实迁移（v2 回填环境、v3 建关联表），再注入一条 v4 重命名迁移，
-   验证升级 / 备份 / 未知字段保留。
-   注意：注入的版本号必须比真实 SCHEMA_VERSION 大，否则会跟真实迁移撞号。 */
+/* 数据结构升级测试：造一个 v1 老库，跑真实迁移（v2 回填环境、v3 建关联表、v4/v5 账号合并、v6 加回收站字段），
+   再注入一条「改名」迁移，验证升级 / 备份 / 未知字段保留。
+   注意：注入的版本号必须比真实 SCHEMA_VERSION 大，否则会跟真实迁移撞号。
+   这里用 REAL_VERSION + 1 现算，以后 SCHEMA_VERSION 再涨也不用回来改数字。 */
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -80,27 +81,35 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
   fs.writeFileSync(path.join(tmp, 'data.db'), Buffer.from(legacy.export()));
   legacy.close();
 
-  // --- 2. 真实迁移（v2 环境回填 + v3 建关联表）之外，再注入一条 v4 把 account 改名 username ---
+  // --- 2. 真实迁移（v2~v6）之外，再注入一条「把 account 改名 username」的迁移 ---
   const migrations = require(path.join(proj, 'electron', 'migrations'));
+  const REAL_VERSION = migrations.SCHEMA_VERSION;
   check('真实迁移里有 v2（环境回填）', migrations.MIGRATIONS.some((m) => m.to === 2), migrations.MIGRATIONS.map((m) => m.to));
+  check('真实迁移里有 v6（回收站字段）', migrations.MIGRATIONS.some((m) => m.to === 6), migrations.MIGRATIONS.map((m) => m.to));
   migrations.MIGRATIONS.push({
-    to: 4,
-    note: 'account → username',
+    to: REAL_VERSION + 1,
+    note: 'account → username（测试注入）',
     run(api) {
       for (const rec of api.records('sites')) {
-        if (rec.data.username === undefined) rec.data.username = rec.data.account || '';
+        // 排在 v5 之后：v5 已经把账号搬进 accounts 数组、把 account 清空了，
+        // 所以这里取「第一个账号」当用户名 —— 这条迁移的重点是验证
+        // 「注入的迁移能按版本顺序跑 + 它写的新字段算未知字段」，不纠结取值。
+        const first = (rec.data.accounts || [])[0] || {};
+        if (rec.data.username === undefined || rec.data.username === '') {
+          rec.data.username = rec.data.account || first.account || '';
+        }
         delete rec.data.account;
         api.write(rec);
       }
     }
   });
-  migrations.SCHEMA_VERSION = 4;
+  migrations.SCHEMA_VERSION = REAL_VERSION + 1;
 
   const store = require(path.join(proj, 'electron', 'store'));
   const info = await store.init(tmp);
 
   // --- 3. 断言 ---
-  check('版本号升到 5', store.schemaVersion() === 5, store.schemaVersion());
+  check('版本号升到 ' + (REAL_VERSION + 1), store.schemaVersion() === REAL_VERSION + 1, store.schemaVersion());
   check('迁移前自动备份了一份', !!info.migration && /data-before-v1-/.test(info.migration.backupFile || ''), info.migration);
   check('备份文件确实存在', !!(info.migration && fs.existsSync(info.migration.backupFile)));
 
@@ -114,6 +123,10 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
   check('未知字段被保留', rec && rec.data.legacyExtra === '要保住的字段', rec && rec.data);
   check('标题没被改坏', rec && rec.title === '老站A', rec && rec.title);
   check('标签没丢', rec && rec.tags[0] === '老标签', rec && rec.tags);
+  // v6：老库没有 deleted_at，迁移补成 0（= 未删除）
+  check('v6 给老记录补上 deleted_at=0', rec && rec.deleted_at === 0, rec && rec.deleted_at);
+  check('v6 之后老记录还在正常列表里', store.list('sites').some((r) => r.id === 'r_legacy1'), store.list('sites').map((r) => r.id));
+  check('v6 之后回收站是空的', store.countTrash() === 0, store.countTrash());
 
   // v5：accounts 集合已删，账号合并进 sites.accounts
   const acc = store.get('r_legacy_acc');
@@ -153,7 +166,9 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
   const freshDir = path.join(tmp, 'fresh');
   const store2 = require(path.join(proj, 'electron', 'store'));
   await store2.init(freshDir);
-  check('新库版本号即当前版本', store2.schemaVersion() === 4, store2.schemaVersion());
+  check('新库版本号即当前版本', store2.schemaVersion() === migrations.SCHEMA_VERSION, store2.schemaVersion());
+  const freshRec = store2.save({ collection: 'sites', data: { name: '新库站点' }, tags: [] });
+  check('新库直接带回收站字段（deleted_at=0）', freshRec && freshRec.deleted_at === 0, freshRec && freshRec.deleted_at);
   check('新库不产生迁移备份', !fs.existsSync(path.join(freshDir, 'backups')) || fs.readdirSync(path.join(freshDir, 'backups')).every((f) => !/data-before-/.test(f)));
 
   store.close();

@@ -16,7 +16,8 @@ import {
   CloudDownloadOutlined,
   BarChartOutlined,
   DownOutlined,
-  ImportOutlined
+  ImportOutlined,
+  FileTextOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
@@ -290,6 +291,33 @@ export default function CollectionPage({
     }
   };
 
+  /**
+   * 下载「导入模板」：这个集合的一条字段齐全的示例记录。
+   *
+   * 为什么放在导入按钮旁边：用户点导入前最常问的就是
+   * 「文件长什么样、字段叫什么」。给一条能直接导入的样例，
+   * 比让他去翻文档快得多（模板由主进程按 shared/collections.js 生成，
+   * 集合加字段模板会自动跟着变）。
+   */
+  const doTemplate = async () => {
+    setBusyIO(true);
+    try {
+      const res = await api.importTemplate(conf.key);
+      if (res && res.ok) {
+        const name = res.file ? String(res.file).split(/[\\/]/).pop() : '';
+        toast(name ? `模板已保存：${name}` : '模板已保存');
+      } else if (res && res.canceled) {
+        /* 用户自己在保存框点了取消，不用打扰 */
+      } else if (res && res.message) {
+        toast(res.message, 'warning');
+      }
+    } catch (e: any) {
+      toast('下载模板失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      setBusyIO(false);
+    }
+  };
+
   const doImport = async () => {
     setBusyIO(true);
     try {
@@ -480,15 +508,16 @@ export default function CollectionPage({
       setAccountPicker({ accounts, resolve });
     });
 
+  /** 删除 = 移入回收站（软删除），之后还能在「回收站」里恢复 */
   const remove = async (r: any) => {
     try {
       await api.removeRecord(r.id);
-      toast('已删除');
+      toast('已移入回收站');
       if (detail && detail.id === r.id) setDetail(null);
       await loadAll();
       onCounts();
     } catch (e: any) {
-      toast('删除失败：' + (e && e.message ? e.message : e), 'error');
+      toast('移入回收站失败：' + (e && e.message ? e.message : e), 'error');
     }
   };
 
@@ -641,8 +670,14 @@ export default function CollectionPage({
     setFormOpen(true);
             }}
           />
-          <Popconfirm title="删除这条记录？" okText="删除" cancelText="取消" onConfirm={() => remove(r)}>
-            <Button type="text" size="small" danger icon={<DeleteOutlined />} title="删除" />
+          <Popconfirm
+            title="移入回收站？"
+            description="之后可以在回收站里恢复"
+            okText="移入回收站"
+            cancelText="取消"
+            onConfirm={() => remove(r)}
+          >
+            <Button type="text" size="small" danger icon={<DeleteOutlined />} title="移入回收站" />
           </Popconfirm>
         </div>
       )
@@ -688,6 +723,24 @@ export default function CollectionPage({
           >
             <Button icon={<UploadOutlined />} onClick={doImport} loading={busyIO}>
               导入备份
+            </Button>
+          </Tooltip>
+          <Tooltip
+            title={
+              <div style={{ lineHeight: 1.7 }}>
+                <div>
+                  下载「{conf.name}」的<b>导入模板</b>（一条字段齐全的示例记录）
+                </div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  · 格式和「导出」完全一致，能<b>直接导入</b>
+                  <br />· 照着把示例值改成你自己的，再点左边「导入备份」
+                  <br />· 集合加字段后模板会自动跟着变
+                </div>
+              </div>
+            }
+          >
+            <Button icon={<FileTextOutlined />} onClick={doTemplate} loading={busyIO}>
+              下载模板
             </Button>
           </Tooltip>
           <Tooltip

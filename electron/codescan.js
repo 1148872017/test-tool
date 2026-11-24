@@ -1,25 +1,35 @@
 'use strict';
 /**
- * 代码扫描：覆盖矩阵 + 硬编码检查。
+ * 代码扫描：覆盖矩阵 + 代码体检（硬编码 / 脆弱定位 / 断言质量）。
  *
  * ============================================================
  * 设计要点
  * ============================================================
- * 1. **正则扫描，不做 AST**
- *    目标是「找出可疑代码」，不是「精确解析」。正则够用且快。
+ * 1. **规则表在 scan-rules.js**：本文件只负责「遍历文件 + 读内容 + 组装结果」，
+ *    具体什么算问题由规则表决定（可单独单测，不依赖 fs/electron）。
  *
  * 2. **覆盖矩阵：URL 模糊匹配**
  *    代码里 `.get("/api/v1/user")` 和接口记录的 `/api/v1/user` 对比。
  *    去掉域名、协议、查询参数后比对。
  *
- * 3. **硬编码检查：分级**
- *    high   = 密码/Token 明文
- *    medium = 硬编码 URL、sleep()
- *    low    = 脆弱定位器
+ * 3. **注释里的代码不算问题 / 文档不按代码体检**：这两条都在 scan-rules 里实现，
+ *    本文件不再自己判断（否则两处规则会漂移）。
+ *
+ * 4. **对外签名保持不变**：buildCoverage / scanHardcoded / scanAssertionQuality
+ *    的老调用方式（含测试）继续可用；ruleIds 只是新增的可选参数。
  */
 
 const fs = require('fs');
 const path = require('path');
+
+const {
+  RULES,
+  MAX_HITS_PER_RULE,
+  DOC_FILE_RE,
+  ruleOf,
+  normalizeRuleIds,
+  matchRules
+} = require('./scan-rules');
 
 /** 跳过这些目录 */
 const SKIP_DIRS = new Set([
@@ -38,11 +48,38 @@ const SKIP_DIRS = new Set([
   'test-results'
 ]);
 
-/** 只扫这些扩展名 */
-const SCAN_EXTS = new Set(['.java', '.py', '.js', '.ts', '.groovy', '.kt', '.cs']);
+/**
+ * 只扫这些扩展名。
+ *
+ * `.md` / `.txt` 进范围是**为了扫文档里的内网地址 / 令牌**（sec-* 规则），
+ * 不是把 README 当测试代码体检（ui-* / assert-* / cov-* 会被 scan-rules 的
+ * CODE_ONLY_RULE_RE 挡掉）。覆盖矩阵也会主动跳过文档，避免示例路径被当成「已覆盖」证据。
+ */
+const SCAN_EXTS = new Set([
+  '.java',
+  '.py',
+  '.js',
+  '.jsx',
+  '.ts',
+  '.tsx',
+  '.groovy',
+  '.kt',
+  '.cs',
+  '.md',
+  '.txt'
+]);
 
 /** 单文件大小上限（超过跳过，避免扫大文件） */
 const MAX_FILE_SIZE = 1024 * 1024;
+
+/** 单次体检最多带出多少条问题（超出必须告诉用户被截断了，不能静默） */
+const MAX_ISSUES = 500;
+
+/** 最多遍历多少个文件 */
+const MAX_FILES = 3000;
+
+/** 形如文件名的路径不算接口路径（/index.html、/app.js） */
+const LOOKS_LIKE_FILE_RE = /\.[a-z]{2,4}$/i;
 
 /* ============================================================
  * 文件遍历
@@ -50,14 +87,23 @@ const MAX_FILE_SIZE = 1024 * 1024;
 
 /**
  * 递归收集要扫的文件。
+ *
  * @param {string} root
  * @param {number} [maxFiles]
+ * @param {{truncatedFiles?: boolean, skippedSize?: number}} [stats] 顺带回传遍历统计
  * @returns {string[]}
  */
-function collectFiles(root, maxFiles = 3000) {
+function collectFiles(root, maxFiles = MAX_FILES, stats = null) {
   const out = [];
+  const st = stats || null;
+  const markTruncated = () => {
+    if (st) st.truncatedFiles = true;
+  };
   const walk = (dir, depth) => {
-    if (out.length >= maxFiles) return;
+    if (out.length >= maxFiles) {
+      markTruncated();
+      return;
+    }
     if (depth > 8) return;
     let entries;
     try {
@@ -66,7 +112,10 @@ function collectFiles(root, maxFiles = 3000) {
       return;
     }
     for (const ent of entries) {
-      if (out.length >= maxFiles) return;
+      if (out.length >= maxFiles) {
+        markTruncated();
+        return;
+      }
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) {
         if (SKIP_DIRS.has(ent.name)) continue;
@@ -77,7 +126,10 @@ function collectFiles(root, maxFiles = 3000) {
       const ext = path.extname(ent.name).toLowerCase();
       if (!SCAN_EXTS.has(ext)) continue;
       try {
-        if (fs.statSync(full).size > MAX_FILE_SIZE) continue;
+        if (fs.statSync(full).size > MAX_FILE_SIZE) {
+          if (st) st.skippedSize = (st.skippedSize || 0) + 1;
+          continue;
+        }
       } catch (e) {
         continue;
       }
@@ -102,79 +154,79 @@ function readSafe(file) {
  * ============================================================ */
 
 /**
+ * 某个包（这里只有 coverage）下本次启用的规则 id。
+ * @param {string[]} [ruleIds]
+ */
+function coverageRuleIds(ruleIds) {
+  const wanted = normalizeRuleIds(ruleIds);
+  return RULES.filter((r) => r.pack === 'coverage' && (!wanted || wanted.has(r.id))).map((r) => r.id);
+}
+
+/**
+ * 收集代码里的字符串常量定义（给 `.post(LOGIN_PATH)` 这种写法反查用）。
+ * @param {string} text
+ * @returns {Map<string, string>}
+ */
+function collectStringConsts(text) {
+  const consts = new Map();
+  const re = /(?:static\s+final\s+String|final\s+String|const\s+|let\s+|var\s+|String\s+)?\b([A-Z_][A-Z0-9_]*)\s*[:=]\s*["']([^"']+)["']/g;
+  let m;
+  while ((m = re.exec(text))) consts.set(m[1], m[2]);
+  return consts;
+}
+
+/**
  * 从代码里提取请求路径。
  *
- * 匹配：
- *   .get("/api/v1/user")
- *   .post("/api/v1/user")
- *   requests.get("http://x/api/v1/user")
- *   page.goto("/login")
- *   RestAssured.given().get("/path")
+ * 走规则表的 coverage 包（5 条）：
+ *   Spring 映射 / .get("/x") 链式调用 / requests.get / .url("/x") / 路径字面量
+ * 另外做一步**常量名反查**（不是规则，是取数后处理）：
+ *   `private static final String LOGIN_PATH = "/api/login";` + `.post(LOGIN_PATH)`
  *
  * @param {string} code
- * @returns {string[]} 路径列表
+ * @param {string[]} [ruleIds] 只跑这些 coverage 规则
+ * @param {string} [filePath] 用来判断文档扩展名（cov-* 不扫文档）
+ * @returns {string[]} 归一化后的路径列表
  */
-function extractPaths(code) {
-  const out = new Set();
+function extractPaths(code, ruleIds, filePath) {
   const text = String(code || '');
+  const ids = coverageRuleIds(ruleIds);
+  if (!ids.length) return [];
 
-  // 先收集常量定义：NAME = "/path" / NAME: "/path"
-  // 因为很多项目把路径抽成常量，然后 .post(LOGIN_PATH)
-  const consts = new Map();
-  const reConst = /(?:static\s+final\s+String|final\s+String|const\s+|let\s+|var\s+|String\s+)?\b([A-Z_][A-Z0-9_]*)\s*[:=]\s*["']([^"']+)["']/g;
-  let cm;
-  while ((cm = reConst.exec(text))) {
-    consts.set(cm[1], cm[2]);
-  }
-
-  // .get("/path") / .post('/path') / .put / .delete / .patch
-  const reMethod = /\.(get|post|put|delete|patch|head|options)\s*\(\s*["']([^"']+)["']/gi;
-  let m;
-  while ((m = reMethod.exec(text))) {
-    const p = normalizePath(m[2]);
+  const out = new Set();
+  // 覆盖取数不设「每规则每文件 3 条」的上限：要的是这个文件里出现了哪些路径
+  const res = matchRules(text, String(filePath || ''), ids, { maxHits: 0 });
+  for (const h of res.hits) {
+    if (!h.path) continue;
+    if (h.ruleId === 'cov-path-literal' && LOOKS_LIKE_FILE_RE.test(h.path)) continue;
+    const p = normalizePath(h.path);
     if (p) out.add(p);
   }
 
-  // requests.get("http://x/path") / requests.post(...)
-  const reReq = /requests\.(get|post|put|delete|patch)\s*\(\s*["']([^"']+)["']/gi;
-  while ((m = reReq.exec(text))) {
-    const p = normalizePath(m[2]);
-    if (p) out.add(p);
-  }
+  const consts = collectStringConsts(text);
 
-  // page.goto("/path") / page.navigate("/path")
-  const reNav = /\.(goto|navigate)\s*\(\s*["']([^"']+)["']/gi;
-  while ((m = reNav.exec(text))) {
-    const p = normalizePath(m[2]);
-    if (p) out.add(p);
-  }
-
-  // .get(CONST_NAME) / .post(CONST_NAME) —— 用常量名反查
-  const reConstUse = /\.(get|post|put|delete|patch|head|options)\s*\(\s*([A-Z_][A-Z0-9_]*)\s*\)/g;
-  while ((m = reConstUse.exec(text))) {
-    const val = consts.get(m[2]);
-    if (val) {
+  // .post(LOGIN_PATH) —— 链式调用传常量
+  if (ids.includes('cov-restassured')) {
+    const re = /\.(get|post|put|delete|patch|head|options)\s*\(\s*([A-Z_][A-Z0-9_]*)\s*[,)]/g;
+    let m;
+    while ((m = re.exec(text))) {
+      const val = consts.get(m[2]);
+      if (!val) continue;
       const p = normalizePath(val);
       if (p) out.add(p);
     }
   }
 
-  // requests.get(CONST_NAME)
-  const reReqConst = /requests\.(get|post|put|delete|patch)\s*\(\s*([A-Z_][A-Z0-9_]*)\s*[,)]/g;
-  while ((m = reReqConst.exec(text))) {
-    const val = consts.get(m[2]);
-    if (val) {
+  // requests.post(LOGIN_PATH)
+  if (ids.includes('cov-python-requests')) {
+    const re = /\brequests\.(get|post|put|delete|patch)\s*\(\s*([A-Z_][A-Z0-9_]*)\s*[,)]/g;
+    let m;
+    while ((m = re.exec(text))) {
+      const val = consts.get(m[2]);
+      if (!val) continue;
       const p = normalizePath(val);
       if (p) out.add(p);
     }
-  }
-
-  // 兜底：所有形如 "/api/xxx" 的字符串字面量（可能是路径常量）
-  const reLiteral = /["'](\/[a-zA-Z0-9_\-\/{}.]+)["']/g;
-  while ((m = reLiteral.exec(text))) {
-    const p = normalizePath(m[1]);
-    // 过滤掉太像文件路径的（有扩展名）
-    if (p && !/\.[a-z]{2,4}$/i.test(p)) out.add(p);
   }
 
   return Array.from(out);
@@ -254,6 +306,7 @@ function pathMatches(codePath, apiPath) {
  *   - 页面：data 里有 url / name / project
  * @param {string} root  代码根目录
  * @param {string} kind  'api'（接口）| 'page'（页面）
+ * @param {{ruleIds?: string[]}} [opts] 只跑部分 coverage 取数规则
  * @returns {{
  *   ok: boolean,
  *   kind: string,
@@ -265,14 +318,23 @@ function pathMatches(codePath, apiPath) {
  *   message?: string
  * }}
  */
-function buildCoverage(items, root, kind = 'api') {
+function buildCoverage(items, root, kind = 'api', opts = {}) {
   const k = kind === 'page' ? 'page' : 'api';
   const base = String(root || '').trim();
   if (!base || !fs.existsSync(base)) {
     return { ok: false, kind: k, total: 0, covered: 0, uncovered: [], coveredList: [], codePaths: [], message: '代码目录不存在' };
   }
 
-  const files = collectFiles(base);
+  const ids = coverageRuleIds(opts && opts.ruleIds);
+  if (!ids.length) {
+    return { ok: false, kind: k, total: 0, covered: 0, uncovered: [], coveredList: [], codePaths: [], message: '没有启用任何取数规则' };
+  }
+
+  /**
+   * 文档不参与覆盖取数：README 里的示例路径被当成「已覆盖」证据比漏报更危险
+   * （用户会以为测过了）。所以这里先按扩展名挡掉 .md/.txt。
+   */
+  const files = collectFiles(base).filter((f) => !DOC_FILE_RE.test(f));
   const codePaths = [];
 
   for (const file of files) {
@@ -280,7 +342,7 @@ function buildCoverage(items, root, kind = 'api') {
     if (!code) continue;
     const lines = code.split('\n');
     for (let i = 0; i < lines.length; i++) {
-      const found = extractPaths(lines[i]);
+      const found = extractPaths(lines[i], ids, file);
       for (const p of found) {
         codePaths.push({ path: p, file, line: i + 1 });
       }
@@ -319,288 +381,150 @@ function buildCoverage(items, root, kind = 'api') {
     uncovered,
     coveredList,
     codePaths,
-    scannedFiles: files.length
+    scannedFiles: files.length,
+    ruleIds: ids
   };
 }
 
 /* ============================================================
- * 硬编码检查
+ * 代码体检（硬编码 / 脆弱定位 / 断言质量）
  * ============================================================ */
 
-/** 检查规则 */
-const RULES = [
-  {
-    key: 'hardcoded-password',
-    label: '硬编码密码',
-    severity: 'high',
-    // password = "xxx" / pwd: "xxx" / passwd="xxx"
-    re: /(?:password|passwd|pwd)\s*[:=]\s*["'][^"']{3,}["']/gi,
-    hint: '密码应放配置/环境变量，不要写死在代码里'
-  },
-  {
-    key: 'hardcoded-token',
-    label: '硬编码 Token / 密钥',
-    severity: 'high',
-    // token = "xxx" / apiKey: "xxx" / secret = "xxx"
-    re: /(?:token|api[_-]?key|secret|access[_-]?key)\s*[:=]\s*["'][^"']{8,}["']/gi,
-    hint: 'Token/密钥应放配置/环境变量'
-  },
-  {
-    key: 'hardcoded-url',
-    label: '硬编码 URL',
-    severity: 'medium',
-    // "http://..." 或 "https://..."（排除注释里的示例）
-    re: /["']https?:\/\/[^"'\s]{6,}["']/gi,
-    hint: 'URL 应放配置，方便切换环境'
-  },
-  {
-    key: 'sleep',
-    label: '硬编码 sleep',
-    severity: 'medium',
-    // Thread.sleep(3000) / time.sleep(3) / page.waitForTimeout(3000)
-    re: /(?:Thread\.sleep|time\.sleep|waitForTimeout)\s*\(\s*\d+/gi,
-    hint: 'sleep 会让测试变慢且不稳定，应改用显式等待'
-  },
-  {
-    key: 'absolute-xpath',
-    label: '绝对 XPath',
-    severity: 'low',
-    // By.xpath("/html/body/div[1]/...") 或 "//div[@id='x']/div[2]/span"
-    re: /["']\/html\/body\/[^"']+["']/gi,
-    hint: '绝对 XPath 极易失效，建议用 data-testid 或相对定位'
-  },
-  {
-    key: 'deep-css',
-    label: '深层 CSS 选择器',
-    severity: 'low',
-    // "div > div > div > span" 这种超过 4 层的
-    re: /["'][a-z]+(?:\s*>\s*[a-z]+){4,}["']/gi,
-    hint: '深层 CSS 选择器脆弱，建议用 data-testid'
-  }
-];
-
 /**
- * 断言质量检查规则。
+ * 把规则命中转成对外的 issue 形状。
  *
- * 规划要求：「检查断言质量：是不是只有 assert response.status_code == 200，
- *            而没有对业务 Body 进行校验」
+ * `rule` 保留老版本 key（v0.41.2 的 issue.rule，历史统计/白名单按它记过），
+ * `ruleId` 是新规则表 id。两者都带出来，老代码不用改。
  *
- * 思路：一个测试测试方法里，如果只有状态码断言、没有 body/字段断言 → 报「弱断言」。
- *       这是启发式检查（正则 + 平衡扫描），不是 AST 分析。
+ * @param {any} hit matchRules 的命中
+ * @param {string} file
  */
-
-/** 状态码类断言（弱） */
-const STATUS_ONLY_PATTERNS = [
-  // Java REST Assured
-  /\.statusCode\s*\(\s*\d{3}\s*\)/g,
-  // Python requests
-  /assert\s+\w+\.status_code\s*==\s*\d{3}/g,
-  // Java assertEquals(status, 200)
-  /assertEquals\s*\(\s*\w*[Ss]tatus\w*\s*,\s*\d{3}/g,
-  // Playwright：只检查 response.ok()
-  /assert\s+\w+\.ok\b/g
-];
-
-/** Body / 字段类断言（强） */
-const BODY_PATTERNS = [
-  /\.body\s*\(/g,                              // REST Assured .body("...", ...)
-  /\.jsonPath\s*\(/g,                          // jsonPath 断言
-  /\.(?:get|post|put|delete)\w*\([^)]*\)\s*\.\s*json\s*\(/g, // resp.json()
-  /\bresp(?:onse)?\.json\(\)/gi,               // response.json()
-  /assertR?[Ee]quals?\s*\(\s*\w+\.(?:json|body)/g,
-  /\.(?:hasSize|containsString|equalTo|notNullValue)\s*\(/g, // Hamcrest
-  /expect\s*\([^)]*\)\s*\.\s*to(?:Be|Have|Contain)/g,       // Playwright expect
-  /assert\s+\w+\[\s*["']/g,                     // assert body["code"]
-  /assert\s+\w+\.(?:data|code|msg|result)\b/g,   // assert resp.data == ...
-  /\.json\(\)\s*\[/g,                          // resp.json()["code"]
-  /assert\s+.*\.json\(\)/g,                      // 任何 assert 里调用 json()
-  /\bjsonPath\s*\(/g,                            // jsonPath("$.code")
-  /\bgetBody\s*\(\s*\)\s*\./g                   // Java getBody().xxx
-];
-
-/** 是否是测试方法（启发式） */
-function looksLikeTest(block) {
-  return /@Test|def\s+test_|def\s+test[A-Z]|it\s*\(|public\s+void\s+test/i.test(block);
+function hitToIssue(hit, file) {
+  const rule = ruleOf(hit.ruleId);
+  const issue = {
+    rule: (rule && rule.legacy) || hit.ruleId,
+    ruleId: hit.ruleId,
+    label: hit.title,
+    severity: hit.severity,
+    hint: rule ? rule.desc : '',
+    file,
+    line: hit.line,
+    snippet: hit.snippet
+  };
+  if (hit.methodName) issue.methodName = hit.methodName;
+  return issue;
 }
 
 /**
- * 扫描断言质量。
+ * 扫描断言质量（只在一个文件内判定，给老调用方与单测用）。
  *
- * 只在「测试方法」范围内统计，避免误报工具代码。
+ * 只看 assert-* 规则：方法级规则按「测试方法块」判定，行级规则（只判真假）按行判定。
  *
  * @param {string} code
  * @param {string} file
  * @returns {any[]} 问题列表
  */
 function scanAssertionQuality(code, file) {
-  const issues = [];
   const text = String(code || '');
-  if (!looksLikeTest(text)) return issues;
-
-  // 按方法块粗切：找 @Test / def test_ / public void test 开头的段
-  //
-  // 两种语言结束块的判定方式不同：
-  //   Java / JS / Groovy → 大括号深度归零
-  //   Python           → 缩进归零（没有大括号，用深度判断会提前截断）
-  const isPython = /\.py$/i.test(String(file || '')) || (/^\s*def\s+test/m.test(text) && !/[{}]/.test(text));
-  const blocks = [];
-  const lines = text.split('\n');
-  let cur = null;
-  let depth = 0;
-  let baseIndent = 0;
-
-  const startRe = /@Test\b|def\s+test_|def\s+test[A-Z]|public\s+void\s+test/i;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const isStart = startRe.test(line);
-
-    if (isStart && !cur) {
-      cur = { start: i, lines: [] };
-      depth = 0;
-      baseIndent = line.search(/\S/);
-    }
-
-    if (!cur) continue;
-    cur.lines.push(line);
-
-    if (isPython) {
-      // Python：遇到下一行是「非空且缩进 <= 基准」→ 块结束（但至少收 2 行）
-      const next = i + 1 < lines.length ? lines[i + 1] : null;
-      const nextIsCode = next !== null && next.trim() !== '';
-      const nextIndent = nextIsCode ? next.search(/\S/) : -1;
-      const ended = !nextIsCode || nextIndent <= baseIndent;
-      if (ended && cur.lines.length >= 2) {
-        blocks.push(cur);
-        cur = null;
-      }
-    } else {
-      depth += (line.match(/\{/g) || []).length;
-      depth -= (line.match(/\}/g) || []).length;
-      const nextIsStart = i + 1 < lines.length && startRe.test(lines[i + 1]);
-      if ((depth <= 0 && cur.lines.length > 2) || nextIsStart) {
-        blocks.push(cur);
-        cur = null;
-      }
-    }
-  }  if (cur) blocks.push(cur);
-
-  for (const blk of blocks) {
-    const body = blk.lines.join('\n');
-
-    let hasStatus = false;
-    for (const re of STATUS_ONLY_PATTERNS) {
-      re.lastIndex = 0;
-      if (re.test(body)) {
-        hasStatus = true;
-        break;
-      }
-    }
-    if (!hasStatus) continue;
-
-    let hasBody = false;
-    for (const re of BODY_PATTERNS) {
-      re.lastIndex = 0;
-      if (re.test(body)) {
-        hasBody = true;
-        break;
-      }
-    }
-    if (hasBody) continue;
-
-    // 找方法名，便于定位
-    const nameLine = blk.lines.find((l) => /void\s+(\w+)\s*\(|def\s+(test\w+)/i.test(l)) || '';
-    const m = /void\s+(\w+)\s*\(|def\s+(test\w+)/i.exec(nameLine);
-    const methodName = m ? m[1] || m[2] : '（未知方法）';
-
-    issues.push({
-      rule: 'weak-assertion',
-      label: '断言过弱',
-      severity: 'medium',
-      hint: '只校验了状态码，没有校验业务 Body / 关键字段 —— 接口返回 200 但业务失败时抓不到',
-      file,
-      line: blk.start + 1,
-      snippet: methodName + '() 只有状态码断言',
-      methodName
-    });
-  }
-
-  return issues;
+  if (!text) return [];
+  const ids = RULES.filter((r) => r.pack === 'audit' && r.category === 'assert').map((r) => r.id);
+  const res = matchRules(text, String(file || ''), ids);
+  return res.hits.map((h) => hitToIssue(h, file));
 }
 
 /**
- * 扫描硬编码问题。
+ * 代码体检：跑 audit 包的规则。
  *
  * @param {string} root
+ * @param {{ruleIds?: string[], enableAssertion?: boolean}} [opts]
  * @returns {{
  *   ok: boolean,
  *   issues: any[],
  *   summary: {high: number, medium: number, low: number, total: number},
  *   scannedFiles: number,
+ *   suppressed: number,
+ *   truncated: boolean,
+ *   truncatedReason: string,
+ *   rulesRun: string[],
  *   message?: string
  * }}
  */
 function scanHardcoded(root, opts = {}) {
   const base = String(root || '').trim();
-  if (!base || !fs.existsSync(base)) {
-    return { ok: false, issues: [], summary: { high: 0, medium: 0, low: 0, total: 0 }, scannedFiles: 0, message: '代码目录不存在' };
+  const blank = {
+    ok: false,
+    issues: [],
+    summary: { high: 0, medium: 0, low: 0, total: 0 },
+    scannedFiles: 0,
+    suppressed: 0,
+    truncated: false,
+    truncatedReason: '',
+    rulesRun: []
+  };
+  if (!base || !fs.existsSync(base)) return Object.assign({}, blank, { message: '代码目录不存在' });
+
+  const enableAssertion = opts.enableAssertion !== false;
+  const wanted = normalizeRuleIds(opts.ruleIds);
+  const ruleIds = RULES.filter(
+    (r) => r.pack === 'audit' && (!wanted || wanted.has(r.id)) && (enableAssertion || r.category !== 'assert')
+  ).map((r) => r.id);
+
+  if (!ruleIds.length) {
+    return Object.assign({}, blank, { ok: true, message: '没有启用任何规则' });
   }
 
-  const files = collectFiles(base);
+  const stats = { truncatedFiles: false, skippedSize: 0 };
+  const files = collectFiles(base, MAX_FILES, stats);
   const issues = [];
+  let suppressed = 0;
+  let overflow = false;
 
   for (const file of files) {
     const code = readSafe(file);
     if (!code) continue;
-    const lines = code.split('\n');
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const trimmed = line.trim();
-
-      // 跳过注释行（简单判断）
-      if (/^(\/\/|#|\*|\/\*)/.test(trimmed)) continue;
-      // 跳过明显的占位符
-      if (/TODO|FIXME|example\.com|localhost|127\.0\.0\.1|placeholder/i.test(trimmed)) continue;
-
-      for (const rule of RULES) {
-        rule.re.lastIndex = 0;
-        const m = rule.re.exec(line);
-        if (!m) continue;
-
-        issues.push({
-          rule: rule.key,
-          label: rule.label,
-          severity: rule.severity,
-          hint: rule.hint,
-          file,
-          line: i + 1,
-          // 脱敏：只显示前 40 字符
-          snippet: trimmed.length > 80 ? trimmed.slice(0, 80) + '…' : trimmed
-        });
-        break; // 一行只报一个问题
+    const res = matchRules(code, file, ruleIds);
+    suppressed += res.suppressed;
+    for (const h of res.hits) {
+      if (issues.length >= MAX_ISSUES) {
+        overflow = true;
+        break;
       }
-    }
-  }
-
-  // 断言质量检查（单独一轮，按方法块扫）
-  const enableAssertion = opts.enableAssertion !== false;
-  if (enableAssertion) {
-    for (const file of files) {
-      const code = readSafe(file);
-      if (!code) continue;
-      issues.push(...scanAssertionQuality(code, file));
+      issues.push(hitToIssue(h, file));
     }
   }
 
   const summary = { high: 0, medium: 0, low: 0, total: issues.length };
-  for (const it of issues) summary[it.severity]++;
+  for (const it of issues) summary[it.severity] += 1;
 
-  // 按严重程度排序
+  // 按严重程度排序（高 → 低），同级按文件/行号稳定排列
   const order = { high: 0, medium: 1, low: 2 };
-  issues.sort((a, b) => order[a.severity] - order[b.severity]);
+  issues.sort(
+    (a, b) =>
+      order[a.severity] - order[b.severity] ||
+      String(a.file).localeCompare(String(b.file)) ||
+      a.line - b.line
+  );
 
-  return { ok: true, issues, summary, scannedFiles: files.length };
+  /**
+   * 截断原因必须说清楚：用户看到「问题数偏少」时要知道为什么，
+   * 否则会以为工具只扫了这么点（这也是「不能静默丢弃」的一部分）。
+   */
+  const reasons = [];
+  if (stats.truncatedFiles) reasons.push(`文件数达到上限 ${MAX_FILES} 个`);
+  if (stats.skippedSize) reasons.push(`${stats.skippedSize} 个文件超过 1MB 被跳过`);
+  if (suppressed) reasons.push(`同一规则在同一文件最多记 ${MAX_HITS_PER_RULE} 条，另有 ${suppressed} 条未列出`);
+  if (overflow) reasons.push(`问题总数达到上限 ${MAX_ISSUES} 条`);
+
+  return {
+    ok: true,
+    issues,
+    summary,
+    scannedFiles: files.length,
+    suppressed,
+    truncated: reasons.length > 0,
+    truncatedReason: reasons.join('；'),
+    rulesRun: ruleIds
+  };
 }
 
 module.exports = {
@@ -611,5 +535,11 @@ module.exports = {
   pathMatches,
   buildCoverage,
   scanHardcoded,
-  RULES
+  RULES,
+  MAX_FILES,
+  MAX_ISSUES,
+  MAX_FILE_SIZE,
+  MAX_HITS_PER_RULE,
+  SCAN_EXTS,
+  SKIP_DIRS
 };

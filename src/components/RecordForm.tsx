@@ -1,15 +1,17 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, Input, Select, DatePicker, Switch, Tooltip } from 'antd';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Modal, Input, Select, DatePicker, Switch, Tooltip, Button } from 'antd';
+import { ImportOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../api';
 import { toast } from '../msg';
 import { COLLECTION_MAP } from '../../shared/collections';
-import VarsEditor from './VarsEditor';
+import VarsEditor, { parseVars, serializeVars } from './VarsEditor';
 import ScenePicker from './ScenePicker';
 import AccountsEditor, { dropEmptyAccounts } from './AccountsEditor';
 import PageElementsEditor, { dropEmptyElements } from './PageElementsEditor';
 import { visibleFields } from '../../shared/runs';
 import { asArray, fieldOptions, getOptionsSync, labelOf, loadOptions, OptionsMap } from '../options';
+import { convertSelectionToVar, VAR_NAME_PATTERN } from '../utils';
 
 type Props = {
   open: boolean;
@@ -84,6 +86,123 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
   const [linkOptions, setLinkOptions] = useState<Record<string, any[]>>({});
   const [linkEnv, setLinkEnv] = useState<Record<string, Record<string, any>>>({});
   const [opts, setOpts] = useState<OptionsMap>(getOptionsSync());
+
+  /* ------------------------------------------------------------------ *
+   * SQL 片段：「转化为变量」
+   *
+   * 只有 sqls 集合的 sql 字段才有这个按钮（其他集合没有 SQL 正文）。
+   * 三个状态各管一件事：
+   *   sqlRef   → 拿到真正的 textarea（受控组件，光标要直接操作 DOM）
+   *   sqlSel   → 记住「选区的起止」+「当时那段文字」，点按钮时用来防错位
+   *   varDlg   → 改名弹框（变量名可改，比自动生成的可控）
+   * ------------------------------------------------------------------ */
+  const sqlRef = useRef<any>(null);
+  const [sqlSel, setSqlSel] = useState<{ start: number; end: number; text: string } | null>(null);
+  const [varDlg, setVarDlg] = useState<{ start: number; end: number; text: string; name: string; desc: string } | null>(
+    null
+  );
+
+  /** 只有 sqls 集合的 sql 字段算「SQL 正文」 */
+  const isSqlField = (f: any) => conf.key === 'sqls' && f.key === 'sql';
+
+  /** 变量表（data.vars 是 JSON 字符串） */
+  const varsRows = useMemo(() => parseVars(String(data.vars || '')), [data.vars]);
+
+  /** AntD TextArea 的 ref 不是原生 textarea，要往里挖一层 */
+  const sqlTextarea = (): HTMLTextAreaElement | null => {
+    const r: any = sqlRef.current;
+    return r && r.resizableTextArea ? r.resizableTextArea.textArea : null;
+  };
+
+  /**
+   * 记住这次选区。
+   *
+   * 关键点：除了起止位置，还要把「当时那段文字」一起记下来 ——
+   * 用户选中之后又改了正文的话，位置就对不上了，点按钮时靠这段文字校验出来。
+   */
+  const rememberSqlSelection = (ta: HTMLTextAreaElement | null) => {
+    if (!ta) return;
+    const start = ta.selectionStart || 0;
+    const end = ta.selectionEnd || 0;
+    // 选区塌了（只是点了一下光标）就当没选
+    if (end <= start) {
+      setSqlSel(null);
+      return;
+    }
+    setSqlSel({ start, end, text: ta.value.slice(start, end) });
+  };
+
+  /** 选区预览：太长就截断，别把工具条撑开 */
+  const clipText = (s: string, n = 16) => {
+    const one = String(s || '').replace(/\s+/g, ' ');
+    return one.length > n ? one.slice(0, n) + '…' : one;
+  };
+
+  /** 点「转化为变量」：先校验，再弹改名框（不直接替换，给用户一次反悔机会） */
+  const openVarDialog = () => {
+    const cur = String(data.sql || '');
+    const ta = sqlTextarea();
+    // 优先用记住的选区（能查出「正文变了」）；没有就退回 DOM 当前的
+    let sel = sqlSel;
+    if (!sel && ta) {
+      const s0 = ta.selectionStart || 0;
+      const e0 = ta.selectionEnd || 0;
+      sel = { start: s0, end: e0, text: cur.slice(s0, e0) };
+    }
+    if (!sel || !sel.text.trim()) {
+      toast('先在 SQL 里选中一段文字，再点「转化为变量」', 'warning');
+      return;
+    }
+    const probe = convertSelectionToVar(cur, sel.start, sel.end, varsRows, sel.text);
+    if (!probe.ok) {
+      if (probe.reason === 'changed') toast('正文已经变了，请重新选中再点一次', 'warning');
+      else if (probe.reason === 'already') toast(`已经是变量了（${'{{' + probe.varName + '}}'}）`, 'warning');
+      else toast('先在 SQL 里选中一段文字，再点「转化为变量」', 'warning');
+      return;
+    }
+    setVarDlg({ start: sel.start, end: sel.end, text: sel.text, name: probe.varName, desc: '' });
+  };
+
+  /** 弹框点确定：按用户确认的名字替换正文 + 追加变量定义 */
+  const applyVarDialog = () => {
+    if (!varDlg) return;
+    const name = varDlg.name.trim();
+    if (!name) {
+      toast('请填写变量名', 'warning');
+      return;
+    }
+    if (!VAR_NAME_PATTERN.test(name)) {
+      toast('变量名只能用字母、数字、下划线、点和横线，且不能以数字开头', 'warning');
+      return;
+    }
+    if (varsRows.some((v: any) => v.name.trim() === name)) {
+      toast(`已经有一个叫「${name}」的变量了，换个名字`, 'warning');
+      return;
+    }
+    // 这里再算一次：弹框开着的时候正文可能又被改过，仍然要防错位
+    const res = convertSelectionToVar(String(data.sql || ''), varDlg.start, varDlg.end, varsRows, varDlg.text, name);
+    if (!res.ok) {
+      setVarDlg(null);
+      setSqlSel(null);
+      toast(res.reason === 'changed' ? '正文已经变了，请重新选中再点一次' : '这段文字现在不能转成变量', 'warning');
+      return;
+    }
+    // 变量表：追加一条，说明用弹框里填的
+    const nextVars = res.vars.slice();
+    nextVars[nextVars.length - 1] = { name, value: '', desc: varDlg.desc.trim() };
+    set('sql', res.text);
+    set('vars', serializeVars(nextVars));
+    setVarDlg(null);
+    setSqlSel(null);
+    toast(`已转为 {{${name}}}`);
+    // 光标落到 }} 后面；等受控值渲染完再设，否则会被打回原位置
+    window.setTimeout(() => {
+      const ta = sqlTextarea();
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(res.cursor, res.cursor);
+    }, 0);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -252,13 +371,40 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
       case 'code':
       case 'markdown':
         return (
-          <Input.TextArea
-            className="code-area"
-            value={v}
-            onChange={(e) => set(f.key, e.target.value)}
-            autoSize={{ minRows: f.rows || 6, maxRows: 20 }}
-            placeholder={f.placeholder}
-          />
+          <>
+            <Input.TextArea
+              ref={isSqlField(f) ? sqlRef : undefined}
+              className="code-area"
+              value={v}
+              onChange={(e) => set(f.key, e.target.value)}
+              // 选中就记下来（含当时那段文字），点「转化为变量」时校验用
+              onSelect={(e: any) => {
+                if (isSqlField(f)) rememberSqlSelection(e.target);
+              }}
+              autoSize={{ minRows: f.rows || 6, maxRows: 20 }}
+              placeholder={f.placeholder}
+            />
+            {isSqlField(f) ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                {/* onMouseDown 拦默认行为：点按钮不抢焦点，textarea 的选区才不会丢 */}
+                <Button
+                  size="small"
+                  type="link"
+                  icon={<ImportOutlined />}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={openVarDialog}
+                  style={{ paddingInline: 0 }}
+                >
+                  转化为变量
+                </Button>
+                <span className="muted" style={{ fontSize: 12 }}>
+                  {sqlSel && sqlSel.text.trim()
+                    ? `已选中「${clipText(sqlSel.text)}」—— 点左边把它变成 {'{{变量}}'}，并自动加一条变量说明`
+                    : `先在 SQL 里选中一段写死的值（比如单号），再点「转化为变量」变成 {'{{变量}}'}`}
+                </span>
+              </div>
+            ) : null}
+          </>
         );
       case 'textarea':
         return (
@@ -275,17 +421,18 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
   };
 
   return (
-    <Modal
-      open={open}
-      title={(record && record.id ? '编辑' : '新增') + conf.name}
-      onCancel={onClose}
-      width={660}
-      okText="保存"
-      cancelText="取消"
-      onOk={save}
-      confirmLoading={saving}
-      destroyOnClose
-    >
+    <>
+      <Modal
+        open={open}
+        title={(record && record.id ? '编辑' : '新增') + conf.name}
+        onCancel={onClose}
+        width={660}
+        okText="保存"
+        cancelText="取消"
+        onOk={save}
+        confirmLoading={saving}
+        destroyOnClose
+      >
       <div style={{ paddingTop: 8 }}>
         {visibleFields(conf.fields, data.kind)
           .filter((f: any) => !f.formHidden)
@@ -338,7 +485,52 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
             <Switch checked={favorite} onChange={setFavorite} size="small" />
           </div>
         ) : null}
-      </div>
-    </Modal>
+        </div>
+      </Modal>
+
+      {/*
+        改名弹框：自动猜的名字只是草稿，用户在这里改。
+        为什么不直接替换 —— 猜错一次就得撤销重来，弹框更可控。
+      */}
+      <Modal
+        open={!!varDlg}
+        title="转化为变量"
+        okText="确定"
+        cancelText="取消"
+        width={420}
+        onOk={applyVarDialog}
+        onCancel={() => setVarDlg(null)}
+        destroyOnClose
+      >
+        <div style={{ paddingTop: 4 }}>
+          <div className="kv-label">变量名</div>
+          <Input
+            value={varDlg ? varDlg.name : ''}
+            placeholder="如 orderNo"
+            autoFocus
+            onChange={(e) => setVarDlg((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
+            onPressEnter={applyVarDialog}
+          />
+          <div className="form-hint muted">
+            正文里会变成 {'{{变量名}}'}；字母、数字、下划线、点和横线，且不能以数字开头
+          </div>
+          <div className="kv-label" style={{ marginTop: 10 }}>
+            说明（选填）
+          </div>
+          <Input
+            value={varDlg ? varDlg.desc : ''}
+            placeholder="如 订单号"
+            onChange={(e) => setVarDlg((prev) => (prev ? { ...prev, desc: e.target.value } : prev))}
+            onPressEnter={applyVarDialog}
+          />
+          <div className="form-hint muted">写进「变量说明」，留空也行，之后在表格里补</div>
+          {varDlg ? (
+            <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+              要替换的文字：「{clipText(varDlg.text, 40)}」
+            </div>
+          ) : null}
+        </div>
+      </Modal>
+    </>
   );
 }

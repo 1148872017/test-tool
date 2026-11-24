@@ -485,8 +485,9 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   check('知识库打开不存在路径返回失败', kbBad && kbBad.ok === false, kbBad);
 
   // ---- 导入过滤器：按集合只认 JSON，整库才认 .db ----
-  // 直接读 main.js 的源码确认逻辑（避免在测试里重复实现一遍）
-  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+  // 直接读后端源码确认逻辑（避免在测试里重复实现一遍）；
+  // data:import 已搬到 electron/ipc/ipc-records.js，所以扫整个 electron/ 目录
+  const mainSrc = require('./_electron-src.cjs').readElectronSource();
   const importBlock = mainSrc.slice(mainSrc.indexOf("ipcMain.handle('data:import'"), mainSrc.indexOf("ipcMain.handle('backup:restore'"));
   check('按集合导入的过滤器只含 json', /conf\s*\?\s*\[\{\s*name:\s*'JSON',\s*extensions:\s*\['json'\]\s*\}\]/.test(importBlock), importBlock.slice(0, 300));
   check('整库导入的过滤器含 db', /extensions:\s*\['json',\s*'db'\]/.test(importBlock), importBlock.slice(0, 300));

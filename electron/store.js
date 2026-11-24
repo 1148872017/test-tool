@@ -15,6 +15,22 @@ let backupDir = '';
 let saveTimer = null;
 let lastMigration = null;
 
+/**
+ * 回收站保留天数：软删除的记录超过这么多天自动清掉。
+ * 界面上的「N 天后自动清除」也用这个数，改这里就够了。
+ */
+const TRASH_RETENTION_DAYS = 30;
+
+/**
+ * records 的 deleted_at 是「软删除时间戳」，0 = 未删除。
+ *
+ * 为什么用时间戳而不是 0/1：回收站要显示「删除于」和「N 天后自动清除」，
+ * 时间戳一次就够，不用再加一列。
+ *
+ * 注意：老数据库的 records 表没有这一列，
+ * `CREATE TABLE IF NOT EXISTS` 不会补列，所以真正的补列在 migrations v6，
+ * 这里只是新库的初始结构。
+ */
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS records (
   id TEXT PRIMARY KEY,
@@ -23,6 +39,7 @@ CREATE TABLE IF NOT EXISTS records (
   data TEXT NOT NULL DEFAULT '{}',
   tags TEXT NOT NULL DEFAULT '',
   favorite INTEGER NOT NULL DEFAULT 0,
+  deleted_at INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -88,6 +105,25 @@ function schedulePersist() {
   }, 400);
 }
 
+/**
+ * 兜底保证回收站字段与索引存在。
+ *
+ * 迁移 v6 已经做了同样的事，这里再兜一层是因为还有别的入口会换库：
+ * restoreFrom 换上来的 .db、clearLocalData 重建的空库。
+ * 全部幂等：列在就跳过，索引用 IF NOT EXISTS。
+ */
+function ensureTrashSchema() {
+  try {
+    const cols = all('PRAGMA table_info(records)').map((c) => String(c.name));
+    if (cols.length && cols.indexOf('deleted_at') < 0) {
+      run('ALTER TABLE records ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0');
+    }
+    db.run(migrations.TRASH_DDL);
+  } catch (e) {
+    console.error('[store] 回收站字段初始化失败', e);
+  }
+}
+
 async function init(dataDir) {
   fs.mkdirSync(dataDir, { recursive: true });
   dbPath = path.join(dataDir, 'data.db');
@@ -115,6 +151,8 @@ async function init(dataDir) {
   } else {
     setMeta('schemaVersion', migrations.SCHEMA_VERSION);
   }
+  // 迁移之后才补回收站字段（老库这时才有 deleted_at 列）
+  ensureTrashSchema();
   persist();
 
   const today = new Date().toISOString().slice(0, 10);
@@ -218,6 +256,7 @@ function clearLocalData() {
   db.run(SCHEMA);
   db.run(migrations.LINK_DDL);
   setMeta('schemaVersion', migrations.SCHEMA_VERSION);
+  ensureTrashSchema();
   persist();
   lastMigration = null;
   return { removed, dbPath, backupDir };
@@ -375,6 +414,8 @@ function hydrate(row) {
     data: deserialize(row.collection, data),
     tags: row.tags ? String(row.tags).split(',').filter(Boolean) : [],
     favorite: !!row.favorite,
+    // 0 = 未删除；非 0 = 移入回收站的时间戳（老库由迁移 v6 补成 0）
+    deleted_at: Number(row.deleted_at) || 0,
     created_at: row.created_at,
     updated_at: row.updated_at
   };
@@ -411,10 +452,18 @@ function searchableDataExpr(collection) {
   return expr;
 }
 
+/**
+ * 列表。
+ *
+ * **默认只返回未删除的**（deleted_at = 0）—— 这条不能反过来，
+ * 否则所有现有页面（列表 / 统计 / 导出 / 详情）都会被回收站里的记录污染。
+ * 需要连回收站一起看的场景显式传 `{ includeDeleted: true }`。
+ */
 function list(collection, opts = {}) {
-  const { keyword = '', tag = '', favorite = false } = opts;
+  const { keyword = '', tag = '', favorite = false, includeDeleted = false } = opts;
   const where = ['collection = ?'];
   const params = [collection];
+  if (!includeDeleted) where.push('deleted_at = 0');
   if (keyword) {
     // 搜索范围：标题 + 标签 + data（**排除密码字段**）
     //
@@ -439,8 +488,13 @@ function list(collection, opts = {}) {
   return rows.map(hydrate);
 }
 
-function get(id) {
-  const rows = all('SELECT * FROM records WHERE id = ?', [id]);
+/** 单条读取。默认看不到回收站里的，includeDeleted 才给。 */
+function get(id, opts = {}) {
+  const includeDeleted = !!(opts && opts.includeDeleted);
+  const rows = all(
+    'SELECT * FROM records WHERE id = ?' + (includeDeleted ? '' : ' AND deleted_at = 0'),
+    [id]
+  );
   return rows.length ? hydrate(rows[0]) : null;
 }
 
@@ -466,7 +520,12 @@ function save(input) {
   const now = Date.now();
 
   let recordId = id;
-  const existing = recordId ? get(recordId) : null;
+  /**
+   * 查重时**连回收站一起查**：否则回收站里那条的 id 会被当成新记录，
+   * INSERT 撞主键直接抛错（importAll 把带 id 的回收站记录导回来时就会踩到）。
+   * 顺手把 deleted_at 归零：能保存 = 它又活了。
+   */
+  const existing = recordId ? get(recordId, { includeDeleted: true }) : null;
   const finalData = existing ? keepUnknownFields(collection, data, existing.data) : data;
 
   const title = String(finalData[conf.titleField] || '').trim() || '(未命名)';
@@ -475,7 +534,7 @@ function save(input) {
   if (Array.isArray(tags) && tags.length) mergeTags(tags);
 
   if (recordId && existing) {
-    run('UPDATE records SET title = ?, data = ?, tags = ?, favorite = ?, updated_at = ? WHERE id = ?', [
+    run('UPDATE records SET title = ?, data = ?, tags = ?, favorite = ?, updated_at = ?, deleted_at = 0 WHERE id = ?', [
       title,
       payload,
       tagStr,
@@ -494,19 +553,88 @@ function save(input) {
   return get(recordId);
 }
 
+/**
+ * 删除 = 移入回收站（软删除），不再真的 DELETE。
+ *
+ * 为什么不再顺手清关联：接口记录只是进回收站，用例↔接口的关联留着，
+ * 恢复时才能一起回来。已经进回收站的接口，它的关联靠 links 里的
+ * join（r.deleted_at = 0）过滤掉，界面上看不到，等于「已经没了」。
+ */
 function remove(id) {
-  const rows = all('SELECT collection FROM records WHERE id = ?', [id]);
-  run('DELETE FROM records WHERE id = ?', [id]);
-  // 接口记录被删 → 指向它的关联一起清掉，别在用例抽屉里留悬空行
-  if (rows.length && rows[0].collection === 'apis') {
-    run('DELETE FROM case_api_links WHERE api_id = ?', [id]);
+  const rows = all('SELECT id, deleted_at FROM records WHERE id = ?', [id]);
+  if (!rows.length) return false;
+  if (!Number(rows[0].deleted_at)) {
+    run('UPDATE records SET deleted_at = ? WHERE id = ?', [Date.now(), id]);
   }
   schedulePersist();
   return true;
 }
 
-function counts() {
-  const rows = all('SELECT collection, COUNT(*) AS n FROM records GROUP BY collection');
+/** 彻底删除（回收站里的「彻底删除」）：真的 DELETE，关联也一起清掉 */
+function purge(id) {
+  const rows = all('SELECT collection FROM records WHERE id = ?', [id]);
+  if (!rows.length) return false;
+  run('DELETE FROM records WHERE id = ?', [id]);
+  if (rows[0].collection === 'apis') run('DELETE FROM case_api_links WHERE api_id = ?', [id]);
+  schedulePersist();
+  return true;
+}
+
+/** 从回收站恢复：deleted_at 归零 */
+function restore(id) {
+  run('UPDATE records SET deleted_at = 0 WHERE id = ? AND deleted_at > 0', [id]);
+  const n = Number(db.getRowsModified()) || 0;
+  if (n) schedulePersist();
+  return n > 0;
+}
+
+/** 回收站列表：按删除时间倒序（最近删的在最上面） */
+function listTrash() {
+  return all('SELECT * FROM records WHERE deleted_at > 0 ORDER BY deleted_at DESC').map(hydrate);
+}
+
+/** 回收站条数（侧栏角标用） */
+function countTrash() {
+  const rows = all('SELECT COUNT(*) AS n FROM records WHERE deleted_at > 0');
+  return rows.length ? Number(rows[0].n) || 0 : 0;
+}
+
+/** 清空回收站（二次确认在界面侧） */
+function clearTrash() {
+  const ids = all("SELECT id FROM records WHERE deleted_at > 0 AND collection = 'apis'").map((r) => String(r.id));
+  run('DELETE FROM records WHERE deleted_at > 0');
+  const removed = Number(db.getRowsModified()) || 0;
+  for (const id of ids) run('DELETE FROM case_api_links WHERE api_id = ?', [id]);
+  if (removed) schedulePersist();
+  return { removed };
+}
+
+/**
+ * 清理回收站里超过 N 天的记录。
+ *
+ * days 不传/非法时用 TRASH_RETENTION_DAYS（30 天）。
+ * 启动时跑一次（ipc-records 的 register 里），界面上不需要按钮。
+ */
+function purgeExpired(days) {
+  const d = Number(days);
+  const keep = Number.isFinite(d) && d > 0 ? d : TRASH_RETENTION_DAYS;
+  const cutoff = Date.now() - keep * 86400000;
+  const ids = all("SELECT id FROM records WHERE deleted_at > 0 AND deleted_at <= ? AND collection = 'apis'", [cutoff]).map(
+    (r) => String(r.id)
+  );
+  run('DELETE FROM records WHERE deleted_at > 0 AND deleted_at <= ?', [cutoff]);
+  const removed = Number(db.getRowsModified()) || 0;
+  for (const id of ids) run('DELETE FROM case_api_links WHERE api_id = ?', [id]);
+  if (removed) schedulePersist();
+  return { removed, days: keep };
+}
+
+/** 统计。默认不含回收站，includeDeleted 才一起数（导出/整库口径用） */
+function counts(opts = {}) {
+  const includeDeleted = !!(opts && opts.includeDeleted);
+  const rows = all(
+    'SELECT collection, COUNT(*) AS n FROM records' + (includeDeleted ? '' : ' WHERE deleted_at = 0') + ' GROUP BY collection'
+  );
   const out = {};
   for (const r of rows) out[r.collection] = r.n;
   return out;
@@ -555,7 +683,7 @@ function lastSyncChanges() {
 
 function apiIndex() {
   const map = new Map();
-  for (const row of all("SELECT * FROM records WHERE collection = 'apis'")) {
+  for (const row of all("SELECT * FROM records WHERE collection = 'apis' AND deleted_at = 0")) {
     const rec = hydrate(row);
     const key = apiKey(rec.data.method, rec.data.url);
     if (key && !map.has(key)) map.set(key, rec);
@@ -683,11 +811,22 @@ function linkIndexOf(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * 用例 ↔ 接口关联。
+ *
+ * 关联表本身也有软删除的坑：接口记录进了回收站，指向它的关联不该再冒出来。
+ * 所以下面几个查询都 join 一次 records 并卡 deleted_at = 0 ——
+ * 记录一移入回收站，关联自然「看不见」；恢复回来就又能看见。
+ * （真正 DELETE 关联只发生在 purge / clearTrash / purgeExpired 里。）
+ */
 const links = {
   /** 某个接口记录下挂了哪些用例 */
   forApi(apiId) {
     if (!apiId) return [];
-    return all('SELECT * FROM case_api_links WHERE api_id = ? ORDER BY created_at, id', [String(apiId)]).map(linkHydrate);
+    return all(
+      'SELECT l.* FROM case_api_links l JOIN records r ON r.id = l.api_id AND r.deleted_at = 0 WHERE l.api_id = ? ORDER BY l.created_at, l.id',
+      [String(apiId)]
+    ).map(linkHydrate);
   },
 
   /** 某条用例（文件 + 标题）挂了哪些接口 */
@@ -695,15 +834,18 @@ const links = {
     const file = String(filePath || '').trim();
     const title = String(caseTitle || '').trim();
     if (!file || !title) return [];
-    return all('SELECT * FROM case_api_links WHERE file_path = ? AND case_title = ? ORDER BY created_at, id', [file, title]).map(
-      linkHydrate
-    );
+    return all(
+      'SELECT l.* FROM case_api_links l JOIN records r ON r.id = l.api_id AND r.deleted_at = 0 WHERE l.file_path = ? AND l.case_title = ? ORDER BY l.created_at, l.id',
+      [file, title]
+    ).map(linkHydrate);
   },
 
   /** api_id → 关联条数，列表页角标/详情页数字用 */
   counts() {
     const out = {};
-    for (const r of all('SELECT api_id, COUNT(*) AS n FROM case_api_links GROUP BY api_id')) {
+    for (const r of all(
+      'SELECT l.api_id AS api_id, COUNT(*) AS n FROM case_api_links l JOIN records r ON r.id = l.api_id AND r.deleted_at = 0 GROUP BY l.api_id'
+    )) {
       out[r.api_id] = Number(r.n);
     }
     return out;
@@ -932,6 +1074,7 @@ function restoreFrom(filePath) {
   db.run(SCHEMA);
   db.run(migrations.LINK_DDL);
   lastMigration = migrate();
+  ensureTrashSchema();
   persist();
 
   return {
@@ -944,7 +1087,8 @@ function restoreFrom(filePath) {
 }
 
 function exportAll(includeSecrets, collection) {
-  const where = collection ? ' WHERE collection = ?' : '';
+  // 回收站里的不导出：导出的是「还在的东西」，恢复用的整库备份另走 .db
+  const where = collection ? ' WHERE collection = ? AND deleted_at = 0' : ' WHERE deleted_at = 0';
   const rows = all(`SELECT * FROM records${where} ORDER BY collection, updated_at DESC`, collection ? [collection] : []).map(
     hydrate
   );
@@ -996,7 +1140,9 @@ function importAll(payload, only) {
 
     // 带 id 且本地没有这条 → 保留原 id。
     // 用例↔接口关联是按 api 记录 id 挂的，换机器后 id 变了关联就全断了。
-    const existing = item.id ? get(String(item.id)) : null;
+    // 查重连回收站一起查：回收站里同 id 的走「更新」分支，顺带复活，
+    // 否则会走 INSERT 撞主键。
+    const existing = item.id ? get(String(item.id), { includeDeleted: true }) : null;
     if (existing && existing.collection === item.collection) {
       // 同一个 id 已存在 → 原地更新，重复导入同一份文件不会翻倍
       save({ id: String(item.id), collection: item.collection, data: item.data || {}, tags: item.tags || [], favorite: !!item.favorite });
@@ -1092,6 +1238,13 @@ module.exports = {
   get,
   save,
   remove,
+  purge,
+  restore,
+  listTrash,
+  countTrash,
+  clearTrash,
+  purgeExpired,
+  TRASH_RETENTION_DAYS,
   counts,
   links,
   syncApis,

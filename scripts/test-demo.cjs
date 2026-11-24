@@ -143,7 +143,7 @@ const collections = require('../shared/collections.js');
   /* ============================================================
    * 6. IPC / 前端接线
    * ============================================================ */
-  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+  const mainSrc = require('./_electron-src.cjs').readElectronSource();
   const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
   const settingsSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'SettingsPage.tsx'), 'utf8');
 

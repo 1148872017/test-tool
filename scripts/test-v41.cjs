@@ -13,7 +13,7 @@ const envSrc = fs.readFileSync(path.join(root, 'src', 'components', 'EnvCard.tsx
 const detailSrc = fs.readFileSync(path.join(root, 'src', 'components', 'RecordDetail.tsx'), 'utf8');
 const dataSrc = fs.readFileSync(path.join(root, 'src', 'pages', 'DataTool.tsx'), 'utf8');
 const utilsSrc = fs.readFileSync(path.join(root, 'src', 'utils.ts'), 'utf8');
-const mainSrc = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
+const mainSrc = require('./_electron-src.cjs').readElectronSource();
 const preloadSrc = fs.readFileSync(path.join(root, 'electron', 'preload.js'), 'utf8');
 
 /* ============================================================
@@ -120,7 +120,7 @@ check('preload 有 pickDir', /pickDir:/.test(preloadSrc), 'no preload');
  * ============================================================ */
 {
   const faker = require('../shared/faker.js');
-  check('faker 有 11 种类型', faker.TYPES.length === 11, faker.TYPES.length);
+  check('faker 有 14 种类型', faker.TYPES.length === 14, faker.TYPES.length);
   check('faker 能生成姓名', typeof faker.genOne('name') === 'string' && faker.genOne('name').length >= 2, 'bad');
   check('faker 能生成手机号', /^1\d{10}$/.test(faker.genOne('phone')), faker.genOne('phone'));
   check('faker 能生成身份证', /^\d{17}[\dX]$/.test(faker.genOne('idcard')), 'bad');

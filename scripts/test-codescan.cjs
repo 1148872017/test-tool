@@ -131,7 +131,7 @@ check('不存在目录报错', cs.scanHardcoded('D:/nonexistent-xyz').ok === fal
 check('覆盖：空目录报错', cs.buildCoverage([], '').ok === false);
 
 /* ---------- 8. IPC ---------- */
-const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+const mainSrc = require('./_electron-src.cjs').readElectronSource();
 check('有 codescan:coverage', /ipcMain\.handle\('codescan:coverage'/.test(mainSrc), 'no coverage');
 check('有 codescan:hardcoded', /ipcMain\.handle\('codescan:hardcoded'/.test(mainSrc), 'no hardcoded');
 check('有 codescan:pickDir', /ipcMain\.handle\('codescan:pickDir'/.test(mainSrc), 'no pickDir');
@@ -143,7 +143,9 @@ check('preload 有 codescanHardcoded', /codescanHardcoded:/.test(preloadSrc), 'n
 /* ---------- 页面覆盖：IPC + 前端 ---------- */
 check('IPC 支持 kind 参数', /kind === 'page' \? 'page' : 'api'/.test(mainSrc), 'no kind');
 check('IPC 从 pages 集合读', /store\.list\('pages'\)/.test(mainSrc), 'no pages list');
-check('preload 传 kind + modules', /codescanCoverage: \(root, kind, modules\)/.test(preloadSrc), 'no params');
+// 只断言「传了 kind + modules」；v0.41.3 起末尾会多一个 ruleIds 参数，
+// 所以这里不写死右括号（否则主控补 preload 时这条会假报失败）。
+check('preload 传 kind + modules', /codescanCoverage: \(root, kind, modules/.test(preloadSrc), 'no params');
 const scanPageSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'CodeScanPage.tsx'), 'utf8');
 check('前端有 covKind 状态', /covKind/.test(scanPageSrc), 'no covKind');
 check('前端有「页面覆盖」按钮', /页面覆盖/.test(scanPageSrc), 'no page button');

@@ -155,7 +155,7 @@ check('解析出原表名', list[0].table === 't_order', list[0].table);
 check('解析出时间', list[0].stamp === '2026-11-24 11:30:00', list[0].stamp);
 
 /* ---------- 12. IPC 已注册 ---------- */
-const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+const mainSrc = require('./_electron-src.cjs').readElectronSource();
 check('有 jmxgen:preview', /ipcMain\.handle\('jmxgen:preview'/.test(mainSrc), 'no preview');
 check('有 jmxgen:save', /ipcMain\.handle\('jmxgen:save'/.test(mainSrc), 'no save');
 check('有 sqlgen:snapshot', /ipcMain\.handle\('sqlgen:snapshot'/.test(mainSrc), 'no snapshot');

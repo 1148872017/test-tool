@@ -143,7 +143,7 @@ check('detectAll 返回 4 个字段', ['java', 'python', 'mvn', 'jmeter'].every(
 check('detect 找不到返回空串', runner.detect('nonexistent-xyz-abc') === '', runner.detect('nonexistent-xyz-abc'));
 
 /* ---------- 5. IPC 已注册 ---------- */
-const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+const mainSrc = require('./_electron-src.cjs').readElectronSource();
 check('有 runner:list', /ipcMain\.handle\('runner:list'/.test(mainSrc), 'no runner:list');
 check('有 runner:run', /ipcMain\.handle\('runner:run'/.test(mainSrc), 'no runner:run');
 check('有 runner:cancel', /ipcMain\.handle\('runner:cancel'/.test(mainSrc), 'no runner:cancel');
@@ -236,7 +236,7 @@ if (pw.found) {
 }
 
 /* ---------- 13. 设置项：手动指定环境路径 ---------- */
-const mainSrc2 = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+const mainSrc2 = require('./_electron-src.cjs').readElectronSource();
 check('DEFAULT_SETTINGS 有 javaHome', /javaHome: ''/.test(mainSrc2), 'no javaHome');
 check('DEFAULT_SETTINGS 有 pythonPath', /pythonPath: ''/.test(mainSrc2), 'no pythonPath');
 check('DEFAULT_SETTINGS 有 mvnPath', /mvnPath: ''/.test(mainSrc2), 'no mvnPath');
@@ -287,7 +287,7 @@ check('卸载页说明不删环境', /不会删除：已安装的 JDK/.test(nsh)
 
 
 /* ---------- 17. JMeter 字段名（jmeterPath 不是 jmeterDir）---------- */
-const mainSrc3 = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+const mainSrc3 = require('./_electron-src.cjs').readElectronSource();
 check('用 settings.jmeterPath', /env\.jmeter = settings\.jmeterPath/.test(mainSrc3), 'wrong field');
 check('没有 settings.jmeterDir 残留', !/settings\.jmeterDir/.test(mainSrc3), 'jmeterDir remains');
 check('runner:list 也返回 jmeter', /env\.jmeter = settings\.jmeterPath \|\| '';\s*\n\s*return \{/.test(mainSrc3), 'list not returning jmeter');

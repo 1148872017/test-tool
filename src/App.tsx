@@ -19,6 +19,7 @@ import CasePage from './pages/CasePage';
 import JmxPage from './pages/JmxPage';
 import KnowledgePage from './pages/KnowledgePage';
 import NotesPage from './pages/NotesPage';
+import TrashPage from './pages/TrashPage';
 import { COLLECTIONS } from '../shared/collections';
 
 /**
@@ -147,6 +148,8 @@ export default function App() {
   const [locked, setLocked] = useState(true);
   const [route, setRoute] = useState<any>({ type: 'collection', key: 'sites' });
   const [counts, setCounts] = useState<Record<string, number>>({});
+  /** 回收站角标：单独取，不进 counts（counts 的 key 就是集合 key） */
+  const [trashCount, setTrashCount] = useState(0);
   const lastActive = useRef(Date.now());
 
   useEffect(() => {
@@ -170,6 +173,14 @@ export default function App() {
       .counts()
       .then(setCounts)
       .catch(() => {});
+    // 回收站条数单独取：counts 的每个 key 都对应一个集合，混进去会把
+    // 「清除数据后所有集合都为空」这类判断搞乱
+    const trashCountFn = (api as any).trashCount;
+    if (typeof trashCountFn === 'function') {
+      trashCountFn()
+        .then((n: number) => setTrashCount(Number(n) || 0))
+        .catch(() => {});
+    }
   };
 
   useEffect(() => {
@@ -279,7 +290,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Sidebar route={route} onNavigate={setRoute} counts={counts} onLock={doLock} />
+      <Sidebar route={route} onNavigate={setRoute} counts={counts} onLock={doLock} trashCount={trashCount} />
       <main className="main">
         {conf ? (
           <CollectionPage
@@ -304,6 +315,8 @@ export default function App() {
         {route.type === 'jmx' ? <JmxPage /> : null}
         {route.type === 'kb' ? <KnowledgePage /> : null}
         {route.type === 'notes' ? <NotesPage /> : null}
+        {/* 回收站：常规列表看不到的已删除记录在这里恢复 / 彻底删除 */}
+        {route.type === 'trash' ? <TrashPage onChanged={refreshCounts} /> : null}
         {route.type === 'tool' && route.key === 'json' ? <JsonTool /> : null}
         {route.type === 'tool' && route.key === 'data' ? <DataTool /> : null}
         {route.type === 'tool' && route.key === 'toolbox' ? <Toolbox /> : null}

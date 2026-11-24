@@ -91,7 +91,9 @@ check('选账号弹窗显示角色', /ROLE_OPTIONS\.find/.test(pageSrc), 'picker
 
 /* ---------- 7. 迁移 ---------- */
 const migSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'migrations.js'), 'utf8');
-check('SCHEMA_VERSION 是 5', /SCHEMA_VERSION = 5/.test(migSrc), 'not 5');
+const { SCHEMA_VERSION } = require(path.join(__dirname, '..', 'electron', 'migrations'));
+// 版本号会随迁移增加，这里只断言「当前版本 ≥ v5」——v5 那套迁移还在不在才是重点
+check('SCHEMA_VERSION 已到 v5 之后', SCHEMA_VERSION >= 5 && new RegExp('SCHEMA_VERSION = ' + SCHEMA_VERSION).test(migSrc), SCHEMA_VERSION);
 check('有 v5 迁移', /to: 5/.test(migSrc), 'no v5');
 check('v5 迁移 accounts 到 sites', /api\.records\('accounts'\)/.test(migSrc), 'no accounts read');
 check('v5 删掉 accounts 集合', /DELETE FROM records WHERE collection = 'accounts'/.test(migSrc), 'no delete');
@@ -208,7 +210,7 @@ check('用 json_set 置空密码', /json_set\(data/.test(storeSrc4), 'no json_se
 check('嵌套数组字段整体排除', /split\('\[\]'\)\[0\]/.test(storeSrc4), 'no nested handling');
 
 /* ---------- 19. openUrl 自动补协议（问题 2）---------- */
-const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+const mainSrc = require('./_electron-src.cjs').readElectronSource();
 check('openUrl 自动补 https', /u = 'https:\/\/' \+ u/.test(mainSrc), 'no auto protocol');
 check('openUrl 仍限制 http/https', /if \(!\/\^https\?:/.test(mainSrc), 'no protocol guard');
 check('openUrl 去掉多余斜杠', mainSrc.indexOf("replace(/^\\/+/") >= 0, 'no slash trim');
