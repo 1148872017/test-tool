@@ -2610,3 +2610,34 @@ body.has-bg .ant-table-tbody > tr > td {
   white-space: pre;
   tab-size: 2;
 }
+/* ===== 测试数据：多字段表格 ===== */
+.data-multi-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.data-multi-table th,
+.data-multi-table td {
+  padding: 5px 10px;
+  text-align: left;
+  border-bottom: 1px solid #f5f6fb;
+  white-space: nowrap;
+}
+.data-multi-table th {
+  position: sticky;
+  top: 0;
+  background: #f7f8fc;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #4a5165;
+  z-index: 1;
+}
+.data-multi-table tbody tr:hover {
+  background: #fafbff;
+}
+/* ===== 压测报告：按接口统计 ===== */
+.report-labels-title {
+  margin-top: 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #4a5165;
+}

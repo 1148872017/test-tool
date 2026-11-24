@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Slider, Tag, Tooltip, Alert } from 'antd';
+import { Button, Slider, Tooltip, Alert } from 'antd';
 import { BgColorsOutlined, PictureOutlined, DeleteOutlined, CheckOutlined } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';

@@ -45,6 +45,10 @@ contextBridge.exposeInMainWorld('api', {
   runnerOpenBrowserDir: () => invoke('runner:openBrowserDir'),
   pickFile: (payload) => invoke('util:pickFile', payload),
 
+  // ---- OpenAPI 文件直接解析 ----
+  openapiPickFile: () => invoke('openapi:pickFile'),
+  openapiParseFile: (file) => invoke('openapi:parseFile', { file }),
+
   // ---- JMeter 脚本生成 ----
   jmxgenPreview: (payload) => invoke('jmxgen:preview', payload),
   jmxgenSave: (payload) => invoke('jmxgen:save', payload),

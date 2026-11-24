@@ -361,6 +361,155 @@ const RULES = [
 ];
 
 /**
+ * 断言质量检查规则。
+ *
+ * 规划要求：「检查断言质量：是不是只有 assert response.status_code == 200，
+ *            而没有对业务 Body 进行校验」
+ *
+ * 思路：一个测试测试方法里，如果只有状态码断言、没有 body/字段断言 → 报「弱断言」。
+ *       这是启发式检查（正则 + 平衡扫描），不是 AST 分析。
+ */
+
+/** 状态码类断言（弱） */
+const STATUS_ONLY_PATTERNS = [
+  // Java REST Assured
+  /\.statusCode\s*\(\s*\d{3}\s*\)/g,
+  // Python requests
+  /assert\s+\w+\.status_code\s*==\s*\d{3}/g,
+  // Java assertEquals(status, 200)
+  /assertEquals\s*\(\s*\w*[Ss]tatus\w*\s*,\s*\d{3}/g,
+  // Playwright：只检查 response.ok()
+  /assert\s+\w+\.ok\b/g
+];
+
+/** Body / 字段类断言（强） */
+const BODY_PATTERNS = [
+  /\.body\s*\(/g,                              // REST Assured .body("...", ...)
+  /\.jsonPath\s*\(/g,                          // jsonPath 断言
+  /\.(?:get|post|put|delete)\w*\([^)]*\)\s*\.\s*json\s*\(/g, // resp.json()
+  /\bresp(?:onse)?\.json\(\)/gi,               // response.json()
+  /assertR?[Ee]quals?\s*\(\s*\w+\.(?:json|body)/g,
+  /\.(?:hasSize|containsString|equalTo|notNullValue)\s*\(/g, // Hamcrest
+  /expect\s*\([^)]*\)\s*\.\s*to(?:Be|Have|Contain)/g,       // Playwright expect
+  /assert\s+\w+\[\s*["']/g,                     // assert body["code"]
+  /assert\s+\w+\.(?:data|code|msg|result)\b/g,   // assert resp.data == ...
+  /\.json\(\)\s*\[/g,                          // resp.json()["code"]
+  /assert\s+.*\.json\(\)/g,                      // 任何 assert 里调用 json()
+  /\bjsonPath\s*\(/g,                            // jsonPath("$.code")
+  /\bgetBody\s*\(\s*\)\s*\./g                   // Java getBody().xxx
+];
+
+/** 是否是测试方法（启发式） */
+function looksLikeTest(block) {
+  return /@Test|def\s+test_|def\s+test[A-Z]|it\s*\(|public\s+void\s+test/i.test(block);
+}
+
+/**
+ * 扫描断言质量。
+ *
+ * 只在「测试方法」范围内统计，避免误报工具代码。
+ *
+ * @param {string} code
+ * @param {string} file
+ * @returns {any[]} 问题列表
+ */
+function scanAssertionQuality(code, file) {
+  const issues = [];
+  const text = String(code || '');
+  if (!looksLikeTest(text)) return issues;
+
+  // 按方法块粗切：找 @Test / def test_ / public void test 开头的段
+  //
+  // 两种语言结束块的判定方式不同：
+  //   Java / JS / Groovy → 大括号深度归零
+  //   Python           → 缩进归零（没有大括号，用深度判断会提前截断）
+  const isPython = /\.py$/i.test(String(file || '')) || (/^\s*def\s+test/m.test(text) && !/[{}]/.test(text));
+  const blocks = [];
+  const lines = text.split('\n');
+  let cur = null;
+  let depth = 0;
+  let baseIndent = 0;
+
+  const startRe = /@Test\b|def\s+test_|def\s+test[A-Z]|public\s+void\s+test/i;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const isStart = startRe.test(line);
+
+    if (isStart && !cur) {
+      cur = { start: i, lines: [] };
+      depth = 0;
+      baseIndent = line.search(/\S/);
+    }
+
+    if (!cur) continue;
+    cur.lines.push(line);
+
+    if (isPython) {
+      // Python：遇到下一行是「非空且缩进 <= 基准」→ 块结束（但至少收 2 行）
+      const next = i + 1 < lines.length ? lines[i + 1] : null;
+      const nextIsCode = next !== null && next.trim() !== '';
+      const nextIndent = nextIsCode ? next.search(/\S/) : -1;
+      const ended = !nextIsCode || nextIndent <= baseIndent;
+      if (ended && cur.lines.length >= 2) {
+        blocks.push(cur);
+        cur = null;
+      }
+    } else {
+      depth += (line.match(/\{/g) || []).length;
+      depth -= (line.match(/\}/g) || []).length;
+      const nextIsStart = i + 1 < lines.length && startRe.test(lines[i + 1]);
+      if ((depth <= 0 && cur.lines.length > 2) || nextIsStart) {
+        blocks.push(cur);
+        cur = null;
+      }
+    }
+  }  if (cur) blocks.push(cur);
+
+  for (const blk of blocks) {
+    const body = blk.lines.join('\n');
+
+    let hasStatus = false;
+    for (const re of STATUS_ONLY_PATTERNS) {
+      re.lastIndex = 0;
+      if (re.test(body)) {
+        hasStatus = true;
+        break;
+      }
+    }
+    if (!hasStatus) continue;
+
+    let hasBody = false;
+    for (const re of BODY_PATTERNS) {
+      re.lastIndex = 0;
+      if (re.test(body)) {
+        hasBody = true;
+        break;
+      }
+    }
+    if (hasBody) continue;
+
+    // 找方法名，便于定位
+    const nameLine = blk.lines.find((l) => /void\s+(\w+)\s*\(|def\s+(test\w+)/i.test(l)) || '';
+    const m = /void\s+(\w+)\s*\(|def\s+(test\w+)/i.exec(nameLine);
+    const methodName = m ? m[1] || m[2] : '（未知方法）';
+
+    issues.push({
+      rule: 'weak-assertion',
+      label: '断言过弱',
+      severity: 'medium',
+      hint: '只校验了状态码，没有校验业务 Body / 关键字段 —— 接口返回 200 但业务失败时抓不到',
+      file,
+      line: blk.start + 1,
+      snippet: methodName + '() 只有状态码断言',
+      methodName
+    });
+  }
+
+  return issues;
+}
+
+/**
  * 扫描硬编码问题。
  *
  * @param {string} root
@@ -372,7 +521,7 @@ const RULES = [
  *   message?: string
  * }}
  */
-function scanHardcoded(root) {
+function scanHardcoded(root, opts = {}) {
   const base = String(root || '').trim();
   if (!base || !fs.existsSync(base)) {
     return { ok: false, issues: [], summary: { high: 0, medium: 0, low: 0, total: 0 }, scannedFiles: 0, message: '代码目录不存在' };
@@ -415,6 +564,16 @@ function scanHardcoded(root) {
     }
   }
 
+  // 断言质量检查（单独一轮，按方法块扫）
+  const enableAssertion = opts.enableAssertion !== false;
+  if (enableAssertion) {
+    for (const file of files) {
+      const code = readSafe(file);
+      if (!code) continue;
+      issues.push(...scanAssertionQuality(code, file));
+    }
+  }
+
   const summary = { high: 0, medium: 0, low: 0, total: issues.length };
   for (const it of issues) summary[it.severity]++;
 
@@ -427,6 +586,7 @@ function scanHardcoded(root) {
 
 module.exports = {
   collectFiles,
+  scanAssertionQuality,
   extractPaths,
   normalizePath,
   pathMatches,

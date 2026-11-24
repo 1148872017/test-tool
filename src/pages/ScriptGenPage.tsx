@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Input, InputNumber, Select, Tag, Alert, Space, Segmented, Tooltip, Checkbox } from 'antd';
+import { Button, Input, InputNumber, Select, Alert, Space, Segmented, Checkbox } from 'antd';
 import {
   PlayCircleOutlined,
   SaveOutlined,
@@ -42,6 +42,7 @@ export default function ScriptGenPage() {
 
   /* ============ MySQL SQL ============ */
   const [sqlMode, setSqlMode] = useState<'snapshot' | 'cleanup' | 'restore'>('snapshot');
+  const [dialect, setDialect] = useState<'mysql' | 'sqlite'>('mysql');
   const [database, setDatabase] = useState('test_db');
   const [snapMode, setSnapMode] = useState<'table' | 'dump'>('table');
   const [snapTables, setSnapTables] = useState('');
@@ -141,11 +142,11 @@ export default function ScriptGenPage() {
           .split(/[,，\s]+/)
           .map((s) => s.trim())
           .filter(Boolean);
-        res = await api.sqlgenSnapshot({ database, tables, mode: snapMode });
+        res = await api.sqlgenSnapshot({ database, tables, mode: snapMode, dialect });
       } else if (sqlMode === 'cleanup') {
-        res = await api.sqlgenCleanup({ database, tables: tableOps, confirm: confirmClear });
+        res = await api.sqlgenCleanup({ database, tables: tableOps, confirm: confirmClear, dialect });
       } else {
-        res = await api.sqlgenRestore({ database, pairs: restorePairs });
+        res = await api.sqlgenRestore({ database, pairs: restorePairs, dialect });
       }
 
       if (!res.ok) {
@@ -336,12 +337,37 @@ export default function ScriptGenPage() {
               showIcon
               style={{ marginBottom: 10 }}
               message="只生成 SQL，不连数据库、不执行"
-              description="复制到你的 MySQL 客户端执行。平台不保存数据库密码。"
+              description={
+                dialect === 'sqlite'
+                  ? '复制到你的 SQLite 客户端（DB Browser / DBeaver / 命令行）执行。平台不保存任何连接信息。'
+                  : '复制到你的 MySQL 客户端执行。平台不保存数据库密码。'
+              }
             />
 
             <div className="scriptgen-field">
-              <label>库名</label>
-              <Input size="small" value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="test_db" />
+              <label>数据库类型</label>
+              <Segmented
+                size="small"
+                value={dialect}
+                onChange={(v) => {
+                  setDialect(v as 'mysql' | 'sqlite');
+                  setSqlCode('');
+                }}
+                options={[
+                  { label: 'MySQL', value: 'mysql' },
+                  { label: 'SQLite', value: 'sqlite' }
+                ]}
+              />
+            </div>
+
+            <div className="scriptgen-field">
+              <label>{dialect === 'sqlite' ? '库文件名（用于注释，SQLite 一个文件就是一个库）' : '库名'}</label>
+              <Input
+                size="small"
+                value={database}
+                onChange={(e) => setDatabase(e.target.value)}
+                placeholder={dialect === 'sqlite' ? 'test_db（会当成 test_db.db）' : 'test_db'}
+              />
             </div>
 
             <div className="scriptgen-field">
@@ -372,7 +398,7 @@ export default function ScriptGenPage() {
                     onChange={(v) => setSnapMode(v as any)}
                     options={[
                       { label: '建备份表', value: 'table' },
-                      { label: 'mysqldump 命令', value: 'dump' }
+                      { label: dialect === 'sqlite' ? 'sqlite3 导出命令' : 'mysqldump 命令', value: 'dump' }
                     ]}
                   />
                 </div>
@@ -417,7 +443,7 @@ export default function ScriptGenPage() {
                               style={{ width: '100%' }}
                               options={[
                                 { value: 'delete', label: 'DELETE' },
-                                { value: 'truncate', label: 'TRUNCATE' },
+                                { value: 'truncate', label: dialect === 'sqlite' ? '清空(无TRUNCATE)' : 'TRUNCATE' },
                                 { value: 'drop', label: 'DROP' }
                               ]}
                             />
@@ -449,7 +475,7 @@ export default function ScriptGenPage() {
                     showIcon
                     icon={<WarningOutlined />}
                     style={{ marginBottom: 8 }}
-                    message="有 TRUNCATE / DROP 操作，会整表清空"
+                    message={dialect === 'sqlite' ? '有清空表 / DROP 操作，会整表清空' : '有 TRUNCATE / DROP 操作，会整表清空'}
                     description={
                       <Checkbox checked={confirmClear} onChange={(e) => setConfirmClear(e.target.checked)}>
                         我确认这是测试库，可以整表清空

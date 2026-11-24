@@ -259,6 +259,22 @@ const SEED: Record<string, any[]> = {
       updated_at: now() - 3500000
     }
   ]
+,
+  pages: [
+    {
+      id: 'pg1',
+      collection: 'pages',
+      title: '登录页',
+      data: {
+        name: '登录页',
+        url: '/login',
+        project: 'OTA-automation',
+        elements: 'usernameInput = #username\npasswordInput = #password\nsubmitBtn = button[type=submit]\nrememberCheckbox = input[name=remember]',
+        note: '演示数据'
+      },
+      tags: []
+    }
+  ]
 };
 
 /** 预览模式的压测报告（真机上是扫描目录得到的） */
@@ -526,19 +542,34 @@ export function installMockIfNeeded() {
     }),
     jmxgenSave: async () => ({ ok: false, canceled: true }),
 
-    /* ---- MySQL SQL 生成（mock）---- */
-    sqlgenSnapshot: async () => ({
-      ok: true,
-      sql: '-- MySQL 测试库快照（建备份表）\n-- mock 预览\n\nUSE `test_db`;\n\n-- 快照：t_order → bak_t_order_20261124_120000\nCREATE TABLE `bak_t_order_20261124_120000` LIKE `t_order`;\nINSERT INTO `bak_t_order_20261124_120000` SELECT * FROM `t_order`;\n'
-    }),
-    sqlgenCleanup: async () => ({
-      ok: true,
-      sql: '-- MySQL 测试数据清理\n-- mock 预览\n\nUSE `test_db`;\n\nDELETE FROM `t_order` WHERE create_time < \'2026-01-01\';\n'
-    }),
-    sqlgenRestore: async () => ({
-      ok: true,
-      sql: '-- MySQL 测试数据还原\n-- mock 预览\n\nUSE `test_db`;\n\nTRUNCATE TABLE `t_order`;\nINSERT INTO `t_order` SELECT * FROM `bak_t_order_20261124_120000`;\n'
-    }),
+    /* ---- MySQL / SQLite SQL 生成（mock）---- */
+    sqlgenSnapshot: async (payload: any) => {
+      const sq = payload && payload.dialect === 'sqlite';
+      return {
+        ok: true,
+        sql: sq
+          ? '-- 测试库快照（建备份表）（SQLite）\n-- mock 预览\n\n-- 快照：t_order → bak_t_order_20261124_120000\nCREATE TABLE "bak_t_order_20261124_120000" AS SELECT * FROM "t_order";\n'
+          : '-- 测试库快照（建备份表）（MySQL）\n-- mock 预览\n\nUSE `test_db`;\n\n-- 快照：t_order → bak_t_order_20261124_120000\nCREATE TABLE `bak_t_order_20261124_120000` LIKE `t_order`;\nINSERT INTO `bak_t_order_20261124_120000` SELECT * FROM `t_order`;\n'
+      };
+    },
+    sqlgenCleanup: async (payload: any) => {
+      const sq = payload && payload.dialect === 'sqlite';
+      return {
+        ok: true,
+        sql: sq
+          ? '-- 测试数据清理（SQLite）\n-- mock 预览\n\nPRAGMA foreign_keys = OFF;\n\nDELETE FROM "t_order";\nDELETE FROM sqlite_sequence WHERE name = \'t_order\';\n\nPRAGMA foreign_keys = ON;\nVACUUM;\n'
+          : '-- 测试数据清理（MySQL）\n-- mock 预览\n\nUSE `test_db`;\n\nDELETE FROM `t_order` WHERE create_time < \'2026-01-01\';\n'
+      };
+    },
+    sqlgenRestore: async (payload: any) => {
+      const sq = payload && payload.dialect === 'sqlite';
+      return {
+        ok: true,
+        sql: sq
+          ? '-- 测试数据还原（SQLite）\n-- mock 预览\n\nPRAGMA foreign_keys = OFF;\n\nDELETE FROM "t_order";\nINSERT INTO "t_order" SELECT * FROM "bak_t_order_20261124_120000";\n\nPRAGMA foreign_keys = ON;\n'
+          : '-- 测试数据还原（MySQL）\n-- mock 预览\n\nUSE `test_db`;\n\nTRUNCATE TABLE `t_order`;\nINSERT INTO `t_order` SELECT * FROM `bak_t_order_20261124_120000`;\n'
+      };
+    },
     sqlgenListBackups: async () => ({ ok: true, list: [] }),
 
     /* ---- 代码生成（mock）---- */

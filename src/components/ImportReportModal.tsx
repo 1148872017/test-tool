@@ -210,25 +210,67 @@ export default function ImportReportModal({ open, onClose, onImport }: Props) {
             />
 
             {picked.labels && picked.labels.length ? (
-              <Table
-                style={{ marginTop: 12 }}
-                size="small"
-                rowKey="label"
-                pagination={false}
-                dataSource={picked.labels}
-                columns={[
-                  { title: '接口 / 采样器', dataIndex: 'label', ellipsis: true },
-                  { title: '样本', dataIndex: 'samples', width: 90 },
-                  {
-                    title: '错误',
-                    dataIndex: 'fails',
-                    width: 90,
-                    render: (v: number) => (v ? <span style={{ color: '#e5534b' }}>{v}</span> : <span className="muted">0</span>)
-                  },
-                  { title: '平均', dataIndex: 'avg', width: 100, render: (v: any) => fmtMs(v) },
-                  { title: 'P95', dataIndex: 'p95', width: 100, render: (v: any) => fmtMs(v) }
-                ]}
-              />
+              <>
+                <div className="report-labels-title">
+                  <span>按接口统计（错误率高的排前面）</span>
+                </div>
+                <Table
+                  style={{ marginTop: 6 }}
+                  size="small"
+                  rowKey="label"
+                  pagination={false}
+                  dataSource={[...picked.labels].sort((a: any, b: any) => {
+                    // 错误率降序；错误率相同则按 P95 降序（最慢的靠前）
+                    const ea = Number(a.errRate) || 0;
+                    const eb = Number(b.errRate) || 0;
+                    if (eb !== ea) return eb - ea;
+                    return (Number(b.p95) || 0) - (Number(a.p95) || 0);
+                  })}
+                  columns={[
+                    {
+                      title: '接口 / 采样器',
+                      dataIndex: 'label',
+                      ellipsis: true,
+                      render: (v: string, r: any) => {
+                        const bad = (Number(r.errRate) || 0) > 0;
+                        return (
+                          <span style={{ color: bad ? '#e5534b' : undefined }}>
+                            {v}
+                            {bad && Number(r.errRate) >= 50 ? (
+                              <Tag color="red" style={{ marginLeft: 6 }}>
+                                重点
+                              </Tag>
+                            ) : null}
+                          </span>
+                        );
+                      }
+                    },
+                    { title: '样本', dataIndex: 'samples', width: 80 },
+                    {
+                      title: '错误',
+                      dataIndex: 'fails',
+                      width: 70,
+                      render: (v: number) => (v ? <span style={{ color: '#e5534b' }}>{v}</span> : <span className="muted">0</span>)
+                    },
+                    {
+                      title: '错误率',
+                      dataIndex: 'errRate',
+                      width: 90,
+                      render: (v: any) => {
+                        const n = Number(v) || 0;
+                        if (!n) return <span className="muted">0%</span>;
+                        return (
+                          <b style={{ color: n >= 50 ? '#e5534b' : n >= 10 ? '#f5a623' : '#8a90a2' }}>
+                            {fmtNum(n, 2)}%
+                          </b>
+                        );
+                      }
+                    },
+                    { title: '平均', dataIndex: 'avg', width: 90, render: (v: any) => fmtMs(v) },
+                    { title: 'P95', dataIndex: 'p95', width: 90, render: (v: any) => fmtMs(v) }
+                  ]}
+                />
+              </>
             ) : null}
 
             {picked.warnings && picked.warnings.length ? (

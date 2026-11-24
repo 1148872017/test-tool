@@ -59,7 +59,7 @@
 侧边栏按「测试工作流」分成四组：
 
 ```
-资产      网站管理 / SQL 片段 / 接口记录 / 测试执行     ← 存什么
+资产      网站管理 / SQL 片段 / 接口记录 / 测试执行 / 页面元素  ← 存什么
 索引      测试用例 / 压测脚本 / 知识库 / 测试笔记       ← 读什么（只读，不改你的文件）
 自动化    代码生成 / 代码调试 / 代码体检 / 脚本生成 / 报告分析  ← 写代码 / 跑 / 查
 辅助      测试数据 / JSON 工具 / 工具箱                ← 日常小工具
@@ -68,6 +68,7 @@
 | 功能 | 一句话说明 |
 |---|---|
 | **网站管理** | 一个站点存多个账号，一键打开 + 复制密码 |
+| **页面元素** | Playwright 定位器维护，一键生成 Page Object |
 | **SQL 片段** | 存常用 SQL，变量填完复制 |
 | **接口记录** | 从 Apifox 同步 / 粘贴 cURL 导入，一键复制成 cURL |
 | **测试执行** | 接口测试 / 压测跑一次记一笔，指标自动汇总成表 |
@@ -294,6 +295,18 @@ public class PetApiTest {
 4. 点 **生成预览** → 右侧看代码
 5. 点 **保存到文件** → 选目录 → 保存
 
+**接口从哪来？两种数据源**：
+
+| 数据源 | 适用 | 说明 |
+|---|---|---|
+| **接口记录** | 已经同步过的接口 | 从数据库选，一次一个 |
+| **OpenAPI 文件** | 手上只有一份 `openapi.json` / `yaml` | **直接读文件，不写数据库** |
+
+> **OpenAPI 文件模式的好处**：不污染「接口记录」表。
+> 别人给你一份接口文档，你只想生成几个测试类，用这个模式最干净。
+>
+> 支持 JSON 和 YAML；Swagger 2.0 会提示「请重新导出为 OpenAPI 3」。
+
 #### 代码调试：在平台里跑代码
 
 **痛点**：调 JMeter 的 Groovy 脚本要「改 jmx → 开 JMeter → 跑 → 看日志 → 关 JMeter」，一轮 2 分钟。
@@ -355,8 +368,31 @@ public class PetApiTest {
 | 严重程度 | 检查什么 |
 |---|---|
 | **高** | 硬编码密码、硬编码 Token/密钥 |
-| **中** | 硬编码 URL、`Thread.sleep()` |
+| **中** | 硬编码 URL、`Thread.sleep()`、**断言过弱** |
 | **低** | 绝对 XPath、深层 CSS 选择器 |
+
+**断言质量检查**：
+
+只校验了状态码、没校验业务 Body → 报「断言过弱」。
+
+```java
+// ❌ 会被报：接口返回 200 但业务失败时抓不到
+.then().statusCode(200);
+
+// ✅ 不报：有 Body 校验
+.then().statusCode(200).body("code", equalTo(0));
+```
+
+```python
+# ❌ 会被报
+assert resp.status_code == 200
+
+# ✅ 不报
+assert resp.status_code == 200
+assert resp.json()["code"] == 0
+```
+
+> 实现是**启发式**（正则 + 缩进/大括号切块），不是 AST。Python 按缩进切块，Java 按大括号。
 
 **效果示例**：
 
@@ -463,7 +499,24 @@ Timeout <N>ms waiting for #btn     ← 同一组
 
 **核心原则：只生成 SQL，不连数据库、不执行、不存密码。**
 
-复制到你的 MySQL 客户端（Navicat / DBeaver / 命令行）执行。
+**支持 MySQL 和 SQLite，可切换。**
+
+复制到你的数据库客户端（Navicat / DBeaver / DB Browser / 命令行）执行。
+
+**两种数据库的差异（平台会自动处理）**：
+
+| 操作 | MySQL | SQLite |
+|---|---|---|
+| 建备份表 | `CREATE TABLE bak LIKE src`（含索引） | `CREATE TABLE bak AS SELECT * FROM src`（只数据） |
+| 清空表 | `TRUNCATE TABLE x` | 没有 TRUNCATE → `DELETE FROM x` |
+| 重置自增 | `ALTER TABLE x AUTO_INCREMENT = 1` | `DELETE FROM sqlite_sequence WHERE name='x'` |
+| 外键开关 | `SET FOREIGN_KEY_CHECKS = 0` | `PRAGMA foreign_keys = OFF` |
+| 标识符 | ``name`` | `"name"` |
+| 库切换 | `USE db` | 没有（一个文件一个库） |
+| 空间回收 | 不需要 | `VACUUM`（DELETE 后文件不会自动变小） |
+| REPLACE | `REPLACE INTO` | `INSERT OR REPLACE` |
+
+> **SQLite 的「库名」**：只用于注释（比如 `test.db`），生成的 SQL 里不会有 `USE`。
 
 **三种操作**：
 
@@ -526,6 +579,38 @@ SET FOREIGN_KEY_CHECKS = 1;
 | 金额 | 1234.56 |
 | 订单号 | ORD20261124123456789 |
 
+**两种模式**：
+
+| 模式 | 生成什么 | 用在 |
+|---|---|---|
+| **单类型** | 每次一种（如 1000 个手机号） | 单字段参数化 |
+| **多字段组合** | 一行含多个字段（姓名+手机+邮箱+身份证） | **CSV Data Set / parametrize 用** |
+
+**多字段组合怎么用**：
+
+1. 切到「多字段组合」
+2. 填字段表：字段名 + 类型 + （可选）固定值
+3. 填数量 → 点「生成」
+4. 预览是表格（行=记录，列=字段）
+5. 点「导出 CSV」→ 带表头的多列文件
+
+```csv
+userName,mobile,email,idCard
+杨辉,13382202445,qa8769@corp.cn,420106200104133798
+李娜,13987654321,test1234@test.com,110101199002022345
+```
+
+**直接喂给测试脚本**：
+
+```python
+# pytest
+import csv
+with open('data.csv') as f:
+    for row in csv.DictReader(f):
+        assert login(row['mobile'], row['idCard'])['code'] == 0
+```
+
+> 「复制（TSV）」是**制表符分隔**，可以直接粘进 Excel 自动分列。
 **导出**：生成后点「导出 CSV」或「导出 JSON」，最多 10 万条。
 
 > CSV 带 BOM，Excel 打开中文不乱码。
@@ -546,12 +631,21 @@ Base64 编解码、时间戳转换、哈希（MD5/SHA1/SHA256/SHA512）、UUID �
 
 | 规划模块 | 状态 | 说明 |
 |---|---|---|
-| **一. 代码骨架生成** | ✅ 做了 | OpenAPI → Java/Python 骨架、Playwright POM、JSON → POJO/Pydantic |
-| **二. 压测辅助 + 造数** | ✅ 做了 | jmx 生成（脚本生成页）+ 造数导出（测试数据页）+ MySQL 快照/清理 SQL |
-| **三. 代码质量体检** | ⚠️ **部分** | 做了硬编码/脆弱定位扫描；**依赖冲突检查没做**（要解析 Maven 依赖树，成本高） |
-| **四. 覆盖矩阵** | ✅ 做了 | 接口清单 vs 代码路径（代码体检页） |
-| **五. 报告聚合** | ⚠️ **部分** | 做了 Allure 失败聚类 + Flaky 追踪；jmx jtl 图表已有独立入口（压测脚本页） |
+| **一. 代码骨架生成** | ✅ **全做了** | ① OpenAPI（JSON/YAML）→ Java/Python 骨架 ② 页面元素 → Playwright POM（**元素存库**）③ JSON → POJO/Pydantic ④ 断言模板库（脚本模板） |
+| **二. 压测辅助 + 造数** | ✅ **全做了** | ① jmx 生成（线程组/断言/RT 上限）② 造数（单类型 + **多字段组合**，导出 CSV/JSON）③ MySQL **和 SQLite** 快照/清理/还原 |
+| **三. 代码质量体检** | ⚠️ **部分** | ① UI 反模式（sleep/绝对XPath/深层CSS）✅ ② 硬编码（URL/Token/密码）✅ + **断言质量** ✅ ③ **依赖冲突检查没做** |
+| **四. 覆盖矩阵** | ⚠️ **部分** | ① 接口覆盖矩阵 ✅（接口清单 vs 代码路径）② **页面覆盖矩阵没做** ③ 用例映射：已有「用例↔接口关联」，没做 Excel 导入 |
+| **五. 报告聚合** | ✅ **全做了** | ① Allure 解析 + 失败聚类 + Flaky 追踪 ② jtl 分析（TPS/分位/**按接口错误率排序**） |
 | **六. Git 变更影响面** | ❌ **不做** | 收益低（IDE 的 Find Usages 更准），成本高（要解析 import 关系） |
+
+**4 项明确不做的原因**：
+
+| 不做 | 原因 |
+|---|---|
+| 依赖冲突检查 | 要解析 `pom.xml` 的完整依赖树（含传递依赖），还得联网查 Maven Central |
+| 页面覆盖矩阵 | 平台没有「页面清单」这个数据源，得有类似 Apifox 的页面文档才能对比 |
+| Excel 用例映射 | 已有「用例 ↔ 接口关联」功能，够用；Excel 格式千变万化，导入成本高 |
+| Git 变更影响面 | IDEA 的 Find Usages 更准，做了也是重复 |
 
 **技术栈差异**：规划里建议 FastAPI / Spring Boot，实际用的是 **Electron + Node**。
 功能一样能做，只是实现方式不同（模板引擎用 EJS 而不是 FreeMarker/Jinja2）。

@@ -20,6 +20,7 @@ const { RUNNERS, listRunners } = require('../shared/runners');
 const codegen = require('../shared/codegen');
 const jmxgen = require('../shared/jmxgen');
 const sqlgen = require('../shared/sqlgen');
+const openapifile = require('./openapifile');
 const allure = require('./allure');
 const codescan = require('./codescan');
 const { TOOLS, COLLECTION_MAP } = require('../shared/collections');
@@ -960,6 +961,28 @@ function registerIpc() {
     return { ok: true, list: sqlgen.listBackupTables(tables) };
   });
 
+  /* ==================== OpenAPI 文件直接解析 ==================== *
+   * 只读文件生成代码骨架，**不写接口记录表**。
+   * --------------------------------------------------------- */
+
+  /** 选 OpenAPI 文件（json / yaml / yml） */
+  ipcMain.handle('openapi:pickFile', async () => {
+    assertUnlocked();
+    const picked = await dialog.showOpenDialog(win, {
+      title: '选择 OpenAPI 文件',
+      filters: [{ name: 'OpenAPI', extensions: ['json', 'yaml', 'yml'] }],
+      properties: ['openFile']
+    });
+    if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+    return { ok: true, file: picked.filePaths[0] };
+  });
+
+  /** 解析 OpenAPI 文件，返回接口列表（不写库） */
+  ipcMain.handle('openapi:parseFile', async (e, { file } = {}) => {
+    assertUnlocked();
+    return openapifile.parseFile(String(file || ''));
+  });
+
   /* ==================== 代码骨架生成 ==================== *
    * 从接口记录 / JSON / 页面元素生成 Java/Python 代码骨架。
    * 纯模板替换，不做 AST。
@@ -992,8 +1015,10 @@ function registerIpc() {
       json: payload.json
     };
 
-    // 接口记录：从数据库读
-    if (payload.apiId) {
+    // 接口数据来源：优先 apiData（OpenAPI 文件解析结果），其次 apiId（查库）
+    if (payload.apiData) {
+      input.api = payload.apiData;
+    } else if (payload.apiId) {
       const rec = store.get(String(payload.apiId));
       if (!rec) return { ok: false, message: '接口记录不存在' };
       input.api = rec.data;
@@ -1018,7 +1043,9 @@ function registerIpc() {
       page: payload.page,
       json: payload.json
     };
-    if (payload.apiId) {
+    if (payload.apiData) {
+      input.api = payload.apiData;
+    } else if (payload.apiId) {
       const rec = store.get(String(payload.apiId));
       if (!rec) return { ok: false, message: '接口记录不存在' };
       input.api = rec.data;

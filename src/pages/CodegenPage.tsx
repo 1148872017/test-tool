@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Select, Button, Input, Tag, Alert, Space, Segmented, Empty } from 'antd';
+import { Select, Button, Input, Tag, Space, Segmented, Empty } from 'antd';
 import {
   CodeOutlined,
   SaveOutlined,
   CopyOutlined,
   ReloadOutlined,
-  FileTextOutlined
+  FileTextOutlined,
+  FolderOpenOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
@@ -29,7 +30,15 @@ export default function CodegenPage() {
   // 数据源
   const [apis, setApis] = useState<any[]>([]);
   const [apiId, setApiId] = useState('');
+  // 数据源：record = 从接口记录选；file = 直接导入 OpenAPI 文件
+  const [apiSource, setApiSource] = useState<'record' | 'file'>('record');
+  const [openapiFile, setOpenapiFile] = useState('');
+  const [openapiItems, setOpenapiItems] = useState<any[]>([]);
+  const [openapiIdx, setOpenapiIdx] = useState<number>(-1);
+  const [openapiBusy, setOpenapiBusy] = useState(false);
   const [jsonText, setJsonText] = useState('{\n  "code": 0,\n  "msg": "ok"\n}');
+  const [pages, setPages] = useState<any[]>([]);
+  const [pageId, setPageId] = useState('');
   const [pageName, setPageName] = useState('login');
   const [pageUrl, setPageUrl] = useState('/login');
   const [elements, setElements] = useState<PageElement[]>([
@@ -60,8 +69,51 @@ export default function CodegenPage() {
       } catch (e) {
         /* ignore */
       }
+      try {
+        const rows = await api.records('pages');
+        setPages(rows || []);
+      } catch (e) {
+        /* ignore */
+      }
     })();
   }, []);
+
+  /* ---------- 选并解析 OpenAPI 文件 ---------- */
+  const doPickOpenapi = async () => {
+    setOpenapiBusy(true);
+    try {
+      const picked = await api.openapiPickFile();
+      if (picked.canceled) return;
+      if (!picked.ok) {
+        toast(picked.message || '选择失败', 'error');
+        return;
+      }
+      const res = await api.openapiParseFile(picked.file);
+      if (!res.ok) {
+        toast(res.message || '解析失败', 'error');
+        setOpenapiItems([]);
+        return;
+      }
+      setOpenapiFile(picked.file);
+      setOpenapiItems(res.items || []);
+      setOpenapiIdx(res.items && res.items.length ? 0 : -1);
+      toast(`解析出 ${(res.items || []).length} 个接口`);
+    } catch (e: any) {
+      toast('导入失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      setOpenapiBusy(false);
+    }
+  };
+
+  /** 当前选中的接口数据（文件模式或记录模式） */
+  const currentApiData = () => {
+    if (apiSource === 'file') {
+      return openapiIdx >= 0 && openapiItems[openapiIdx] ? openapiItems[openapiIdx] : null;
+    }
+    if (!apiId) return null;
+    const hit = apis.find((a) => a.id === apiId);
+    return hit ? hit.data : null;
+  };
 
   /* ---------- 生成预览 ---------- */
   const doPreview = async () => {
@@ -69,12 +121,22 @@ export default function CodegenPage() {
     try {
       const payload: any = { targetKey, className };
       if (kind === 'api') {
-        if (!apiId) {
-          toast('请先选一个接口', 'warning');
-          setBusy(false);
-          return;
+        if (apiSource === 'file') {
+          const d = currentApiData();
+          if (!d) {
+            toast('请先从文件里选一个接口', 'warning');
+            setBusy(false);
+            return;
+          }
+          payload.apiData = d;
+        } else {
+          if (!apiId) {
+            toast('请先选一个接口', 'warning');
+            setBusy(false);
+            return;
+          }
+          payload.apiId = apiId;
         }
-        payload.apiId = apiId;
       } else if (kind === 'page') {
         payload.page = { name: pageName, url: pageUrl, elements };
       } else {
@@ -104,8 +166,10 @@ export default function CodegenPage() {
     setBusy(true);
     try {
       const payload: any = { targetKey, className };
-      if (kind === 'api') payload.apiId = apiId;
-      else if (kind === 'page') payload.page = { name: pageName, url: pageUrl, elements };
+      if (kind === 'api') {
+        if (apiSource === 'file') payload.apiData = currentApiData();
+        else payload.apiId = apiId;
+      } else if (kind === 'page') payload.page = { name: pageName, url: pageUrl, elements };
       else payload.json = jsonText;
 
       const res = await api.codegenSave(payload);
@@ -126,6 +190,36 @@ export default function CodegenPage() {
     if (!code) return;
     await api.copy(code, false);
     toast('代码已复制');
+  };
+
+  /** 把「名称 = 定位器」文本解析成元素数组 */
+  const parseElements = (text: string): PageElement[] => {
+    const out: PageElement[] = [];
+    for (const line of String(text || '').split('\n')) {
+      const t = line.trim();
+      if (!t) continue;
+      const i = t.indexOf('=');
+      if (i <= 0) continue;
+      out.push({
+        name: t.slice(0, i).trim(),
+        selector: t.slice(i + 1).trim(),
+        desc: ''
+      });
+    }
+    return out;
+  };
+
+  /** 从「页面元素」集合载入一个页面 */
+  const doLoadPage = (id: string) => {
+    setPageId(id);
+    const hit = pages.find((x) => x.id === id);
+    if (!hit) return;
+    const d = hit.data || {};
+    setPageName(String(d.name || ''));
+    setPageUrl(String(d.url || '/'));
+    const els = parseElements(d.elements || '');
+    if (els.length) setElements(els);
+    toast(`已载入「${d.name || ''}」（${els.length} 个元素）`);
   };
 
   /* ---------- 元素增删 ---------- */
@@ -189,46 +283,114 @@ export default function CodegenPage() {
         <div className="codegen-source">
           {kind === 'api' ? (
             <>
-              <div className="codegen-label">选接口</div>
-              <Select
+              <div className="codegen-label">数据源</div>
+              <Segmented
                 size="small"
-                style={{ width: '100%' }}
-                value={apiId}
-                onChange={setApiId}
-                placeholder={apis.length ? '从「接口记录」里选' : '还没有接口记录'}
-                showSearch
-                optionFilterProp="label"
-                options={apis.map((a) => ({
-                  value: a.id,
-                  label: `${a.data.method} ${a.data.url} · ${a.title}`
-                }))}
+                value={apiSource}
+                onChange={(v) => setApiSource(v as 'record' | 'file')}
+                options={[
+                  { label: '接口记录', value: 'record' },
+                  { label: 'OpenAPI 文件', value: 'file' }
+                ]}
               />
-              {apiId ? (
-                <div className="codegen-api-info">
-                  {(() => {
-                    const hit = apis.find((a) => a.id === apiId);
-                    if (!hit) return null;
-                    return (
-                      <>
-                        <div>
-                          <Tag color="blue">{hit.data.method}</Tag>
-                          <span className="mono">{hit.data.url}</span>
-                        </div>
-                        <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                          {hit.title}
-                          {hit.data.module ? ` · ${hit.data.module}` : ''}
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-              ) : null}
+
+              {apiSource === 'record' ? (
+                <>
+                  <Select
+                    size="small"
+                    style={{ width: '100%' }}
+                    value={apiId}
+                    onChange={setApiId}
+                    placeholder={apis.length ? '从「接口记录」里选' : '还没有接口记录'}
+                    showSearch
+                    optionFilterProp="label"
+                    options={apis.map((a) => ({
+                      value: a.id,
+                      label: `${a.data.method} ${a.data.url} · ${a.title}`
+                    }))}
+                  />
+                  {apiId ? (
+                    <div className="codegen-api-info">
+                      {(() => {
+                        const hit = apis.find((a) => a.id === apiId);
+                        if (!hit) return null;
+                        return (
+                          <>
+                            <div>
+                              <Tag color="blue">{hit.data.method}</Tag>
+                              <span className="mono">{hit.data.url}</span>
+                            </div>
+                            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                              {hit.title}
+                              {hit.data.module ? ' · ' + hit.data.module : ''}
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <Button
+                    size="small"
+                    icon={<FolderOpenOutlined />}
+                    onClick={doPickOpenapi}
+                    loading={openapiBusy}
+                    style={{ width: `100%` }}
+                  >
+                    {openapiFile ? '重新选择文件' : '选择 OpenAPI 文件（json / yaml）'}
+                  </Button>
+                  {openapiFile ? (
+                    <div className="muted mono" style={{ fontSize: 11.5, wordBreak: 'break-all' }}>
+                      {openapiFile}
+                    </div>
+                  ) : null}
+                  {openapiItems.length ? (
+                    <>
+                      <Select
+                        size="small"
+                        style={{ width: '100%' }}
+                        value={openapiIdx}
+                        onChange={setOpenapiIdx}
+                        showSearch
+                        optionFilterProp="label"
+                        options={openapiItems.map((it, i) => ({
+                          value: i,
+                          label: `${it.method} ${it.url} · ${it.name}`
+                        }))}
+                      />
+                      <div className="muted" style={{ fontSize: 11.5 }}>
+                        共 {openapiItems.length} 个接口（从文件解析，不影响「接口记录」）
+                      </div>
+                    </>
+                  ) : null}
+                </>
+              )}
             </>
           ) : null}
 
           {kind === 'page' ? (
             <>
-              <div className="codegen-label">页面信息</div>
+              <div className="codegen-label">从「页面元素」载入</div>
+              <Select
+                size="small"
+                style={{ width: '100%' }}
+                value={pageId}
+                onChange={doLoadPage}
+                allowClear
+                placeholder={pages.length ? '选一个已保存的页面' : '还没有页面（去「页面元素」新增）'}
+                showSearch
+                optionFilterProp="label"
+                options={pages.map((x) => ({
+                  value: x.id,
+                  label: `${x.data.name || ''} · ${x.data.url || ''}`
+                }))}
+              />
+
+              <div className="codegen-label" style={{ marginTop: 8 }}>
+                页面信息
+              </div>
               <Space direction="vertical" size={6} style={{ width: '100%' }}>
                 <Input
                   size="small"

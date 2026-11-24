@@ -210,6 +210,58 @@ const COLLECTIONS = [
   }
   // 测试笔记已改成 md 只读索引（见 electron/notes.js + src/pages/NotesPage.tsx），
   // 不再作为数据库集合存在。旧的 notes 记录如果出现在备份 JSON 里，导入时会被跳过。
+,
+  /**
+   * 页面元素（Playwright Page Object 生成用）。
+   *
+   * 规划要求「在平台里可视化维护页面元素名称和定位器，一键生成 POM」。
+   * 元素存在 elements 字段（JSON 数组：[{name, selector, desc}]）。
+   */
+  {
+    key: 'pages',
+    name: '页面元素',
+    group: '资产',
+    icon: 'LayoutOutlined',
+    desc: 'Playwright 页面元素定位器，一键生成 Page Object',
+    titleField: 'name',
+    titlePlaceholder: '如：登录页',
+    listFields: ['url', 'project'],
+    noFavorite: true,
+    fields: [
+      {
+        key: 'name',
+        label: '页面名',
+        type: 'text',
+        required: true,
+        placeholder: '如：登录页'
+      },
+      {
+        key: 'url',
+        label: '页面路径',
+        type: 'text',
+        required: true,
+        placeholder: '/login'
+      },
+      {
+        key: 'project',
+        label: '所属项目',
+        type: 'text',
+        placeholder: '如：OTA-automation（可留空）'
+      },
+      {
+        key: 'elements',
+        label: '元素定位器',
+        type: 'textarea',
+        placeholder: '每条一行，格式：名称 = 定位器\nusernameInput = #username\nsubmitBtn = button[type=submit]'
+      },
+      {
+        key: 'note',
+        label: '备注',
+        type: 'textarea',
+        placeholder: '可选'
+      }
+    ]
+  }
 ];
 
 /**

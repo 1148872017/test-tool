@@ -1,6 +1,12 @@
-import React, { useState } from 'react';
-import { InputNumber, Button, Select, Space, Tag, Tooltip } from 'antd';
-import { CopyOutlined, ThunderboltOutlined, DownloadOutlined } from '@ant-design/icons';
+import React, { useMemo, useState } from 'react';
+import { InputNumber, Input, Button, Select, Space, Tag, Tooltip, Segmented } from 'antd';
+import {
+  CopyOutlined,
+  ThunderboltOutlined,
+  DownloadOutlined,
+  PlusOutlined,
+  DeleteOutlined
+} from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
 
@@ -105,17 +111,77 @@ const TYPES = [
   { value: 'order', label: '订单号', fn: genOrderNo }
 ];
 
+/** 多字段组合里的一个字段 */
+type Field = {
+  name: string;
+  type: string;
+  /** 固定值（填了就不用随机生成） */
+  fixed: string;
+};
+
+/** 默认字段组合（开箱即用的「用户表」样例） */
+const DEFAULT_FIELDS: Field[] = [
+  { name: 'userName', type: 'name', fixed: '' },
+  { name: 'mobile', type: 'phone', fixed: '' },
+  { name: 'email', type: 'email', fixed: '' },
+  { name: 'idCard', type: 'idcard', fixed: '' }
+];
+
 export default function DataTool() {
+  // 单类型模式
   const [type, setType] = useState('phone');
-  const [count, setCount] = useState(5);
   const [rows, setRows] = useState<string[]>([]);
 
+  // 多字段模式
+  const [mode, setMode] = useState<'single' | 'multi'>('single');
+  const [fields, setFields] = useState<Field[]>(DEFAULT_FIELDS);
+  const [multiRows, setMultiRows] = useState<string[][]>([]);
+
+  const [count, setCount] = useState(5);
+
+  /** 上限 10 万（CSV 导出用，太多会卡） */
+  const normalizeCount = () => Math.max(1, Math.min(100000, Number(count) || 1));
+
   const generate = () => {
-    const def = TYPES.find((t) => t.value === type) || TYPES[0];
-    // 上限 10 万（CSV 导出用，太多会卡）
-    const n = Math.max(1, Math.min(100000, Number(count) || 1));
-    setRows(Array.from({ length: n }, () => def.fn()));
+    const n = normalizeCount();
+
+    if (mode === 'single') {
+      const def = TYPES.find((t) => t.value === type) || TYPES[0];
+      setRows(Array.from({ length: n }, () => def.fn()));
+      return;
+    }
+
+    // 多字段：每行按字段列表逐个生成
+    const valid = fields.filter((f) => f.name.trim());
+    if (!valid.length) {
+      toast('至少填一个字段名', 'warning');
+      return;
+    }
+    const resolved = valid.map((f) => ({
+      fixed: f.fixed,
+      fn: (TYPES.find((t) => t.value === f.type) || TYPES[0]).fn
+    }));
+    setMultiRows(
+      Array.from({ length: n }, () => resolved.map((r) => (r.fixed ? r.fixed : r.fn())))
+    );
   };
+
+  /* ---------- 字段增删改 ---------- */
+  const addField = () => setFields((prev) => prev.concat([{ name: '', type: 'name', fixed: '' }]));
+  const removeField = (i: number) => setFields((prev) => prev.filter((_, idx) => idx !== i));
+  const setField = (i: number, key: keyof Field, v: string) => {
+    setFields((prev) => {
+      const next = prev.slice();
+      next[i] = Object.assign({}, next[i], { [key]: v });
+      return next;
+    });
+  };
+
+  /** 当前模式下的有效字段名（导出用） */
+  const activeFieldNames = useMemo(
+    () => fields.filter((f) => f.name.trim()).map((f) => f.name.trim()),
+    [fields]
+  );
 
   const copyOne = async (v: string) => {
     await api.copy(v, false);
@@ -129,24 +195,48 @@ export default function DataTool() {
    * CSV 加 BOM，否则 Excel 打开中文乱码。
    */
   const doExport = (format: 'csv' | 'json') => {
-    if (!rows.length) return;
+    const isMulti = mode === 'multi';
+    const dataCount = isMulti ? multiRows.length : rows.length;
+    if (!dataCount) return;
+
     const def = TYPES.find((t) => t.value === type) || TYPES[0];
     const stamp = new Date().toISOString().replace(/[:T]/g, '-').replace(/\..+/, '');
     let content = '';
     let mime = '';
     let ext = '';
+    const baseName = isMulti ? 'multi' : def.value;
+
+    // CSV 转义：值里有逗号/引号/换行要包起来
+    const esc = (v: string) => {
+      const t = String(v);
+      return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+    };
 
     if (format === 'csv') {
-      // CSV：表头 + 每行一个值（值里有逗号/引号要转义）
-      const esc = (v: string) => {
-        const t = String(v);
-        return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
-      };
-      content = '\uFEFF' + def.label + '\n' + rows.map(esc).join('\n');
+      if (isMulti) {
+        // 表头 = 字段名，每行 = 一条记录
+        const lines = [activeFieldNames.map(esc).join(',')];
+        for (const row of multiRows) lines.push(row.map(esc).join(','));
+        content = '\uFEFF' + lines.join('\n');
+      } else {
+        content = '\uFEFF' + def.label + '\n' + rows.map(esc).join('\n');
+      }
       mime = 'text/csv;charset=utf-8';
       ext = 'csv';
     } else {
-      content = JSON.stringify(rows, null, 2);
+      if (isMulti) {
+        // JSON：对象数组，key 是字段名
+        const objs = multiRows.map((row) => {
+          const o: Record<string, string> = {};
+          activeFieldNames.forEach((n, i) => {
+            o[n] = row[i] === undefined ? '' : row[i];
+          });
+          return o;
+        });
+        content = JSON.stringify(objs, null, 2);
+      } else {
+        content = JSON.stringify(rows, null, 2);
+      }
       mime = 'application/json;charset=utf-8';
       ext = 'json';
     }
@@ -155,15 +245,27 @@ export default function DataTool() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${def.value}-${rows.length}-${stamp}.${ext}`;
+    a.download = `${baseName}-${dataCount}-${stamp}.${ext}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast(`已导出 ${rows.length} 条 ${ext.toUpperCase()}`);
+    toast(`已导出 ${dataCount} 条 ${ext.toUpperCase()}`);
   };
 
   const copyAll = async () => {
+    if (mode === 'multi') {
+      if (!multiRows.length) {
+        toast('还没有生成数据', 'warning');
+        return;
+      }
+      // 复制成 TSV（Excel 直接粘贴就是多列）
+      const lines = [activeFieldNames.join('\t')];
+      for (const row of multiRows) lines.push(row.join('\t'));
+      await api.copy(lines.join('\n'), false);
+      toast(`已复制 ${multiRows.length} 行（制表符分隔，可直接粘进 Excel）`);
+      return;
+    }
     if (!rows.length) {
       toast('还没有生成数据', 'warning');
       return;
@@ -171,6 +273,8 @@ export default function DataTool() {
     await api.copy(rows.join('\n'), false);
     toast(`已复制 ${rows.length} 条`);
   };
+
+  const hasData = mode === 'multi' ? multiRows.length > 0 : rows.length > 0;
 
   return (
     <div>
@@ -182,8 +286,18 @@ export default function DataTool() {
       </div>
 
       <div className="tool-card" style={{ marginBottom: 14 }}>
-        <Space wrap size={12}>
-          <Select value={type} onChange={setType} options={TYPES} style={{ width: 140 }} />
+        <Space wrap size={12} style={{ marginBottom: 10 }}>
+          <Segmented
+            value={mode}
+            onChange={(v) => setMode(v as 'single' | 'multi')}
+            options={[
+              { label: '单类型', value: 'single' },
+              { label: '多字段组合', value: 'multi' }
+            ]}
+          />
+          {mode === 'single' ? (
+            <Select value={type} onChange={setType} options={TYPES} style={{ width: 140 }} />
+          ) : null}
           <Space size={6}>
             <span className="muted">数量</span>
             <InputNumber min={1} max={100000} value={count} onChange={(v) => setCount(Number(v) || 1)} style={{ width: 100 }} />
@@ -191,25 +305,126 @@ export default function DataTool() {
           <Button type="primary" icon={<ThunderboltOutlined />} onClick={generate}>
             生成
           </Button>
-          <Button icon={<CopyOutlined />} onClick={copyAll} disabled={!rows.length}>
-            复制全部
+          <Button icon={<CopyOutlined />} onClick={copyAll} disabled={!hasData}>
+            {mode === 'multi' ? '复制（TSV）' : '复制全部'}
           </Button>
-          <Button icon={<DownloadOutlined />} onClick={() => doExport('csv')} disabled={!rows.length}>
+          <Button icon={<DownloadOutlined />} onClick={() => doExport('csv')} disabled={!hasData}>
             导出 CSV
           </Button>
-          <Button icon={<DownloadOutlined />} onClick={() => doExport('json')} disabled={!rows.length}>
+          <Button icon={<DownloadOutlined />} onClick={() => doExport('json')} disabled={!hasData}>
             导出 JSON
           </Button>
         </Space>
+
+        {/* 多字段模式的字段表 */}
+        {mode === 'multi' ? (
+          <>
+            <table className="jmx-table" style={{ marginBottom: 6 }}>
+              <thead>
+                <tr>
+                  <th style={{ width: '28%' }}>字段名</th>
+                  <th style={{ width: '30%' }}>类型</th>
+                  <th>固定值（可选，填了就不随机）</th>
+                  <th style={{ width: 32 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {fields.map((f, i) => (
+                  <tr key={i}>
+                    <td>
+                      <Input
+                        size="small"
+                        className="mono"
+                        value={f.name}
+                        placeholder="userName"
+                        onChange={(e) => setField(i, 'name', e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <Select
+                        size="small"
+                        value={f.type}
+                        onChange={(v) => setField(i, 'type', v)}
+                        style={{ width: '100%' }}
+                        options={TYPES}
+                      />
+                    </td>
+                    <td>
+                      <Input
+                        size="small"
+                        value={f.fixed}
+                        placeholder="（留空 = 随机生成）"
+                        onChange={(e) => setField(i, 'fixed', e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => removeField(i)} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <Button size="small" type="link" icon={<PlusOutlined />} onClick={addField}>
+              添加字段
+            </Button>
+            <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+              一行 = 一条完整记录（比如「姓名 + 手机号 + 邮箱 + 身份证」），导出的 CSV 可直接喂给 pytest / JMeter 的 CSV Data Set。
+            </div>
+          </>
+        ) : null}
       </div>
 
       <div className="panel">
         <div className="panel-head">
           <span className="muted" style={{ fontSize: 12 }}>
-            {rows.length ? `${rows.length} 条` : '点「生成」开始'}
+            {mode === 'multi'
+              ? multiRows.length
+                ? `${multiRows.length} 行 × ${activeFieldNames.length} 列`
+                : '点「生成」开始'
+              : rows.length
+                ? `${rows.length} 条`
+                : '点「生成」开始'}
           </span>
         </div>
-        {rows.length === 0 ? (
+
+        {/* 多字段预览：表格 */}
+        {mode === 'multi' ? (
+          multiRows.length === 0 ? (
+            <div className="empty-tip">还没有数据</div>
+          ) : (
+            <div style={{ maxHeight: 460, overflow: 'auto' }}>
+              <table className="jmx-table data-multi-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: 44 }}>#</th>
+                    {activeFieldNames.map((n) => (
+                      <th key={n}>{n}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {multiRows.slice(0, 500).map((row, i) => (
+                    <tr key={i}>
+                      <td className="muted mono" style={{ fontSize: 11.5 }}>
+                        {i + 1}
+                      </td>
+                      {row.map((v, j) => (
+                        <td key={j} className="mono" style={{ fontSize: 12 }}>
+                          {v}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {multiRows.length > 500 ? (
+                <div className="muted" style={{ padding: '8px 12px', fontSize: 11.5 }}>
+                  只显示前 500 行（共 {multiRows.length} 行，导出时是全部）
+                </div>
+              ) : null}
+            </div>
+          )
+        ) : rows.length === 0 ? (
           <div className="empty-tip">还没有数据</div>
         ) : (
           <div style={{ maxHeight: 460, overflow: 'auto' }}>

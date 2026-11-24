@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Select, Tag, Alert, Space, Empty, Tooltip, Segmented, Progress } from 'antd';
+import { Button, Select, Tag, Alert, Space, Empty, Tooltip, Segmented } from 'antd';
 import {
   FolderOpenOutlined,
   ReloadOutlined,
