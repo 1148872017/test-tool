@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Input, Tag, Alert, Space, Empty, Segmented, Progress, Tooltip } from 'antd';
+import { Button, Input, Tag, Alert, Space, Empty, Segmented, Progress, Tooltip, Select } from 'antd';
 import {
   FolderOpenOutlined,
   ReloadOutlined,
@@ -48,6 +48,10 @@ export default function CodeScanPage() {
   const [deps, setDeps] = useState<any>(null);
   /** 覆盖矩阵的对象：接口 / 页面 */
   const [covKind, setCovKind] = useState<'api' | 'page'>('api');
+  /** 覆盖矩阵的范围筛选：只对比选中的模块（空 = 全部） */
+  const [modules, setModules] = useState<{ name: string; count: number }[]>([]);
+  const [pickedModules, setPickedModules] = useState<string[]>([]);
+  const [noModuleCount, setNoModuleCount] = useState(0);
   const [busy, setBusy] = useState(false);
 
   // 覆盖矩阵
@@ -57,9 +61,26 @@ export default function CodeScanPage() {
   const [scan, setScan] = useState<any>(null);
   const [sevFilter, setSevFilter] = useState('');
 
+  /* ---------- 模块列表（给范围筛选用）---------- */
+  const loadModules = async (kind: 'api' | 'page') => {
+    try {
+      const res = await api.codescanModules(kind);
+      if (res && res.ok) {
+        setModules(res.modules || []);
+        setNoModuleCount(Number(res.noModule) || 0);
+      }
+    } catch (e) {
+      setModules([]);
+    }
+  };
+
   /* ---------- 覆盖矩阵 ---------- */
   const doCoverage = async (kind?: 'api' | 'page') => {
     const k = kind || covKind;
+    if (k !== covKind) {
+      setPickedModules([]);
+      loadModules(k);
+    }
     setCovKind(k);
 
     /**
@@ -74,7 +95,7 @@ export default function CodeScanPage() {
     setView('coverage');
     setBusy(true);
     try {
-      const res = await api.codescanCoverage(root || undefined, k);
+      const res = await api.codescanCoverage(root || undefined, k, pickedModules);
       if (!res.ok) {
         toast(res.message || '扫描失败', 'error');
         setCov(null); // 清掉旧结果，别让人误以为这是本次的
@@ -134,6 +155,11 @@ export default function CodeScanPage() {
     }
   };
 
+  /* 首次进入加载接口模块列表 */
+  React.useEffect(() => {
+    loadModules('api');
+  }, []);
+
   /* ---------- 选目录 ---------- */
   const doPick = async () => {
     try {
@@ -174,19 +200,11 @@ export default function CodeScanPage() {
           <Button size="small" icon={<FolderOpenOutlined />} onClick={doPick}>
             选目录
           </Button>
-          {/* 四个检查项各做什么，光看按钮名不够清楚（用户要求加提示） */}
-          <Tooltip
-            title={
-              <div style={{ lineHeight: 1.7 }}>
-                <div>扫代码里的<b>接口请求路径</b>，和「接口记录」对比</div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  · 左边清单 = 接口记录里同步的接口
-                  <br />· 右边实现 = 代码里的 .get/post("...") / requests.xxx()
-                  <br />· 标红 = 文档有但代码没测到的「漏网之鱼」
-                </div>
-              </div>
-            }
-          >
+          {/*
+            四个检查项的提示：**一句话说清「扫什么、和什么比」**
+            （用户要求简洁直白，不要小字长说明）
+          */}
+          <Tooltip title="代码里真正调用了哪些接口 vs 接口记录，找出没测到的">
             <Button
               size="small"
               type={covKind === 'api' ? 'primary' : 'default'}
@@ -198,18 +216,7 @@ export default function CodeScanPage() {
             </Button>
           </Tooltip>
 
-          <Tooltip
-            title={
-              <div style={{ lineHeight: 1.7 }}>
-                <div>扫代码里的<b>页面跳转</b>，和「页面元素」对比</div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  · 左边清单 = 页面元素里维护的页面
-                  <br />· 右边实现 = 代码里的 page.goto/navigate("...")
-                  <br />· 标红 = 清单里有但没写自动化脚本的页面
-                </div>
-              </div>
-            }
-          >
+          <Tooltip title="代码里真正跳转了哪些页面 vs 页面元素，找出没测到的">
             <Button
               size="small"
               type={covKind === 'page' ? 'primary' : 'default'}
@@ -221,36 +228,13 @@ export default function CodeScanPage() {
             </Button>
           </Tooltip>
 
-          <Tooltip
-            title={
-              <div style={{ lineHeight: 1.7 }}>
-                <div>扫<b>代码里的坏味道</b>，按严重程度分级</div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  · 高危：硬编码密码 / Token
-                  <br />· 中危：硬编码 URL / Thread.sleep / 断言过弱（只校验状态码）
-                  <br />· 低危：绝对 XPath / 深层 CSS 选择器
-                </div>
-              </div>
-            }
-          >
+          <Tooltip title="密码/Token/URL 写死、sleep、弱断言 —— 按高中低危分级">
             <Button size="small" icon={<SafetyOutlined />} onClick={doHardcoded} loading={busy}>
               硬编码检查
             </Button>
           </Tooltip>
 
-          <Tooltip
-            title={
-              <div style={{ lineHeight: 1.7 }}>
-                <div>扫 <b>pom.xml / requirements.txt</b> 的依赖冲突</div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  · 同一声明出现多次
-                  <br />· 同一依赖写了不同版本
-                  <br />· version 里的占位符没定义
-                  <br />· 不做传递依赖分析（用 mvn dependency:tree 更准）
-                </div>
-              </div>
-            }
-          >
+          <Tooltip title="pom.xml / requirements.txt 的版本冲突、重复声明、占位符没定义">
             <Button size="small" icon={<ApartmentOutlined />} onClick={doDeps} loading={busy}>
               依赖检查
             </Button>
@@ -285,6 +269,46 @@ export default function CodeScanPage() {
           </div>
         ) : (
           <>
+            {/* 范围筛选：只对比「本项目相关」的模块，避免全公司文档混进来 */}
+            {modules.length ? (
+              <div className="cov-scope">
+                <span className="muted" style={{ fontSize: 12 }}>
+                  {covKind === 'page' ? '项目' : '模块'}范围
+                </span>
+                <Select
+                  mode="multiple"
+                  size="small"
+                  allowClear
+                  style={{ minWidth: 280, maxWidth: 620 }}
+                  value={pickedModules}
+                  onChange={setPickedModules}
+                  placeholder="全部（不筛选）— 选几个只对比这些"
+                  options={modules.map((m) => ({
+                    value: m.name,
+                    label: `${m.name}（${m.count}）`
+                  }))}
+                  maxTagCount="responsive"
+                />
+                {pickedModules.length ? (
+                  <Button
+                    size="small"
+                    type="link"
+                    onClick={() => {
+                      setPickedModules([]);
+                      doCoverage(covKind);
+                    }}
+                  >
+                    清除筛选并重扫
+                  </Button>
+                ) : (
+                  <span className="muted" style={{ fontSize: 11.5 }}>
+                    接口记录里可能包含全公司文档，只选本项目负责的模块更准
+                    {noModuleCount ? `（另有 ${noModuleCount} 条没标模块）` : ''}
+                  </span>
+                )}
+              </div>
+            ) : null}
+
             <div className="cov-summary">
               <div className="cov-stat">
                 <div className="cov-stat-value">{cov.total}</div>

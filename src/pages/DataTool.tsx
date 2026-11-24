@@ -31,17 +31,18 @@ const DEFAULT_FIELDS: Field[] = [
 ];
 
 /**
- * 「大数量」分界线。
+ * 「大数量」分界线 + 预览条数。
  *
- * 为什么不展示：
- *   10 万行塞进 React state 会卡死（每行一个 DOM 节点）。
- *   2000 行大约 200KB，渲染还能接受；再多就走「直接导出文件」。
+ * 用户要求：超过 200 条就**不再全量展示**，但也不是啥都不显示——
+ * 展示前 200 条让人确认「格式对不对」，剩下的一次性写成文件。
  *
- * 这个数字怎么定的：
- *   按「一屏能看多少行」倒推——正常屏幕 20 行，2000 行是 100 屏，
- *   已经远超「肉眼检查」的需求，再多就该给别人/给程序用了。
+ * 为什么 200：
+ *   一屏 20 行，200 行 = 10 屏，足够看清数据长什么样；
+ *   再多就是给程序吃的（CSV Data Set / parametrize），不需要肉眼看。
  */
-const LARGE_THRESHOLD = 2000;
+const LARGE_THRESHOLD = 200;
+/** 大数量时最多展示多少条 */
+const PREVIEW_ROWS = 200;
 
 export default function DataTool() {
   // 单类型模式
@@ -119,8 +120,30 @@ export default function DataTool() {
   const generate = async () => {
     const n = normalizeCount();
 
-    // 大数量：走文件导出，不渲染
+    /**
+     * 大数量：**展示前 200 条 + 同时导出全量文件**。
+     *
+     * 之前是「完全不展示，只出文件」——用户反馈看不到数据长什么样不放心。
+     * 现在折中：页面给预览（能确认格式），完整数据落文件。
+     */
     if (n > LARGE_THRESHOLD) {
+      const previewCount = PREVIEW_ROWS;
+
+      if (mode === 'single') {
+        const def = TYPES.find((t) => t.value === type) || TYPES[0];
+        const gen = () => (def.value === 'date' ? genDate(dateFrom, dateTo) : def.fn());
+        setRows(Array.from({ length: previewCount }, gen));
+      } else {
+        const valid = fields.filter((f) => f.name.trim());
+        const resolved = valid.map((f) => {
+          const t = TYPES.find((x) => x.value === f.type) || TYPES[0];
+          return { fixed: f.fixed, fn: t.value === 'date' ? () => genDate(dateFrom, dateTo) : t.fn };
+        });
+        setMultiRows(
+          Array.from({ length: previewCount }, () => resolved.map((r) => (r.fixed ? r.fixed : r.fn())))
+        );
+      }
+
       await generateToFile(n);
       return;
     }
@@ -415,7 +438,7 @@ export default function DataTool() {
           type="success"
           showIcon
           style={{ marginBottom: 12 }}
-          message={`已生成 ${lastExport.count.toLocaleString()} 条，存到：`}
+          message={`已生成 ${lastExport.count.toLocaleString()} 条（页面只展示前 ${PREVIEW_ROWS} 条），完整文件：`}
           description={
             <div style={{ fontSize: 12, lineHeight: 1.7 }}>
               <div className="mono" style={{ wordBreak: 'break-all' }}>
@@ -429,7 +452,7 @@ export default function DataTool() {
                   size="small"
                   onClick={async () => {
                     try {
-                      await api.dataOpenDir('');
+                      await api.dataOpenWorkspace('');
                     } catch (e) {
                       /* ignore */
                     }
@@ -459,10 +482,14 @@ export default function DataTool() {
           <span className="muted" style={{ fontSize: 12 }}>
             {mode === 'multi'
               ? multiRows.length
-                ? `${multiRows.length} 行 × ${activeFieldNames.length} 列`
+                ? lastExport
+                  ? `前 ${multiRows.length} 行预览（共 ${lastExport.count.toLocaleString()} 行，完整版见导出文件）`
+                  : `${multiRows.length} 行 × ${activeFieldNames.length} 列`
                 : '点「生成」开始'
               : rows.length
-                ? `${rows.length} 条`
+                ? lastExport
+                  ? `前 ${rows.length} 条预览（共 ${lastExport.count.toLocaleString()} 条，完整版见导出文件）`
+                  : `${rows.length} 条`
                 : '点「生成」开始'}
           </span>
         </div>

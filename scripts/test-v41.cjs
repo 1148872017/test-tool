@@ -82,7 +82,8 @@ check('7 个子目录都在', /dir-sub-row/.test(setSrc) && /项目代码/.test(
  * ============================================================ */
 check('有阈值常量', /LARGE_THRESHOLD\s*=\s*\d+/.test(dataSrc), 'no threshold');
 check('有 generateToFile', /generateToFile/.test(dataSrc), 'no fn');
-check('大数量走文件', /n > LARGE_THRESHOLD[\s\S]{0,80}?generateToFile/.test(dataSrc), 'not used');
+check('大数量走文件', /n > LARGE_THRESHOLD[\s\S]{0,1500}?generateToFile/.test(dataSrc), 'not used');
+  check('大数量展示前 N 条', /PREVIEW_ROWS/.test(dataSrc), 'no preview');
 check('没工作区时弹窗拦截', /needWorkspace/.test(dataSrc) && /Modal\.warning/.test(dataSrc), 'no modal');
 check('有导出结果提示', /lastExport/.test(dataSrc), 'no result');
 check('用了 shared/faker', /from '\.\.\/\.\.\/shared\/faker'/.test(dataSrc), 'not shared');
@@ -94,8 +95,8 @@ check('preload 有 dataGenFile', /dataGenFile:/.test(preloadSrc), 'no preload');
  * 优化 4：代码体检按钮 Tooltip
  * ============================================================ */
 check('代码体检有 Tooltip', /<Tooltip/.test(scanSrc), 'no tooltip');
-check('接口覆盖有提示', /接口请求路径/.test(scanSrc), 'no tip');
-check('硬编码有提示', /代码里的坏味道|硬编码密码/.test(scanSrc), 'no tip');
+check('接口覆盖有提示', /真正调用了哪些接口/.test(scanSrc), 'no tip');
+check('硬编码有提示', /密码\/Token\/URL 写死/.test(scanSrc), 'no tip');
 check('依赖检查有提示', /pom\.xml/.test(scanSrc), 'no tip');
 
 /* ============================================================

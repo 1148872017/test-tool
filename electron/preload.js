@@ -76,14 +76,15 @@ contextBridge.exposeInMainWorld('api', {
   allureFlaky: (dirs) => invoke('allure:flaky', { dirs }),
 
   // ---- 代码扫描 ----
-  codescanCoverage: (root, kind) => invoke('codescan:coverage', { root, kind }),
+  codescanCoverage: (root, kind, modules) => invoke('codescan:coverage', { root, kind, modules }),
+  codescanModules: (kind) => invoke('codescan:modules', { kind }),
   codescanHardcoded: (root) => invoke('codescan:hardcoded', { root }),
   codescanPickDir: () => invoke('codescan:pickDir'),
   codescanDeps: (root) => invoke('codescan:deps', { root }),
 
   // ---- 示例数据 ----
   dataGenFile: (payload) => invoke('data:genFile', payload),
-  dataOpenDir: (dir) => invoke('data:openDir', { dir }),
+  dataOpenWorkspace: (dir) => invoke('data:openWorkspace', { dir }),
   demoCount: () => invoke('demo:count'),
   demoClear: () => invoke('demo:clear'),
   demoPaths: () => invoke('demo:paths'),

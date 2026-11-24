@@ -143,7 +143,7 @@ check('preload 有 codescanHardcoded', /codescanHardcoded:/.test(preloadSrc), 'n
 /* ---------- 页面覆盖：IPC + 前端 ---------- */
 check('IPC 支持 kind 参数', /kind === 'page' \? 'page' : 'api'/.test(mainSrc), 'no kind');
 check('IPC 从 pages 集合读', /store\.list\('pages'\)/.test(mainSrc), 'no pages list');
-check('preload 传 kind', /codescanCoverage: \(root, kind\)/.test(preloadSrc), 'no kind param');
+check('preload 传 kind + modules', /codescanCoverage: \(root, kind, modules\)/.test(preloadSrc), 'no params');
 const scanPageSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'CodeScanPage.tsx'), 'utf8');
 check('前端有 covKind 状态', /covKind/.test(scanPageSrc), 'no covKind');
 check('前端有「页面覆盖」按钮', /页面覆盖/.test(scanPageSrc), 'no page button');

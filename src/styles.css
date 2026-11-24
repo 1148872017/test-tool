@@ -78,10 +78,11 @@ body {
 }
 
 .brand-mark {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
-  border-radius: 9px;
+  /* 30 → 36：立绘缩到 30px 只剩一团色块，放大一档能看出轮廓 */
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 10px;
   overflow: hidden;
   /* 图片本身有底色，这里只兜底（加载失败时不会露出白块） */
   background: var(--primary-soft);
@@ -2944,4 +2945,18 @@ body.has-bg .ant-table-tbody > tr > td {
   width: 2px;
   height: 12px;
   background: linear-gradient(180deg, var(--line), transparent);
+}
+
+
+/* 代码体检：覆盖矩阵的范围筛选行 */
+.cov-scope {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  background: #f7f8fc;
+  border: 1px solid var(--line-soft);
 }

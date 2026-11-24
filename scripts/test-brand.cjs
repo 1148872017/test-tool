@@ -47,7 +47,7 @@ check('CSS 有 brand-mark-img', /\.brand-mark-img/.test(cssSrc), 'no css');
 check('图片 cover 裁切', /object-fit:\s*cover/.test(cssSrc), 'no cover');
 check('不再有紫色渐变', !/\.brand-mark \{[^}]*linear-gradient/.test(cssSrc), 'still gradient');
 check('圆角保留', /\.brand-mark \{[^}]*border-radius/.test(cssSrc), 'no radius');
-check('尺寸仍是 30px', /\.brand-mark \{[^}]*width:\s*30px/.test(cssSrc), 'size changed');
+check('尺寸放大到 36px', /\.brand-mark \{[^}]*width:\s*36px/.test(cssSrc), 'size not 36');
 
 /* ---------- 4. 源文件留着（方便重新生成）---------- */
 check('build/brand.png 存在', fs.existsSync(path.join(root, 'build', 'brand.png')), 'no source png');

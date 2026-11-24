@@ -686,7 +686,7 @@ export function installMockIfNeeded() {
       if (!payload || !payload.count) return { ok: false, message: '参数错' };
       return { ok: true, file: 'D:/demo/multi-data-' + payload.count + '-2026-11-24.csv', count: payload.count, bytes: payload.count * 20 };
     },
-    dataOpenDir: async () => ({ ok: true }),
+    dataOpenWorkspace: async () => ({ ok: true }),
 
     demoCount: async () => ({ ok: true, count: 11 }),
     demoClear: async () => ({ ok: true, removed: 11, errors: [] }),
@@ -694,6 +694,18 @@ export function installMockIfNeeded() {
       ok: true,
       project: 'D:/demo/demo-project',
       allure: 'D:/demo/demo-allure-results'
+    }),
+
+    codescanModules: async () => ({
+      ok: true,
+      kind: 'api',
+      total: 5,
+      noModule: 0,
+      modules: [
+        { name: '认证', count: 2 },
+        { name: '订单', count: 2 },
+        { name: '退款', count: 1 }
+      ]
     }),
 
     codescanDeps: async () => ({

@@ -1477,7 +1477,30 @@ function registerIpc() {
    *
    * payload: { root }  代码根目录（空 = settings.projectDir）
    */
-  ipcMain.handle('codescan:coverage', async (e, { root, kind } = {}) => {
+  /**
+   * 接口/页面的「模块」列表（给覆盖矩阵的范围筛选用）。
+   *
+   * 为什么需要：接口记录可能是全公司文档（100 个），
+   * 某个项目只负责其中几个模块。不筛选就会报一堆无关的「未覆盖」。
+   */
+  ipcMain.handle('codescan:modules', async (e, { kind } = {}) => {
+    assertUnlocked();
+    const k = kind === 'page' ? 'page' : 'api';
+    const items = k === 'page' ? store.list('pages') : store.list('apis');
+    const counter = new Map();
+    for (const it of items) {
+      const d = it.data || {};
+      const m = String(k === 'page' ? d.project || '' : d.module || '').trim();
+      if (!m) continue;
+      counter.set(m, (counter.get(m) || 0) + 1);
+    }
+    const modules = [...counter.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+    return { ok: true, kind: k, modules, total: items.length, noModule: items.length - [...counter.values()].reduce((a, b) => a + b, 0) };
+  });
+
+  ipcMain.handle('codescan:coverage', async (e, { root, kind, modules } = {}) => {
     assertUnlocked();
     const dir = (root && String(root).trim()) || settings.projectDir || '';
     if (!dir) return { ok: false, message: '没配代码目录' };
@@ -1486,10 +1509,25 @@ function registerIpc() {
      * 清单来源：
      *   api  → apis 集合（从 Apifox 同步的接口）
      *   page → pages 集合（在「页面元素」里维护的页面）
+     *
+     * modules：按模块过滤（用户反馈「导入 100 个接口，项目只用 20 个，
+     * 剩下 80 个未覆盖」是噪音）——让用户限定「本项目相关的模块」。
      */
     const k = kind === 'page' ? 'page' : 'api';
-    const items = k === 'page' ? store.list('pages') : store.list('apis');
-    return codescan.buildCoverage(items, dir, k);
+    let items = k === 'page' ? store.list('pages') : store.list('apis');
+
+    if (Array.isArray(modules) && modules.length) {
+      const set = new Set(modules.map((m) => String(m)));
+      items = items.filter((it) => {
+        const d = it.data || {};
+        const m = String(k === 'page' ? d.project || '' : d.module || '');
+        return set.has(m);
+      });
+    }
+
+    const res = codescan.buildCoverage(items, dir, k);
+    // 顺带把「本次参与对比的清单条数」也带上，方便前端说明
+    return Object.assign({}, res, { filtered: Array.isArray(modules) && modules.length > 0 });
   });
 
   /**
@@ -1580,11 +1618,17 @@ function registerIpc() {
     }
   });
 
-  /** 打开工作区目录（造数导出后给个「去看看」的入口） */
-  ipcMain.handle('data:openDir', async (e, { dir } = {}) => {
+  /**
+   * 打开工作区目录（造数导出后给个「去看看」的入口）。
+   *
+   * 注意通道名是 data:openWorkspace 而不是 data:openDir ——
+   * data:openDir 已经被「打开数据目录」占了，
+   * 两个都用同一个名字会注册两次 → 启动直接崩（踩坑 #103）。
+   */
+  ipcMain.handle('data:openWorkspace', async (e, { dir } = {}) => {
     assertUnlocked();
     const target = String(dir || '').trim() || String(settings.workspaceDir || '').trim();
-    if (!target) return { ok: false, message: '没有目录' };
+    if (!target) return { ok: false, message: '没有工作区目录' };
     try {
       await shell.openPath(target);
       return { ok: true };
