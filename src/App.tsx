@@ -10,6 +10,7 @@ import DataTool from './pages/DataTool';
 import Toolbox from './pages/Toolbox';
 import CodeRunnerPage from './pages/CodeRunnerPage';
 import CodegenPage from './pages/CodegenPage';
+import ReportPage from './pages/ReportPage';
 import SettingsPage from './pages/SettingsPage';
 import { getTheme } from '../shared/themes';
 import CasePage from './pages/CasePage';
@@ -245,6 +246,7 @@ export default function App() {
         {route.type === 'tool' && route.key === 'toolbox' ? <Toolbox /> : null}
         {route.type === 'tool' && route.key === 'runner' ? <CodeRunnerPage /> : null}
         {route.type === 'tool' && route.key === 'codegen' ? <CodegenPage /> : null}
+        {route.type === 'tool' && route.key === 'report' ? <ReportPage /> : null}
         {route.type === 'settings' ? (
           <SettingsPage
             boot={boot}

@@ -55,6 +55,12 @@ contextBridge.exposeInMainWorld('api', {
   skinClearImage: () => invoke('skin:clearImage'),
   skinGetImage: () => invoke('skin:getImage'),
 
+  // ---- Allure 报告 ----
+  allureScan: (root) => invoke('allure:scan', { root }),
+  allurePickDir: () => invoke('allure:pickDir'),
+  allureParse: (dir) => invoke('allure:parse', { dir }),
+  allureFlaky: (dirs) => invoke('allure:flaky', { dirs }),
+
   /** 订阅代码运行输出（返回取消订阅函数） */
   onRunnerOutput: (cb) => {
     const handler = (_e, data) => cb(data);

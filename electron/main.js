@@ -18,6 +18,7 @@ const runner = require('./runner');
 const projects = require('./projects');
 const { RUNNERS, listRunners } = require('../shared/runners');
 const codegen = require('../shared/codegen');
+const allure = require('./allure');
 const { TOOLS, COLLECTION_MAP } = require('../shared/collections');
 
 const DEBUG = process.env.TT_DEBUG === '1';
@@ -1201,6 +1202,70 @@ function registerIpc() {
   // ---- 压测报告导入（jtl / statistics.json）----
 
   /** 扫描报告根目录，列出所有可导入的跑批 */
+  /* ==================== Allure 报告解析 ==================== *
+   * 解析 allure-results → 失败聚类 + Flaky 追踪。
+   * ------------------------------------------------------ */
+
+  /** 扫描根目录下所有 allure-results */
+  ipcMain.handle('allure:scan', async (e, { root } = {}) => {
+    assertUnlocked();
+    const dir = (root && String(root).trim()) || settings.projectDir || '';
+    return allure.scanAllureRoots(dir);
+  });
+
+  /** 选 allure-results 目录 */
+  ipcMain.handle('allure:pickDir', async () => {
+    assertUnlocked();
+    const picked = await dialog.showOpenDialog(win, {
+      title: '选择 allure-results 目录',
+      properties: ['openDirectory']
+    });
+    if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+    return { ok: true, dir: picked.filePaths[0] };
+  });
+
+  /**
+   * 解析 allure-results 目录。
+   *
+   * 返回：用例列表 + 汇总 + 失败聚类。
+   */
+  ipcMain.handle('allure:parse', async (e, { dir } = {}) => {
+    assertUnlocked();
+    const d = String(dir || '').trim();
+    if (!d) return { ok: false, message: '缺少目录' };
+    const res = allure.parseAllureDir(d);
+    if (!res.ok) return res;
+    return Object.assign({}, res, {
+      clusters: allure.clusterFailures(res.tests)
+    });
+  });
+
+  /**
+   * Flaky 追踪：解析多个 allure-results 目录，比对同一用例的通过/失败。
+   *
+   * payload: { dirs: string[] }
+   */
+  ipcMain.handle('allure:flaky', async (e, { dirs } = {}) => {
+    assertUnlocked();
+    const list = Array.isArray(dirs) ? dirs : [];
+    if (!list.length) return { ok: false, message: '缺少目录列表', flaky: [] };
+
+    const runs = [];
+    const errors = [];
+    for (const d of list) {
+      const res = allure.parseAllureDir(String(d));
+      if (res.ok) runs.push(res.tests);
+      else errors.push({ dir: d, message: res.message });
+    }
+
+    return {
+      ok: true,
+      runs: runs.length,
+      flaky: allure.trackFlaky(runs),
+      errors
+    };
+  });
+
   ipcMain.handle('report:scan', async (e, { root } = {}) => {
     assertUnlocked();
     const dir = (root && String(root).trim()) || settings.reportDir;

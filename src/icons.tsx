@@ -12,7 +12,8 @@ import {
   DashboardOutlined,
   BookOutlined,
   BugOutlined,
-  FileAddOutlined
+  FileAddOutlined,
+  BarChartOutlined
 } from '@ant-design/icons';
 
 const MAP: Record<string, any> = {
@@ -29,7 +30,8 @@ const MAP: Record<string, any> = {
   DashboardOutlined,
   BookOutlined,
   BugOutlined,
-  FileAddOutlined
+  FileAddOutlined,
+  BarChartOutlined
 };
 
 export default function Icon({ name, style }: { name: string; style?: any }) {

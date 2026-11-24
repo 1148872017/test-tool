@@ -1,0 +1,142 @@
+/* Allure 报告解析 + 失败聚类 + Flaky 追踪 */
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+const results = [];
+const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });
+
+const allure = require('../electron/allure.js');
+
+/* ---------- 1. 解析真实 allure-results ---------- */
+const realDir = 'D:/AI_Workspace/Project/example/allure-results';
+if (fs.existsSync(realDir)) {
+  const res = allure.parseAllureDir(realDir);
+  check('解析真实目录成功', res.ok === true, res.message);
+  check('解析出 12 个用例', res.tests.length === 12, res.tests.length);
+  check('汇总 total 正确', res.summary.total === 12, res.summary.total);
+  check('汇总 broken 正确', res.summary.broken === 12, res.summary.broken);
+  check('用例有 name', !!res.tests[0].name, res.tests[0]);
+  check('用例有 status', !!res.tests[0].status, res.tests[0]);
+  check('用例有 testClass', !!res.tests[0].testClass, res.tests[0]);
+  check('用例有 duration', res.tests[0].duration > 0, res.tests[0].duration);
+
+  // 聚类
+  const clusters = allure.clusterFailures(res.tests);
+  check('聚类有结果', clusters.length > 0, clusters.length);
+  check('12 个用例聚成 1 组', clusters.length === 1, clusters.length);
+  check('聚类 count 是 12', clusters[0].count === 12, clusters[0].count);
+  check('聚类 pattern 已归一化', /<STR>/.test(clusters[0].pattern), clusters[0].pattern);
+  check('聚类没有具体数字', !/\b\d{3,}\b/.test(clusters[0].pattern), clusters[0].pattern);
+} else {
+  console.log('（跳过真实目录测试，目录不存在）');
+}
+
+/* ---------- 2. 归一化 ---------- */
+check('归一化：数字 → <N>', allure.normalizeMessage('Timeout 3000ms') === 'Timeout <N>ms', allure.normalizeMessage('Timeout 3000ms'));
+check('归一化：两个不同数字归一化后相同',
+  allure.normalizeMessage('Timeout 3000ms') === allure.normalizeMessage('Timeout 5000ms'),
+  [allure.normalizeMessage('Timeout 3000ms'), allure.normalizeMessage('Timeout 5000ms')]);
+check('归一化：UUID → <UUID>', /<UUID>/.test(allure.normalizeMessage('id 550e8400-e29b-41d4-a716-446655440000 not found')), allure.normalizeMessage('id 550e8400-e29b-41d4-a716-446655440000 not found'));
+check('归一化：时间戳 → <TS>', /<TS>/.test(allure.normalizeMessage('at 1795428064423')), allure.normalizeMessage('at 1795428064423'));
+check('归一化：Windows 路径 → <PATH>', /<PATH>/.test(allure.normalizeMessage('file D:\\test\\a.txt missing')), allure.normalizeMessage('file D:\\test\\a.txt missing'));
+check('归一化：只取第一行', !allure.normalizeMessage('line1\nline2\nline3').includes('line2'), allure.normalizeMessage('line1\nline2\nline3'));
+check('归一化：空串返回空', allure.normalizeMessage('') === '', allure.normalizeMessage(''));
+check('归一化：null 不崩', allure.normalizeMessage(null) === '', allure.normalizeMessage(null));
+
+/* ---------- 3. 聚类 ---------- */
+const fakeTests = [
+  { id: '1', name: 'A', status: 'failed', message: 'Timeout 3000ms waiting for #btn' },
+  { id: '2', name: 'B', status: 'failed', message: 'Timeout 5000ms waiting for #btn' },
+  { id: '3', name: 'C', status: 'broken', message: 'NullPointerException at line 42' },
+  { id: '4', name: 'D', status: 'passed', message: '' },
+  { id: '5', name: 'E', status: 'failed', message: 'Timeout 1000ms waiting for #btn' }
+];
+const cl = allure.clusterFailures(fakeTests);
+check('聚类：2 组（Timeout + NPE）', cl.length === 2, cl.length);
+check('聚类：Timeout 组 3 个', cl.find((c) => /Timeout/.test(c.pattern)).count === 3, cl.map((c) => c.count));
+check('聚类：按数量降序', cl[0].count >= cl[1].count, cl.map((c) => c.count));
+check('聚类：passed 不参与', !cl.some((c) => c.tests.some((t) => t.status === 'passed')), 'passed included');
+
+/* ---------- 4. Flaky 追踪 ---------- */
+const run1 = [
+  { fullName: 'test.a', name: 'A', status: 'passed' },
+  { fullName: 'test.b', name: 'B', status: 'passed' },
+  { fullName: 'test.c', name: 'C', status: 'failed' }
+];
+const run2 = [
+  { fullName: 'test.a', name: 'A', status: 'failed' },  // 翻转
+  { fullName: 'test.b', name: 'B', status: 'passed' },  // 稳定
+  { fullName: 'test.c', name: 'C', status: 'failed' }   // 稳定失败
+];
+const run3 = [
+  { fullName: 'test.a', name: 'A', status: 'passed' },  // 又翻转
+  { fullName: 'test.b', name: 'B', status: 'passed' },
+  { fullName: 'test.c', name: 'C', status: 'failed' }
+];
+
+const flaky = allure.trackFlaky([run1, run2, run3]);
+check('Flaky：只标记 test.a', flaky.length === 1, flaky.length);
+check('Flaky：test.a 被标记', flaky[0].fullName === 'test.a', flaky[0].fullName);
+check('Flaky：history 有 3 条', flaky[0].history.length === 3, flaky[0].history);
+check('Flaky：稳定通过的 test.b 不标记', !flaky.some((f) => f.fullName === 'test.b'), 'b marked');
+check('Flaky：一直失败的 test.c 不标记', !flaky.some((f) => f.fullName === 'test.c'), 'c marked');
+
+// 翻转次数
+check('flipCount: pass→fail→pass = 2', allure.flipCount(['passed', 'failed', 'passed']) === 2, allure.flipCount(['passed', 'failed', 'passed']));
+check('flipCount: 全 pass = 0', allure.flipCount(['passed', 'passed']) === 0, allure.flipCount(['passed', 'passed']));
+
+/* ---------- 5. 扫描 allure-results ---------- */
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'allure-test-'));
+const proj1 = path.join(tmp, 'proj1', 'allure-results');
+fs.mkdirSync(proj1, { recursive: true });
+fs.writeFileSync(path.join(proj1, 'x-result.json'), JSON.stringify({ uuid: 'x', name: 'T', status: 'passed', start: 1, stop: 2, labels: [] }), 'utf8');
+
+const proj2 = path.join(tmp, 'proj2', 'target', 'allure-results');
+fs.mkdirSync(proj2, { recursive: true });
+fs.writeFileSync(path.join(proj2, 'y-result.json'), JSON.stringify({ uuid: 'y', name: 'T2', status: 'failed', start: 1, stop: 2, labels: [] }), 'utf8');
+
+const scan = allure.scanAllureRoots(tmp);
+check('扫描找到 2 个 allure-results', scan.ok && scan.dirs.length === 2, scan.dirs);
+
+// 空目录
+const emptyDir = path.join(tmp, 'empty');
+fs.mkdirSync(emptyDir, { recursive: true });
+check('空目录解析失败', allure.parseAllureDir(emptyDir).ok === false, 'should fail');
+check('不存在目录解析失败', allure.parseAllureDir('D:/nonexistent-xyz').ok === false, 'should fail');
+
+fs.rmSync(tmp, { recursive: true, force: true });
+
+/* ---------- 6. IPC 已注册 ---------- */
+const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+check('有 allure:scan', /ipcMain\.handle\('allure:scan'/.test(mainSrc), 'no scan');
+check('有 allure:parse', /ipcMain\.handle\('allure:parse'/.test(mainSrc), 'no parse');
+check('有 allure:flaky', /ipcMain\.handle\('allure:flaky'/.test(mainSrc), 'no flaky');
+check('有 allure:pickDir', /ipcMain\.handle\('allure:pickDir'/.test(mainSrc), 'no pickDir');
+
+const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
+check('preload 有 allureScan', /allureScan:/.test(preloadSrc), 'no scan');
+check('preload 有 allureParse', /allureParse:/.test(preloadSrc), 'no parse');
+check('preload 有 allureFlaky', /allureFlaky:/.test(preloadSrc), 'no flaky');
+
+/* ---------- 7. 前端页面 ---------- */
+const pageSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'ReportPage.tsx'), 'utf8');
+check('页面有扫描', /doScan/.test(pageSrc), 'no scan');
+check('页面有解析', /doParse/.test(pageSrc), 'no parse');
+check('页面有 Flaky 比对', /doFlaky/.test(pageSrc), 'no flaky');
+check('页面有失败聚类视图', /view === 'clusters'/.test(pageSrc), 'no clusters');
+check('页面有用例列表视图', /view === 'tests'/.test(pageSrc), 'no tests');
+check('页面有 Flaky 视图', /view === 'flaky'/.test(pageSrc), 'no flaky view');
+check('页面有汇总统计', /report-summary/.test(pageSrc), 'no summary');
+
+/* ---------- 8. 侧边栏入口 ---------- */
+const collections = require('../shared/collections.js');
+check('TOOLS 有报告分析', collections.TOOLS.some((t) => t.key === 'report'), collections.TOOLS.map((t) => t.key));
+const appSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 'utf8');
+check('App 有 report 路由', /route\.key === 'report'/.test(appSrc), 'no route');
+
+const failed = results.filter((r) => !r.ok);
+console.log('===== 报告分析测试 =====');
+for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));
+console.log('\n' + (results.length - failed.length) + '/' + results.length + ' passed');
+process.exit(failed.length ? 1 : 0);
