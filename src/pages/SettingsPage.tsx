@@ -51,6 +51,7 @@ const fmtEta = (sec: number) => {
 };
 import OptionEditor from '../components/OptionEditor';
 import EnvCard from '../components/EnvCard';
+import SkinCard from '../components/SkinCard';
 
 type Props = {
   boot: any;
@@ -464,6 +465,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
       <nav className="settings-nav">
         {[
           { id: 'sec-env', label: '开发环境' },
+          { id: 'sec-skin', label: '皮肤' },
           { id: 'sec-cases', label: '测试用例' },
           { id: 'sec-jmx', label: '压测（JMeter）' },
           { id: 'sec-kb', label: '知识库' },
@@ -499,6 +501,10 @@ export default function SettingsPage({ boot, onChanged }: Props) {
 
       <div id="sec-env">
         <EnvCard saveSettings={saveSettings} settings={settings} />
+      </div>
+
+      <div id="sec-skin">
+        <SkinCard saveSettings={saveSettings} settings={settings} />
       </div>
 
       <div id="sec-cases" className="tool-card" style={{ marginBottom: 14 }}>

@@ -11,15 +11,75 @@ import Toolbox from './pages/Toolbox';
 import CodeRunnerPage from './pages/CodeRunnerPage';
 import CodegenPage from './pages/CodegenPage';
 import SettingsPage from './pages/SettingsPage';
+import { getTheme } from '../shared/themes';
 import CasePage from './pages/CasePage';
 import JmxPage from './pages/JmxPage';
 import KnowledgePage from './pages/KnowledgePage';
 import NotesPage from './pages/NotesPage';
 import { COLLECTIONS } from '../shared/collections';
 
+/**
+ * 应用皮肤：主题色 + 背景图 + 透明度。
+ *
+ * 全部通过 CSS 变量 + 内联样式注入，不改 CSS 文件。
+ *   --primary / --primary-deep / --primary-soft  → 主题色
+ *   body 的 background-image                     → 背景图
+ *   --panel-alpha                                → 面板透明度
+ */
+function useSkin(settings: any) {
+  const [bgUrl, setBgUrl] = React.useState('');
+
+  // 主题色
+  React.useEffect(() => {
+    const t = getTheme(settings && settings.themeColor);
+    const root = document.documentElement;
+    root.style.setProperty('--primary', t.primary);
+    root.style.setProperty('--primary-deep', t.primaryDeep);
+    root.style.setProperty('--primary-soft', t.primarySoft);
+  }, [settings && settings.themeColor]);
+
+  // 背景图
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await (window as any).api.skinGetImage();
+        if (alive) setBgUrl((res && res.url) || '');
+      } catch (e) {
+        if (alive) setBgUrl('');
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [settings && settings.bgImage]);
+
+  // 背景 + 透明度
+  React.useEffect(() => {
+    const opacity = settings && settings.bgOpacity !== undefined ? Number(settings.bgOpacity) : 85;
+    // 面板 alpha：0% → 0.35（太透看不清），100% → 1
+    const alpha = 0.35 + (Math.max(0, Math.min(100, opacity)) / 100) * 0.65;
+    const root = document.documentElement;
+    root.style.setProperty('--panel-alpha', String(alpha));
+    root.style.setProperty('--panel-rgb', '255, 255, 255');
+
+    if (bgUrl) {
+      document.body.classList.add('has-bg');
+      document.body.style.backgroundImage = `url(${bgUrl})`;
+    } else {
+      document.body.classList.remove('has-bg');
+      document.body.style.backgroundImage = '';
+    }
+  }, [bgUrl, settings && settings.bgOpacity]);
+
+  return bgUrl;
+}
+
 export default function App() {
   const { message } = AntApp.useApp();
   const [boot, setBoot] = useState<any>(null);
+  // 应用皮肤（主题色 / 背景图 / 透明度）
+  useSkin(boot && boot.settings);
   const [locked, setLocked] = useState(true);
   const [route, setRoute] = useState<any>({ type: 'collection', key: 'sites' });
   const [counts, setCounts] = useState<Record<string, number>>({});

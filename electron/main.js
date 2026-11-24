@@ -67,6 +67,10 @@ const DEFAULT_SETTINGS = {
   javaHome: '',
   pythonPath: '',
   mvnPath: '',
+  // 皮肤：主题色 / 背景图文件名 / 面板透明度（0-100）
+  themeColor: 'purple',
+  bgImage: '',
+  bgOpacity: 85,
   jmeterPath: '',
   pin: null
 };
@@ -163,6 +167,9 @@ function publicSettings() {
     javaHome: settings.javaHome || '',
     pythonPath: settings.pythonPath || '',
     mvnPath: settings.mvnPath || '',
+    themeColor: settings.themeColor || 'purple',
+    bgImage: settings.bgImage || '',
+    bgOpacity: settings.bgOpacity === undefined ? 85 : settings.bgOpacity,
     autoLockMinutes: settings.autoLockMinutes,
     clipboardClearSeconds: settings.clipboardClearSeconds,
     openCopyPassword: settings.openCopyPassword !== false,
@@ -417,7 +424,7 @@ function registerIpc() {
   ipcMain.handle('settings:get', async () => publicSettings());
 
   ipcMain.handle('settings:set', async (e, patch) => {
-    const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'closeAction', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'kbDir', 'notesDir'];
+    const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'closeAction', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'kbDir', 'notesDir', 'projectDir', 'javaHome', 'pythonPath', 'mvnPath', 'themeColor', 'bgImage', 'bgOpacity'];
     for (const key of allowed) {
       if (patch && patch[key] !== undefined) settings[key] = patch[key];
     }
@@ -758,6 +765,84 @@ function registerIpc() {
       return '';
     }
   };
+
+  /* ==================== 皮肤 ==================== *
+   * 背景图存在 %APPDATA%\测试工作台\skin\ 下，只存文件名。
+   * -------------------------------------------------- */
+
+  /** 皮肤目录 */
+  const skinDir = () => path.join(resolveDataDir(), 'skin');
+
+  /** 选背景图（复制到皮肤目录） */
+  ipcMain.handle('skin:pickImage', async () => {
+    assertUnlocked();
+    const picked = await dialog.showOpenDialog(win, {
+      title: '选择背景图',
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }],
+      properties: ['openFile']
+    });
+    if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+
+    const src = picked.filePaths[0];
+    try {
+      const st = fs.statSync(src);
+      if (st.size > 20 * 1024 * 1024) {
+        return { ok: false, message: '图片超过 20MB，请压缩后再选' };
+      }
+      const dir = skinDir();
+      fs.mkdirSync(dir, { recursive: true });
+      // 用固定文件名（覆盖旧的），保留扩展名
+      const ext = path.extname(src).toLowerCase() || '.png';
+      const name = 'bg' + ext;
+      const dest = path.join(dir, name);
+      // 删掉旧的（可能是别的扩展名）
+      for (const f of fs.readdirSync(dir)) {
+        if (f.startsWith('bg.')) fs.rmSync(path.join(dir, f), { force: true });
+      }
+      fs.copyFileSync(src, dest);
+      settings.bgImage = name;
+      store.setMeta('settings', settings);
+      store.persist();
+      return { ok: true, name, url: 'tt-skin://' + name };
+    } catch (err) {
+      return { ok: false, message: '复制图片失败：' + (err && err.message) };
+    }
+  });
+
+  /** 清除背景图 */
+  ipcMain.handle('skin:clearImage', async () => {
+    assertUnlocked();
+    try {
+      const dir = skinDir();
+      if (fs.existsSync(dir)) {
+        for (const f of fs.readdirSync(dir)) {
+          if (f.startsWith('bg.')) fs.rmSync(path.join(dir, f), { force: true });
+        }
+      }
+      settings.bgImage = '';
+      store.setMeta('settings', settings);
+      store.persist();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, message: String(err && err.message) };
+    }
+  });
+
+  /** 读背景图（返回 data URL，给前端用） */
+  ipcMain.handle('skin:getImage', async () => {
+    assertUnlocked();
+    if (!settings.bgImage) return { ok: true, url: '' };
+    try {
+      const full = path.join(skinDir(), settings.bgImage);
+      if (!fs.existsSync(full)) return { ok: true, url: '' };
+      const buf = fs.readFileSync(full);
+      const ext = path.extname(full).toLowerCase().replace('.', '');
+      const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif' : ext === 'bmp' ? 'image/bmp' : 'image/png';
+      return { ok: true, url: `data:${mime};base64,${buf.toString('base64')}` };
+    } catch (err) {
+      return { ok: false, url: '', message: String(err && err.message) };
+    }
+  });
 
   /* ==================== 代码骨架生成 ==================== *
    * 从接口记录 / JSON / 页面元素生成 Java/Python 代码骨架。

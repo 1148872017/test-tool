@@ -2093,3 +2093,120 @@ body {
   align-items: center;
   justify-content: center;
 }
+/* ===== 皮肤：背景图 + 半透明面板 ===== */
+/* 有背景图时，body 铺图并固定 */
+body.has-bg {
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+/* 面板/卡片半透明（--panel-alpha 由 JS 注入，0.35~1） */
+body.has-bg .panel,
+body.has-bg .tool-card,
+body.has-bg .stat,
+body.has-bg .page-head,
+body.has-bg .settings-nav {
+  background: rgba(var(--panel-rgb, 255, 255, 255), var(--panel-alpha, 0.85));
+  backdrop-filter: blur(6px);
+}
+
+/* 侧边栏也半透明 */
+body.has-bg .sidebar {
+  background: rgba(var(--panel-rgb, 255, 255, 255), var(--panel-alpha, 0.85));
+  backdrop-filter: blur(6px);
+}
+
+/* 表格行保持不透明（否则文字看不清） */
+body.has-bg .ant-table,
+body.has-bg .ant-table-tbody > tr > td {
+  background: transparent;
+}
+
+/* ===== 皮肤设置卡片 ===== */
+.skin-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f4f5fa;
+}
+.skin-row:last-of-type {
+  border-bottom: none;
+}
+.skin-row-label {
+  flex: 0 0 100px;
+  font-size: 12.5px;
+  color: #4a5165;
+}
+.skin-themes {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.skin-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  color: #fff;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  padding: 0;
+}
+.skin-swatch:hover {
+  transform: scale(1.1);
+}
+.skin-swatch.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px var(--primary);
+}
+.skin-bg {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+.skin-bg-preview {
+  width: 120px;
+  height: 68px;
+  border-radius: 6px;
+  border: 1px solid var(--line-soft);
+  background-size: cover;
+  background-position: center;
+  flex: 0 0 auto;
+}
+.skin-bg-empty {
+  width: 120px;
+  height: 68px;
+  border-radius: 6px;
+  border: 1px dashed var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+.skin-bg-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.skin-opacity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+.skin-hint {
+  font-size: 11.5px;
+  padding: 6px 0 0;
+}

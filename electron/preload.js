@@ -50,6 +50,11 @@ contextBridge.exposeInMainWorld('api', {
   codegenPreview: (payload) => invoke('codegen:preview', payload),
   codegenSave: (payload) => invoke('codegen:save', payload),
 
+  // ---- 皮肤 ----
+  skinPickImage: () => invoke('skin:pickImage'),
+  skinClearImage: () => invoke('skin:clearImage'),
+  skinGetImage: () => invoke('skin:getImage'),
+
   /** 订阅代码运行输出（返回取消订阅函数） */
   onRunnerOutput: (cb) => {
     const handler = (_e, data) => cb(data);
