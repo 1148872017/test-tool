@@ -61,7 +61,7 @@
 ```
 资产      网站管理 / SQL 片段 / 接口记录 / 测试执行     ← 存什么
 索引      测试用例 / 压测脚本 / 知识库 / 测试笔记       ← 读什么（只读，不改你的文件）
-自动化    代码生成 / 代码调试 / 代码体检 / 报告分析     ← 写代码 / 跑 / 查
+自动化    代码生成 / 代码调试 / 代码体检 / 脚本生成 / 报告分析  ← 写代码 / 跑 / 查
 辅助      测试数据 / JSON 工具 / 工具箱                ← 日常小工具
 ```
 
@@ -78,6 +78,7 @@
 | **代码生成** | 接口 / JSON / 页面元素 → Java/Python 代码骨架 |
 | **代码调试** | 在平台里跑 Groovy / Python / pytest / Maven，看输出 |
 | **代码体检** | 接口覆盖矩阵 + 硬编码 / 脆弱定位扫描 |
+| **脚本生成** | JMeter `.jmx` 生成 + MySQL 快照/清理 SQL |
 | **报告分析** | Allure 失败聚类 + Flaky 追踪 |
 | **测试数据** | 手机号 / 身份证 / 银行卡等批量生成，导出 CSV/JSON |
 | **JSON 工具** | 格式化 / 压缩 / 转义 / 校验 |
@@ -414,6 +415,95 @@ Timeout <N>ms waiting for #btn     ← 同一组
 3. 看失败聚类 / 用例列表
 4. Flaky：切到「Flaky」→ 选 2 个以上目录 → 点「比对」
 
+#### 脚本生成：JMeter 脚本 + MySQL 快照/清理
+
+**痛点**：写 jmx 要在 JMeter GUI 里点半天；测试前备份、跑完清数据，每次手工敲 SQL。
+
+**现在**：接口记录直接生成 jmx；常见数据操作生成 SQL。
+
+##### ① JMeter 脚本生成
+
+**用法**：
+
+1. 侧边栏 **脚本生成** → 默认在「JMeter 脚本」Tab
+2. 选一个或多个接口（按选择顺序执行）
+3. 配线程组：线程数 / Ramp-Up / 循环次数 / 持续时长
+4. 点 **生成预览** → 右侧看 XML
+5. 点 **保存为 .jmx** → 选目录 → 直接拿去 JMeter GUI 打开跑
+
+**生成的内容**：
+
+| 组件 | 说明 |
+|---|---|
+| **测试计划** | 预置 `host` / `port` 变量，命令行可 `-Jhost=xxx` 覆盖 |
+| **线程组** | 线程数 / Ramp-Up / 循环 或 持续时长（二选一） |
+| **HTTP 采样器** | 按接口的 method / path / headers / body 生成 |
+| **HTTP 信息头管理器** | 从接口记录的 Headers 提取 |
+| **响应断言** | 状态码 200 |
+| **持续时间断言** | RT 上限（可配，0 = 不生成） |
+
+**效果**：
+
+```xml
+<ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="线程组-压测计划">
+  <stringProp name="ThreadGroup.num_threads">20</stringProp>
+  <stringProp name="ThreadGroup.ramp_time">3</stringProp>
+  <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
+    <stringProp name="LoopController.loops">10</stringProp>
+  </elementProp>
+</ThreadGroup>
+```
+
+**关键：生成的 jmx 能被平台自己的解析器解析**——保存后到「压测脚本」页面能看到它，健康检查也是绿的。
+
+> **域名/端口用 JMeter 属性占位**：`${__P(host,127.0.0.1)}`。
+> 同一份 jmx 换环境不用改文件，命令行 `jmeter -Jhost=test2.com` 就行。
+
+##### ② MySQL 快照 / 清理 / 还原
+
+**核心原则：只生成 SQL，不连数据库、不执行、不存密码。**
+
+复制到你的 MySQL 客户端（Navicat / DBeaver / 命令行）执行。
+
+**三种操作**：
+
+| 操作 | 生成什么 | 典型用法 |
+|---|---|---|
+| **快照** | `CREATE TABLE bak_xxx LIKE xxx` + `INSERT ... SELECT` | 压测前备份数据 |
+| **清理** | `DELETE`（带条件）/ `TRUNCATE` / `DROP` | 跑完清脏数据 |
+| **还原** | `TRUNCATE` + `INSERT ... SELECT` 从备份表灌回 | 测完恢复现场 |
+
+**快照的两种方式**：
+
+| 方式 | 生成 | 适用 |
+|---|---|---|
+| **建备份表** | `CREATE TABLE bak_t_order_20261124_113000 LIKE t_order` | 小表，快速回滚 |
+| **mysqldump 命令** | `mysqldump -u root -p ... > xxx.sql` | 大表，导出文件 |
+
+**安全设计**：
+
+- **TRUNCATE / DROP 默认被拒**——必须勾「我确认这是测试库」才生成
+- **DELETE 没条件等同于清空**——也要确认
+- **表名/库名校验**——只允许字母/数字/下划线，防 SQL 注入
+- 生成的 SQL 顶部有 ⚠️ 警告注释
+
+**效果**（清理）：
+
+```sql
+-- MySQL 测试数据清理
+-- 生成时间：2026/11/24 11:30:00
+-- ⚠️ 执行前请确认：这是测试库，不是生产库！
+
+USE `test_db`;
+
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- 清理：t_order WHERE create_time < '2026-01-01'
+DELETE FROM `t_order` WHERE create_time < '2026-01-01';
+
+SET FOREIGN_KEY_CHECKS = 1;
+```
+
 ---
 
 ### 4. 辅助工具：测试数据 / JSON / 工具箱
@@ -447,6 +537,24 @@ Timeout <N>ms waiting for #btn     ← 同一组
 #### 工具箱
 
 Base64 编解码、时间戳转换、哈希（MD5/SHA1/SHA256/SHA512）、UUID 生成。
+
+---
+
+## 与「平台整体迭代规划」的对照
+
+如果你手上有那份六模块的规划，这里说明哪些做了、哪些没做：
+
+| 规划模块 | 状态 | 说明 |
+|---|---|---|
+| **一. 代码骨架生成** | ✅ 做了 | OpenAPI → Java/Python 骨架、Playwright POM、JSON → POJO/Pydantic |
+| **二. 压测辅助 + 造数** | ✅ 做了 | jmx 生成（脚本生成页）+ 造数导出（测试数据页）+ MySQL 快照/清理 SQL |
+| **三. 代码质量体检** | ⚠️ **部分** | 做了硬编码/脆弱定位扫描；**依赖冲突检查没做**（要解析 Maven 依赖树，成本高） |
+| **四. 覆盖矩阵** | ✅ 做了 | 接口清单 vs 代码路径（代码体检页） |
+| **五. 报告聚合** | ⚠️ **部分** | 做了 Allure 失败聚类 + Flaky 追踪；jmx jtl 图表已有独立入口（压测脚本页） |
+| **六. Git 变更影响面** | ❌ **不做** | 收益低（IDE 的 Find Usages 更准），成本高（要解析 import 关系） |
+
+**技术栈差异**：规划里建议 FastAPI / Spring Boot，实际用的是 **Electron + Node**。
+功能一样能做，只是实现方式不同（模板引擎用 EJS 而不是 FreeMarker/Jinja2）。
 
 ---
 

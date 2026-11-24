@@ -12,6 +12,7 @@ import CodeRunnerPage from './pages/CodeRunnerPage';
 import CodegenPage from './pages/CodegenPage';
 import ReportPage from './pages/ReportPage';
 import CodeScanPage from './pages/CodeScanPage';
+import ScriptGenPage from './pages/ScriptGenPage';
 import SettingsPage from './pages/SettingsPage';
 import { getTheme } from '../shared/themes';
 import CasePage from './pages/CasePage';
@@ -249,6 +250,7 @@ export default function App() {
         {route.type === 'tool' && route.key === 'codegen' ? <CodegenPage /> : null}
         {route.type === 'tool' && route.key === 'report' ? <ReportPage /> : null}
         {route.type === 'tool' && route.key === 'codescan' ? <CodeScanPage /> : null}
+        {route.type === 'tool' && route.key === 'scriptgen' ? <ScriptGenPage /> : null}
         {route.type === 'settings' ? (
           <SettingsPage
             boot={boot}

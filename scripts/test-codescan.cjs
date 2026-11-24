@@ -124,7 +124,7 @@ check('页面有严重程度筛选', /sevFilter/.test(pageSrc), 'no filter');
 const collections = require('../shared/collections.js');
 check('TOOLS 有代码体检', collections.TOOLS.some((t) => t.key === 'codescan'), collections.TOOLS.map((t) => t.key));
 check('TOOLS 有 group 字段', collections.TOOLS.every((t) => !!t.group), collections.TOOLS.map((t) => t.group));
-check('TOOLS 自动化组有 4 个', collections.TOOLS.filter((t) => t.group === '自动化').length === 4, collections.TOOLS.filter((t) => t.group === '自动化').length);
+check('TOOLS 自动化组有 5 个', collections.TOOLS.filter((t) => t.group === '自动化').length === 5, collections.TOOLS.filter((t) => t.group === '自动化').length);
 check('TOOLS 辅助组有 3 个', collections.TOOLS.filter((t) => t.group === '辅助').length === 3, collections.TOOLS.filter((t) => t.group === '辅助').length);
 check('COLLECTIONS 用「资产」分组', collections.COLLECTIONS.every((c) => c.group === '资产'), collections.COLLECTIONS.map((c) => c.group));
 

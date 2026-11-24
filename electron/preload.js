@@ -45,6 +45,15 @@ contextBridge.exposeInMainWorld('api', {
   runnerOpenBrowserDir: () => invoke('runner:openBrowserDir'),
   pickFile: (payload) => invoke('util:pickFile', payload),
 
+  // ---- JMeter 脚本生成 ----
+  jmxgenPreview: (payload) => invoke('jmxgen:preview', payload),
+  jmxgenSave: (payload) => invoke('jmxgen:save', payload),
+
+  // ---- MySQL SQL 生成 ----
+  sqlgenSnapshot: (payload) => invoke('sqlgen:snapshot', payload),
+  sqlgenCleanup: (payload) => invoke('sqlgen:cleanup', payload),
+  sqlgenRestore: (payload) => invoke('sqlgen:restore', payload),
+  sqlgenListBackups: (tables) => invoke('sqlgen:listBackups', { tables }),
   // ---- 代码骨架生成 ----
   codegenTargets: () => invoke('codegen:targets'),
   codegenPreview: (payload) => invoke('codegen:preview', payload),

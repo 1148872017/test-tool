@@ -18,6 +18,8 @@ const runner = require('./runner');
 const projects = require('./projects');
 const { RUNNERS, listRunners } = require('../shared/runners');
 const codegen = require('../shared/codegen');
+const jmxgen = require('../shared/jmxgen');
+const sqlgen = require('../shared/sqlgen');
 const allure = require('./allure');
 const codescan = require('./codescan');
 const { TOOLS, COLLECTION_MAP } = require('../shared/collections');
@@ -844,6 +846,118 @@ function registerIpc() {
     } catch (err) {
       return { ok: false, url: '', message: String(err && err.message) };
     }
+  });
+
+  /* ==================== JMeter 脚本生成 ==================== *
+   * 从接口记录生成标准 .jmx，JMeter GUI 能直接打开。
+   * ------------------------------------------------------ */
+
+  /**
+   * 生成 jmx（预览，不写文件）。
+   *
+   * payload:
+   *   apiIds   接口记录 id 数组
+   *   name     测试计划名
+   *   threads  线程数 / rampUp / loops / duration / rtLimit
+   *   domain / port  默认域名端口（空 = 从第一个接口取）
+   *   onError  出错策略
+   */
+  ipcMain.handle('jmxgen:preview', async (e, payload = {}) => {
+    assertUnlocked();
+    const ids = Array.isArray(payload.apiIds) ? payload.apiIds : [];
+    if (!ids.length) return { ok: false, message: '至少选一个接口' };
+
+    const apis = [];
+    for (const id of ids) {
+      const rec = store.get(String(id));
+      if (rec) apis.push({ id: rec.id, data: rec.data });
+    }
+    if (!apis.length) return { ok: false, message: '选中的接口都不存在' };
+
+    return jmxgen.generateJmx({
+      apis,
+      name: payload.name,
+      threads: payload.threads,
+      rampUp: payload.rampUp,
+      loops: payload.loops,
+      duration: payload.duration,
+      rtLimit: payload.rtLimit,
+      domain: payload.domain,
+      port: payload.port,
+      onError: payload.onError
+    });
+  });
+
+  /** 生成 jmx 并保存 */
+  ipcMain.handle('jmxgen:save', async (e, payload = {}) => {
+    assertUnlocked();
+    const ids = Array.isArray(payload.apiIds) ? payload.apiIds : [];
+    if (!ids.length) return { ok: false, message: '至少选一个接口' };
+
+    const apis = [];
+    for (const id of ids) {
+      const rec = store.get(String(id));
+      if (rec) apis.push({ id: rec.id, data: rec.data });
+    }
+    if (!apis.length) return { ok: false, message: '选中的接口都不存在' };
+
+    const gen = jmxgen.generateJmx({
+      apis,
+      name: payload.name,
+      threads: payload.threads,
+      rampUp: payload.rampUp,
+      loops: payload.loops,
+      duration: payload.duration,
+      rtLimit: payload.rtLimit,
+      domain: payload.domain,
+      port: payload.port,
+      onError: payload.onError
+    });
+    if (!gen.ok) return gen;
+
+    let dir = String(payload.dir || '').trim();
+    if (!dir) {
+      const picked = await dialog.showOpenDialog(win, {
+        title: '选择保存目录',
+        defaultPath: settings.jmxDir || '',
+        properties: ['openDirectory']
+      });
+      if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+      dir = picked.filePaths[0];
+    }
+
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const full = path.join(dir, gen.filename);
+      fs.writeFileSync(full, gen.xml, 'utf8');
+      return { ok: true, file: full, filename: gen.filename };
+    } catch (err) {
+      return { ok: false, message: '写文件失败：' + (err && err.message) };
+    }
+  });
+
+  /* ==================== MySQL 快照 / 清理 SQL ==================== *
+   * 只生成 SQL，不连数据库、不执行。
+   * ---------------------------------------------------------- */
+
+  ipcMain.handle('sqlgen:snapshot', async (e, payload = {}) => {
+    assertUnlocked();
+    return sqlgen.genSnapshot(payload);
+  });
+
+  ipcMain.handle('sqlgen:cleanup', async (e, payload = {}) => {
+    assertUnlocked();
+    return sqlgen.genCleanup(payload);
+  });
+
+  ipcMain.handle('sqlgen:restore', async (e, payload = {}) => {
+    assertUnlocked();
+    return sqlgen.genRestore(payload);
+  });
+
+  ipcMain.handle('sqlgen:listBackups', async (e, { tables } = {}) => {
+    assertUnlocked();
+    return { ok: true, list: sqlgen.listBackupTables(tables) };
   });
 
   /* ==================== 代码骨架生成 ==================== *

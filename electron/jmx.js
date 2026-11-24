@@ -66,10 +66,20 @@ function longProp(el, name) {
   return null;
 }
 
-/** 所有 stringProp 摊平成对象 */
+/**
+ * 所有 Prop 摊平成对象（stringProp / boolProp / intProp / longProp）。
+ *
+ * 为什么不能只读 stringProp：
+ *   JMeter 的 jmx 里不同类型用不同标签，比如
+ *     ThreadGroup.scheduler → boolProp
+ *     Assertion.test_type  → intProp
+ *   只读 stringProp 会漏掉这些。
+ */
 function props(el) {
   const out = {};
-  for (const n of byTag(el, 'stringProp')) out[n.getAttribute('name')] = textOf(n);
+  for (const tag of ['stringProp', 'boolProp', 'intProp', 'longProp']) {
+    for (const n of byTag(el, tag)) out[n.getAttribute('name')] = textOf(n);
+  }
   return out;
 }
 

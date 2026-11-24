@@ -2529,3 +2529,84 @@ body.has-bg .ant-table-tbody > tr > td {
   margin-top: 3px;
   font-size: 11.5px;
 }
+/* ===== 脚本生成 ===== */
+.scriptgen-page {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+}
+.scriptgen-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.scriptgen-body {
+  display: grid;
+  grid-template-columns: 400px minmax(0, 1fr);
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+.scriptgen-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fafbfe;
+  overflow-y: auto;
+}
+.scriptgen-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.scriptgen-field > label {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.scriptgen-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.scriptgen-table td {
+  padding: 3px 4px;
+}
+.scriptgen-table th {
+  padding: 5px 6px;
+  font-size: 11.5px;
+}
+.scriptgen-output {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.scriptgen-output-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  background: #f7f8fc;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #4a5165;
+}
+.scriptgen-code {
+  flex: 1;
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.7;
+  background: #fff;
+  white-space: pre;
+  tab-size: 2;
+}

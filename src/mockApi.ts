@@ -518,6 +518,29 @@ export function installMockIfNeeded() {
     onRunnerOutput: () => () => {},
     onRunnerExit: () => () => {},
 
+    /* ---- JMeter 脚本生成（mock）---- */
+    jmxgenPreview: async () => ({
+      ok: true,
+      filename: '压测计划.jmx',
+      xml: '<?xml version="1.0" encoding="UTF-8"?>\n<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">\n  <hashTree>\n    <!-- mock 预览 -->\n  </hashTree>\n</jmeterTestPlan>\n'
+    }),
+    jmxgenSave: async () => ({ ok: false, canceled: true }),
+
+    /* ---- MySQL SQL 生成（mock）---- */
+    sqlgenSnapshot: async () => ({
+      ok: true,
+      sql: '-- MySQL 测试库快照（建备份表）\n-- mock 预览\n\nUSE `test_db`;\n\n-- 快照：t_order → bak_t_order_20261124_120000\nCREATE TABLE `bak_t_order_20261124_120000` LIKE `t_order`;\nINSERT INTO `bak_t_order_20261124_120000` SELECT * FROM `t_order`;\n'
+    }),
+    sqlgenCleanup: async () => ({
+      ok: true,
+      sql: '-- MySQL 测试数据清理\n-- mock 预览\n\nUSE `test_db`;\n\nDELETE FROM `t_order` WHERE create_time < \'2026-01-01\';\n'
+    }),
+    sqlgenRestore: async () => ({
+      ok: true,
+      sql: '-- MySQL 测试数据还原\n-- mock 预览\n\nUSE `test_db`;\n\nTRUNCATE TABLE `t_order`;\nINSERT INTO `t_order` SELECT * FROM `bak_t_order_20261124_120000`;\n'
+    }),
+    sqlgenListBackups: async () => ({ ok: true, list: [] }),
+
     /* ---- 代码生成（mock）---- */
     codegenTargets: async () => ({
       ok: true,
