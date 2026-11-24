@@ -197,11 +197,12 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   check('设置保存', st.autoLockMinutes === 30 && st.clipboardClearSeconds === 15, st);
 
   // 点 X 的行为：默认 tray，可切 quit，非法值回落到 tray
-  check('closeAction 默认 tray', st.closeAction === 'tray', st.closeAction);
+  // 默认改成 quit（踩坑 #93：托盘会让用户以为关了，实际进程还在）
+  check('closeAction 默认 quit', st.closeAction === 'quit', st.closeAction);
   const stQuit = await call('settings:set', { closeAction: 'quit' });
   check('closeAction 可切 quit', stQuit.closeAction === 'quit', stQuit.closeAction);
   const stBad = await call('settings:set', { closeAction: 'nonsense' });
-  check('closeAction 非法值回落 tray', stBad.closeAction === 'tray', stBad.closeAction);
+  check('closeAction 非法值回落 quit', stBad.closeAction === 'quit', stBad.closeAction);
   await call('settings:set', { closeAction: 'tray' });
 
   const info = await call('app:info');

@@ -79,7 +79,7 @@
 | **代码生成** | 接口 / JSON / 页面元素 → Java/Python 代码骨架 |
 | **代码调试** | 在平台里跑 Groovy / Python / pytest / Maven，看输出 |
 | **代码体检** | 接口覆盖矩阵 + 硬编码 / 脆弱定位扫描 |
-| **脚本生成** | JMeter `.jmx` 生成 + MySQL 快照/清理 SQL |
+| **脚本生成** | JMeter `.jmx` 生成 + MySQL/SQLite 快照清理 SQL |
 | **报告分析** | Allure 失败聚类 + Flaky 追踪 |
 | **测试数据** | 手机号 / 身份证 / 银行卡等批量生成，导出 CSV/JSON |
 | **JSON 工具** | 格式化 / 压缩 / 转义 / 校验 |
@@ -451,7 +451,7 @@ Timeout <N>ms waiting for #btn     ← 同一组
 3. 看失败聚类 / 用例列表
 4. Flaky：切到「Flaky」→ 选 2 个以上目录 → 点「比对」
 
-#### 脚本生成：JMeter 脚本 + MySQL 快照/清理
+#### 脚本生成：JMeter 脚本 + 数据库快照/清理
 
 **痛点**：写 jmx 要在 JMeter GUI 里点半天；测试前备份、跑完清数据，每次手工敲 SQL。
 
@@ -499,7 +499,7 @@ Timeout <N>ms waiting for #btn     ← 同一组
 > **域名/端口用 JMeter 属性占位**：`${__P(host,127.0.0.1)}`。
 > 同一份 jmx 换环境不用改文件，命令行 `jmeter -Jhost=test2.com` 就行。
 
-##### ② MySQL 快照 / 清理 / 还原
+##### ② 数据库快照 / 清理 / 还原（MySQL / SQLite）
 
 **核心原则：只生成 SQL，不连数据库、不执行、不存密码。**
 

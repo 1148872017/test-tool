@@ -58,8 +58,17 @@ const DEFAULT_SETTINGS = {
   autoLockMinutes: 10,
   clipboardClearSeconds: 30,
   openCopyPassword: true,
-  // 点 X 时的行为：'tray' 缩到托盘（默认）/ 'quit' 直接退出
-  closeAction: 'tray',
+  /**
+   * 点 X 时的行为：'quit' 直接退出（默认）/ 'tray' 缩到托盘。
+   *
+   * 为什么默认改成 quit（踩坑 #93）：
+   *   原来是 'tray'，结果用户点 X 后以为关了，实际进程还在跑：
+   *   - 安装新版时提示「程序正在运行」，用户觉得是误报
+   *   - 任务管理器里看到好几个 test-tool.exe 不知道哪来的
+   *   - 数据也不会丢（每次修改 400ms 后已落盘），所以没必要强留进程
+   *   想要托盘常驻的，去设置里明确打开就行。
+   */
+  closeAction: 'quit',
   // 空字符串 = 首次启动时按 defaultWorkspaceDir() 算，见 loadSettings()
   casesDir: '',
   jmxDir: '',
@@ -183,7 +192,7 @@ function publicSettings() {
     autoLockMinutes: settings.autoLockMinutes,
     clipboardClearSeconds: settings.clipboardClearSeconds,
     openCopyPassword: settings.openCopyPassword !== false,
-    closeAction: settings.closeAction === 'quit' ? 'quit' : 'tray',
+    closeAction: settings.closeAction === 'tray' ? 'tray' : 'quit',
     casesDir: settings.casesDir || '',
     jmxDir: settings.jmxDir || '',
     reportDir: settings.reportDir || '',
@@ -328,7 +337,7 @@ function createWindow() {
    * 默认 'tray'：本地工具常驻托盘更顺手（热键 Ctrl+Alt+T 随时唤）。
    */
   win.on('close', (e) => {
-    const action = settings.closeAction === 'quit' ? 'quit' : 'tray';
+    const action = settings.closeAction === 'tray' ? 'tray' : 'quit';
     if (action === 'quit') return; // 走默认关闭流程
     if (app.isQuitting) return; // 托盘菜单「退出」时放行
     e.preventDefault();

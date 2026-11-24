@@ -42,7 +42,7 @@ export default function ScriptGenPage() {
   /** 生成时用的 JMeter 版本（从设置里的 jmeterPath 读） */
   const [jmeterVersion, setJmeterVersion] = useState('');
 
-  /* ============ MySQL SQL ============ */
+  /* ============ 数据库 SQL（MySQL / SQLite）============ */
   const [sqlMode, setSqlMode] = useState<'snapshot' | 'cleanup' | 'restore'>('snapshot');
   const [dialect, setDialect] = useState<'mysql' | 'sqlite'>('mysql');
   const [database, setDatabase] = useState('test_db');
@@ -210,7 +210,7 @@ export default function ScriptGenPage() {
           onChange={(v) => setTab(v as Tab)}
           options={[
             { label: 'JMeter 脚本', value: 'jmx' },
-            { label: 'MySQL 快照 / 清理', value: 'sql' }
+            { label: '数据库快照 / 清理', value: 'sql' }
           ]}
         />
       </div>
@@ -347,7 +347,7 @@ export default function ScriptGenPage() {
         </div>
       ) : null}
 
-      {/* ============ MySQL SQL ============ */}
+      {/* ============ 数据库 SQL（MySQL / SQLite） ============ */}
       {tab === 'sql' ? (
         <div className="scriptgen-body">
           <div className="scriptgen-form">

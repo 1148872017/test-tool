@@ -799,7 +799,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
           </div>
           <Segmented
             size="small"
-            value={settings.closeAction === 'quit' ? 'quit' : 'tray'}
+            value={settings.closeAction === 'tray' ? 'tray' : 'quit'}
             onChange={(v) => saveSettings({ closeAction: String(v) })}
             options={[
               { label: '缩到托盘', value: 'tray' },
@@ -808,8 +808,8 @@ export default function SettingsPage({ boot, onChanged }: Props) {
           />
           <span className="muted" style={{ fontSize: 12 }}>
             {settings.closeAction === 'quit'
-              ? '点 X 直接退出；下次启动重新加载'
-              : '点 X 隐藏到托盘，按 Ctrl+Alt+T 或双击托盘图标唤回'}
+              ? '点 X 直接退出（默认，推荐）——不会在后台留进程'
+              : '点 X 隐藏到托盘，按 Ctrl+Alt+T 或双击托盘图标唤回（会在后台留进程，装新版前需先退出）'}
           </span>
         </div>
 

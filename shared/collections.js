@@ -278,7 +278,7 @@ const TOOLS = [
   { key: 'codegen', name: '代码生成', icon: 'FileAddOutlined', desc: '接口 / JSON / 页面元素 → Java/Python 骨架', group: '自动化' },
   { key: 'runner', name: '代码调试', icon: 'BugOutlined', desc: 'Groovy / Python / pytest / Maven 跑代码看输出', group: '自动化' },
   { key: 'codescan', name: '代码体检', icon: 'SafetyOutlined', desc: '接口覆盖矩阵 + 硬编码 / 脆弱定位扫描', group: '自动化' },
-  { key: 'scriptgen', name: '脚本生成', icon: 'ThunderboltOutlined', desc: 'JMeter .jmx + MySQL 快照/清理 SQL', group: '自动化' },
+  { key: 'scriptgen', name: '脚本生成', icon: 'ThunderboltOutlined', desc: 'JMeter .jmx + MySQL/SQLite 快照清理 SQL', group: '自动化' },
   { key: 'report', name: '报告分析', icon: 'BarChartOutlined', desc: 'Allure 失败聚类 + Flaky 追踪', group: '自动化' },
   // ---- 日常辅助 ----
   { key: 'data', name: '测试数据', icon: 'ExperimentOutlined', desc: '手机号 / 身份证 / 银行卡 / 地址…', group: '辅助' },

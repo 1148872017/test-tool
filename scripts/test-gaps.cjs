@@ -217,6 +217,16 @@ check('CodegenPage 能载入页面元素', /doLoadPage/.test(codegenSrc), 'no lo
 const scriptSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'ScriptGenPage.tsx'), 'utf8');
 check('ScriptGenPage 有方言切换', /dialect/.test(scriptSrc), 'no dialect');
 
+// 文案不能写死 MySQL（切到 SQLite 时标题/提示/选项都要跟着变）
+check('Tab 标题是「数据库」不是「MySQL」', /数据库快照 \/ 清理/.test(scriptSrc), 'tab still MySQL');
+check('Tab 标题不再写 MySQL', !/label: 'MySQL 快照/.test(scriptSrc), 'hardcoded MySQL tab');
+check('提示文案分方言', /dialect === 'sqlite'[\s\S]{0,200}SQLite 客户端/.test(scriptSrc), 'hint not dynamic');
+check('导出方式分方言', /dialect === 'sqlite' \? 'sqlite3 导出命令'/.test(scriptSrc), 'dump label not dynamic');
+check('库名标签分方言', /dialect === 'sqlite' \? '库文件名/.test(scriptSrc), 'db label not dynamic');
+check('侧栏描述含 SQLite', /MySQL\/SQLite 快照清理/.test(
+  fs.readFileSync(path.join(__dirname, '..', 'shared', 'collections.js'), 'utf8')
+), 'sidebar desc stale');
+
 const dataSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'DataTool.tsx'), 'utf8');
 check('DataTool 有模式切换', /mode === 'multi'/.test(dataSrc), 'no multi mode');
 check('DataTool 有字段表格', /addField/.test(dataSrc), 'no addField');
