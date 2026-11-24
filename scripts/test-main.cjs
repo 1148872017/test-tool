@@ -96,6 +96,8 @@ Module._load = function (request, parent, isMain) {
 
 process.env.TT_DATA_DIR = tmp;
 delete process.env.TT_DEBUG;
+// 关掉示例数据：这个测试断言的是「自己写了几条就是几条」，混进 demo 会全乱
+process.env.TT_NO_DEMO = '1';
 
 require(path.join(__dirname, '..', 'electron', 'main.js'));
 

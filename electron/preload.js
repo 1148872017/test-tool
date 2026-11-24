@@ -80,6 +80,11 @@ contextBridge.exposeInMainWorld('api', {
   codescanPickDir: () => invoke('codescan:pickDir'),
   codescanDeps: (root) => invoke('codescan:deps', { root }),
 
+  // ---- 示例数据 ----
+  demoCount: () => invoke('demo:count'),
+  demoClear: () => invoke('demo:clear'),
+  demoPaths: () => invoke('demo:paths'),
+
   /** 订阅代码运行输出（返回取消订阅函数） */
   onRunnerOutput: (cb) => {
     const handler = (_e, data) => cb(data);

@@ -676,6 +676,14 @@ export function installMockIfNeeded() {
         { rule: 'absolute-xpath', label: '绝对 XPath', severity: 'low', hint: '绝对 XPath 极易失效', file: 'D:/mock/Project/example/LoginPage.java', line: 12, snippet: 'By.xpath("/html/body/div[1]/span")' }
       ]
     }),
+    demoCount: async () => ({ ok: true, count: 11 }),
+    demoClear: async () => ({ ok: true, removed: 11, errors: [] }),
+    demoPaths: async () => ({
+      ok: true,
+      project: 'D:/demo/demo-project',
+      allure: 'D:/demo/demo-allure-results'
+    }),
+
     codescanDeps: async () => ({
       ok: true,
       poms: 1,

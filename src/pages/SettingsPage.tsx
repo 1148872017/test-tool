@@ -71,6 +71,9 @@ export default function SettingsPage({ boot, onChanged }: Props) {
   const [jmeterVersion, setJmeterVersion] = useState('');
   const [reportDir, setReportDir] = useState('');
   const [allureDir, setAllureDir] = useState('');
+  /** 示例数据：条数 + 清除中 */
+  const [demoCount, setDemoCount] = useState(0);
+  const [demoBusy, setDemoBusy] = useState(false);
   const [kbDir, setKbDir] = useState('');
   const [notesDir, setNotesDir] = useState('');
 
@@ -241,6 +244,34 @@ export default function SettingsPage({ boot, onChanged }: Props) {
       }
     } catch (e: any) {
       toast('选择失败：' + (e && e.message ? e.message : e), 'error');
+    }
+  };
+
+  /* ---------- 示例数据 ---------- */
+  const refreshDemoCount = async () => {
+    try {
+      const res = await api.demoCount();
+      setDemoCount(res && res.ok ? Number(res.count) || 0 : 0);
+    } catch (e) {
+      setDemoCount(0);
+    }
+  };
+
+  const doClearDemo = async () => {
+    setDemoBusy(true);
+    try {
+      const res = await api.demoClear();
+      if (!res.ok) {
+        toast(res.message || '清除失败', 'error');
+        return;
+      }
+      toast(`已清除 ${res.removed} 条示例数据`);
+      setDemoCount(0);
+      onChanged();
+    } catch (e: any) {
+      toast('清除失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      setDemoBusy(false);
     }
   };
 
@@ -819,6 +850,41 @@ export default function SettingsPage({ boot, onChanged }: Props) {
       <div id="sec-data" className="tool-card" style={{ marginBottom: 14 }}>
         <div className="tool-card-title">
           <SaveOutlined /> 数据与备份
+        </div>
+
+        {/* 示例数据 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 0 10px' }}>
+          <div style={{ width: 120 }} className="muted">
+            示例数据
+          </div>
+          <div style={{ flex: 1 }}>
+            {demoCount ? (
+              <>
+                <Tag color="blue" style={{ marginRight: 6 }}>
+                  {demoCount} 条
+                </Tag>
+                <span className="muted" style={{ fontSize: 12 }}>
+                  首次启动写入的示例（带「示例」标签）。看懂后可以清除，不影响你自己的数据。
+                </span>
+              </>
+            ) : (
+              <span className="muted" style={{ fontSize: 12 }}>
+                没有示例数据（已清除或非首次启动）
+              </span>
+            )}
+          </div>
+          <Popconfirm
+            title="清除所有示例数据？"
+            description="只删带「示例」标签的记录 + 内置的示例项目/报告文件，你自己的数据不受影响。"
+            okText="清除"
+            cancelText="取消"
+            onConfirm={doClearDemo}
+            disabled={!demoCount}
+          >
+            <Button size="small" danger icon={<DeleteOutlined />} loading={demoBusy} disabled={!demoCount}>
+              清除示例
+            </Button>
+          </Popconfirm>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '6px 0' }}>
           <div style={{ width: 120 }} className="muted">

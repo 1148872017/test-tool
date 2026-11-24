@@ -24,6 +24,7 @@ const openapifile = require('./openapifile');
 const allure = require('./allure');
 const codescan = require('./codescan');
 const depsCheck = require('./deps');
+const demo = require('./demo');
 const { TOOLS, COLLECTION_MAP } = require('../shared/collections');
 
 const DEBUG = process.env.TT_DEBUG === '1';
@@ -1453,6 +1454,44 @@ function registerIpc() {
    * 只看「同一声明出现多次 / 版本不一致 / 占位符没定义」，
    * 不做传递依赖分析（那要联网查 Maven Central，成本远超收益）。
    */
+  /* ==================== 示例数据 ==================== *
+   * 首次启动写入 11 条示例（可一键清除）。
+   * ------------------------------------------------ */
+
+  /** 示例记录条数（0 = 已经清掉了） */
+  ipcMain.handle('demo:count', async () => {
+    assertUnlocked();
+    try {
+      return { ok: true, count: demo.countDemo(store) };
+    } catch (e) {
+      return { ok: false, count: 0, message: String(e && e.message) };
+    }
+  });
+
+  /** 清除所有示例数据（记录 + 配套文件） */
+  ipcMain.handle('demo:clear', async () => {
+    assertUnlocked();
+    try {
+      const demoRoot = path.join(DATA_DIR, 'demo');
+      const res = demo.clearDemo(store, demoRoot);
+      store.persist();
+      return { ok: true, removed: res.removed, errors: res.errors };
+    } catch (e) {
+      return { ok: false, message: String(e && e.message) };
+    }
+  });
+
+  /** 示例配套文件的路径（代码体检 / 报告分析可以直接用） */
+  ipcMain.handle('demo:paths', async () => {
+    assertUnlocked();
+    const demoRoot = path.join(DATA_DIR, 'demo');
+    return {
+      ok: true,
+      project: path.join(demoRoot, 'project'),
+      allure: path.join(demoRoot, 'allure-results')
+    };
+  });
+
   ipcMain.handle('codescan:deps', async (e, { root } = {}) => {
     assertUnlocked();
     const dir = (root && String(root).trim()) || settings.projectDir || '';
@@ -1810,6 +1849,33 @@ app.whenReady().then(async () => {
     logStartup('store init ok, db=' + store.dbPath);
     loadSettings();
     logStartup('settings loaded, casesDir=' + settings.casesDir);
+
+    /**
+     * 首次启动写入示例数据（只写一次）。
+     *
+     * 放这里而不是 registerIpc 之后：
+     *   窗口创建时会读列表，示例数据得在那之前就落库，
+     *   否则首屏空白、要手动刷新才看得到。
+     */
+    try {
+      // 测试时可设 TT_NO_DEMO=1 关掉（否则测试库会混进示例数据）
+      if (process.env.TT_NO_DEMO === '1') {
+        logStartup('demo seed disabled by TT_NO_DEMO');
+      } else {
+      const demoRoot = path.join(DATA_DIR, 'demo');
+      const seed = demo.seedDemo(store, demoRoot);
+      if (seed.seeded) {
+        logStartup('demo seeded: ' + seed.records + ' records, files=' + JSON.stringify(seed.files));
+        store.persist();
+      } else {
+        logStartup('demo already seeded, skip');
+      }
+      }
+    } catch (e) {
+      // 示例数据写失败不能影响启动
+      logStartup('demo seed failed: ' + (e && e.message));
+    }
+
     registerIpc();
     logStartup('ipc registered');
     createWindow();
