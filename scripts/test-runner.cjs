@@ -261,7 +261,15 @@ check('EnvCard 有「打开目录」', /runnerOpenBrowserDir/.test(envCardSrc), 
 const settingsSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'SettingsPage.tsx'), 'utf8');
 check('设置页接入 EnvCard', /<EnvCard/.test(settingsSrc), 'not used');
 check('设置页有侧边导航', /settings-nav/.test(settingsSrc), 'no nav');
-check('导航有 8+ 项', (settingsSrc.match(/id: 'sec-/g) || []).length >= 8, (settingsSrc.match(/id: 'sec-/g) || []).length);
+  // 设置页做了分类整合：10 项 → 6 项（目录/环境/外观/行为/数据/关于）
+  check('导航有 6 项', (settingsSrc.match(/id: 'sec-/g) || []).length === 6, (settingsSrc.match(/id: 'sec-/g) || []).length);
+  check(
+    '每个导航项都有对应锚点',
+    ['sec-dirs', 'sec-env', 'sec-skin', 'sec-behavior', 'sec-data', 'sec-about'].every((id) =>
+      settingsSrc.includes('id="' + id + '"')
+    ),
+    'missing anchor'
+  );
 check('卡片有锚点 id', /id="sec-env"/.test(settingsSrc), 'no anchor');
 
 const pageSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'CodeRunnerPage.tsx'), 'utf8');

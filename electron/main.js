@@ -92,6 +92,9 @@ const DEFAULT_SETTINGS = {
   bgOpacity: 85,
   // 文字颜色：auto（透明度低时自动加深）/ deep（强制加深）/ normal（默认）
   bgTextMode: 'auto',
+  // 背景蒙版：强度 0-100 + 颜色 dark/light
+  bgOverlay: 35,
+  bgOverlayColor: 'dark',
   jmeterPath: '',
   pin: null
 };
@@ -192,6 +195,8 @@ function publicSettings() {
     bgImage: settings.bgImage || '',
     bgOpacity: settings.bgOpacity === undefined ? 85 : settings.bgOpacity,
     bgTextMode: settings.bgTextMode || 'auto',
+    bgOverlay: settings.bgOverlay === undefined ? 35 : settings.bgOverlay,
+    bgOverlayColor: settings.bgOverlayColor === 'light' ? 'light' : 'dark',
     autoLockMinutes: settings.autoLockMinutes,
     clipboardClearSeconds: settings.clipboardClearSeconds,
     openCopyPassword: settings.openCopyPassword !== false,
@@ -477,7 +482,7 @@ function registerIpc() {
   ipcMain.handle('settings:get', async () => publicSettings());
 
   ipcMain.handle('settings:set', async (e, patch) => {
-    const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'closeAction', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'allureDir', 'kbDir', 'notesDir', 'projectDir', 'javaHome', 'pythonPath', 'mvnPath', 'themeColor', 'bgImage', 'bgOpacity', 'bgTextMode'];
+    const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'closeAction', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'allureDir', 'kbDir', 'notesDir', 'projectDir', 'javaHome', 'pythonPath', 'mvnPath', 'themeColor', 'bgImage', 'bgOpacity', 'bgTextMode', 'bgOverlay', 'bgOverlayColor'];
     for (const key of allowed) {
       if (patch && patch[key] !== undefined) settings[key] = patch[key];
     }
@@ -1409,14 +1414,19 @@ function registerIpc() {
    *
    * payload: { root }  代码根目录（空 = settings.projectDir）
    */
-  ipcMain.handle('codescan:coverage', async (e, { root } = {}) => {
+  ipcMain.handle('codescan:coverage', async (e, { root, kind } = {}) => {
     assertUnlocked();
     const dir = (root && String(root).trim()) || settings.projectDir || '';
     if (!dir) return { ok: false, message: '没配代码目录' };
 
-    // 接口清单从 apis 集合读
-    const apis = store.list('apis');
-    return codescan.buildCoverage(apis, dir);
+    /**
+     * 清单来源：
+     *   api  → apis 集合（从 Apifox 同步的接口）
+     *   page → pages 集合（在「页面元素」里维护的页面）
+     */
+    const k = kind === 'page' ? 'page' : 'api';
+    const items = k === 'page' ? store.list('pages') : store.list('apis');
+    return codescan.buildCoverage(items, dir, k);
   });
 
   /**

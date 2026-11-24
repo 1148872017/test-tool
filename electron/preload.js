@@ -75,7 +75,7 @@ contextBridge.exposeInMainWorld('api', {
   allureFlaky: (dirs) => invoke('allure:flaky', { dirs }),
 
   // ---- 代码扫描 ----
-  codescanCoverage: (root) => invoke('codescan:coverage', { root }),
+  codescanCoverage: (root, kind) => invoke('codescan:coverage', { root, kind }),
   codescanHardcoded: (root) => invoke('codescan:hardcoded', { root }),
   codescanPickDir: () => invoke('codescan:pickDir'),
 

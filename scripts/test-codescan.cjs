@@ -53,6 +53,33 @@ if (fs.existsSync(realProj)) {
   check('覆盖：扫到文件', cov.scannedFiles > 0, cov.scannedFiles);
   check('覆盖：/api/login 已覆盖', cov.coveredList.some((c) => c.url === '/api/login'), cov.coveredList.map((c) => c.url));
   check('覆盖：/api/not-exist 未覆盖', cov.uncovered.some((u) => u.url === '/api/not-exist'), cov.uncovered.map((u) => u.url));
+
+  /* ---------- 页面覆盖矩阵（kind=page）---------- */
+  const pages = [
+    { id: 'pg1', title: '登录页', data: { url: '/login', name: '登录页', project: 'demo' } },
+    { id: 'pg2', title: '订单列表', data: { url: '/order/list', name: '订单列表', project: 'demo' } }
+  ];
+  const covPage = cs.buildCoverage(pages, realProj, 'page');
+  check('页面覆盖：kind=page', covPage.kind === 'page', covPage.kind);
+  check('页面覆盖：总数 2', covPage.total === 2, covPage.total);
+  check('页面覆盖：页面没有 method', covPage.uncovered.concat(covPage.coveredList).every((x) => x.method === ''), 'has method');
+  check('页面覆盖：/login 不被 /api/login 误匹配', !covPage.coveredList.some((x) => x.url === '/login'), covPage.coveredList.map((x) => x.url));
+
+  // 造一个真有 page.goto 的项目
+  const pageProj = fs.mkdtempSync(path.join(os.tmpdir(), 'page-cov-'));
+  fs.writeFileSync(
+    path.join(pageProj, 'LoginPage.java'),
+    'public class LoginPage { void open() { page.navigate("/login"); } }',
+    'utf8'
+  );
+  const covPage2 = cs.buildCoverage(pages, pageProj, 'page');
+  check('页面覆盖：page.navigate 能命中', covPage2.coveredList.some((x) => x.url === '/login'), covPage2.coveredList.map((x) => x.url));
+  check('页面覆盖：未覆盖的其他页面', covPage2.uncovered.some((x) => x.url === '/order/list'), covPage2.uncovered.map((x) => x.url));
+  fs.rmSync(pageProj, { recursive: true, force: true });
+
+  /* ---------- 后缀匹配的严格条件 ---------- */
+  check('后缀匹配：多段可以（/v1/user）', cs.pathMatches('/v1/user', '/api/v1/user') === true);
+  check('后缀匹配：单段不行（/login vs /api/login）', cs.pathMatches('/api/login', '/login') === false);
 } else {
   console.log('（跳过真实项目测试）');
 }
@@ -112,6 +139,14 @@ check('有 codescan:pickDir', /ipcMain\.handle\('codescan:pickDir'/.test(mainSrc
 const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
 check('preload 有 codescanCoverage', /codescanCoverage:/.test(preloadSrc), 'no coverage');
 check('preload 有 codescanHardcoded', /codescanHardcoded:/.test(preloadSrc), 'no hardcoded');
+
+/* ---------- 页面覆盖：IPC + 前端 ---------- */
+check('IPC 支持 kind 参数', /kind === 'page' \? 'page' : 'api'/.test(mainSrc), 'no kind');
+check('IPC 从 pages 集合读', /store\.list\('pages'\)/.test(mainSrc), 'no pages list');
+check('preload 传 kind', /codescanCoverage: \(root, kind\)/.test(preloadSrc), 'no kind param');
+const scanPageSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'CodeScanPage.tsx'), 'utf8');
+check('前端有 covKind 状态', /covKind/.test(scanPageSrc), 'no covKind');
+check('前端有「页面覆盖」按钮', /页面覆盖/.test(scanPageSrc), 'no page button');
 
 /* ---------- 9. 前端 ---------- */
 const pageSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'CodeScanPage.tsx'), 'utf8');

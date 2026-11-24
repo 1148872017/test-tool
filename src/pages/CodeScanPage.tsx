@@ -7,7 +7,8 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   WarningOutlined,
-  FileSearchOutlined
+  FileSearchOutlined,
+  AppstoreOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
@@ -42,6 +43,8 @@ const sevMeta = (s: string) => {
 export default function CodeScanPage() {
   const [root, setRoot] = useState('');
   const [view, setView] = useState<'coverage' | 'hardcoded'>('coverage');
+  /** 覆盖矩阵的对象：接口 / 页面 */
+  const [covKind, setCovKind] = useState<'api' | 'page'>('api');
   const [busy, setBusy] = useState(false);
 
   // 覆盖矩阵
@@ -52,17 +55,20 @@ export default function CodeScanPage() {
   const [sevFilter, setSevFilter] = useState('');
 
   /* ---------- 覆盖矩阵 ---------- */
-  const doCoverage = async () => {
+  const doCoverage = async (kind?: 'api' | 'page') => {
+    const k = kind || covKind;
+    setCovKind(k);
     setBusy(true);
     try {
-      const res = await api.codescanCoverage(root || undefined);
+      const res = await api.codescanCoverage(root || undefined, k);
       if (!res.ok) {
         toast(res.message || '扫描失败', 'error');
         return;
       }
       setCov(res);
       setView('coverage');
-      toast(`扫描 ${res.scannedFiles} 个文件，覆盖 ${res.covered}/${res.total}`);
+      const label = k === 'page' ? '页面' : '接口';
+      toast(`${label}覆盖：${res.covered}/${res.total}（扫描 ${res.scannedFiles} 个文件）`);
     } catch (e: any) {
       toast('扫描失败：' + (e && e.message ? e.message : e), 'error');
     } finally {
@@ -131,12 +137,21 @@ export default function CodeScanPage() {
           </Button>
           <Button
             size="small"
-            type="primary"
+            type={covKind === 'api' ? 'primary' : 'default'}
             icon={<FileSearchOutlined />}
-            onClick={doCoverage}
+            onClick={() => doCoverage('api')}
             loading={busy}
           >
-            覆盖矩阵
+            接口覆盖
+          </Button>
+          <Button
+            size="small"
+            type={covKind === 'page' ? 'primary' : 'default'}
+            icon={<AppstoreOutlined />}
+            onClick={() => doCoverage('page')}
+            loading={busy}
+          >
+            页面覆盖
           </Button>
           <Button size="small" icon={<SafetyOutlined />} onClick={doHardcoded} loading={busy}>
             硬编码检查
@@ -152,7 +167,10 @@ export default function CodeScanPage() {
             value={view}
             onChange={(v) => setView(v as any)}
             options={[
-              { label: `覆盖矩阵${cov ? ` (${cov.covered}/${cov.total})` : ''}`, value: 'coverage' },
+              {
+                label: `${covKind === 'page' ? '页面' : '接口'}覆盖${cov && cov.kind === covKind ? ` (${cov.covered}/${cov.total})` : ''}`,
+                value: 'coverage'
+              },
               { label: `硬编码${scan ? ` (${scan.summary.total})` : ''}`, value: 'hardcoded' }
             ]}
           />
@@ -163,14 +181,14 @@ export default function CodeScanPage() {
       {view === 'coverage' ? (
         !cov ? (
           <div className="codescan-empty">
-            <Empty description="点「覆盖矩阵」扫描接口覆盖情况" />
+            <Empty description="点「接口覆盖」或「页面覆盖」开始扫描" />
           </div>
         ) : (
           <>
             <div className="cov-summary">
               <div className="cov-stat">
                 <div className="cov-stat-value">{cov.total}</div>
-                <div className="cov-stat-label">接口总数</div>
+                <div className="cov-stat-label">{covKind === 'page' ? '页面总数' : '接口总数'}</div>
               </div>
               <div className="cov-stat">
                 <div className="cov-stat-value" style={{ color: '#2e9e5b' }}>
@@ -202,7 +220,7 @@ export default function CodeScanPage() {
                 <div className="cov-list">
                   {cov.uncovered.map((u: CoverageItem) => (
                     <div className="cov-row cov-row-miss" key={u.id}>
-                      <Tag color="blue">{u.method}</Tag>
+                      {u.method ? <Tag color="blue">{u.method}</Tag> : null}
                       <span className="mono cov-url">{u.url}</span>
                       <span className="cov-name muted">{u.name}</span>
                       {u.module ? <Tag>{u.module}</Tag> : null}
@@ -220,7 +238,7 @@ export default function CodeScanPage() {
                 <div className="cov-list">
                   {cov.coveredList.map((c: CoverageItem) => (
                     <div className="cov-row" key={c.id}>
-                      <Tag color="blue">{c.method}</Tag>
+                      {c.method ? <Tag color="blue">{c.method}</Tag> : null}
                       <span className="mono cov-url">{c.url}</span>
                       <span className="cov-name muted">{c.name}</span>
                       <Tag color="green">{c.hits} 处</Tag>

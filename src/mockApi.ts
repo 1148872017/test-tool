@@ -369,7 +369,9 @@ export function installMockIfNeeded() {
     themeColor: 'purple',
     bgImage: '',
     bgOpacity: 85,
-    bgTextMode: 'auto'
+    bgTextMode: 'auto',
+    bgOverlay: 35,
+    bgOverlayColor: 'dark'
   };
   let locked = false;
 
@@ -420,7 +422,9 @@ export function installMockIfNeeded() {
         themeColor: settings.themeColor,
         bgImage: settings.bgImage,
         bgOpacity: settings.bgOpacity,
-        bgTextMode: settings.bgTextMode
+        bgTextMode: settings.bgTextMode,
+        bgOverlay: settings.bgOverlay,
+        bgOverlayColor: settings.bgOverlayColor
       }
     }),
     lock: async () => {

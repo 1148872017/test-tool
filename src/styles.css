@@ -206,7 +206,20 @@ body {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px 26px 40px;
+  padding: 18px 24px 20px;
+}
+
+/**
+ * 页面根容器撑满可视高度。
+ *
+ * 为什么：列表页数据少的时候（比如只有 2 行），
+ * 内容高度只有 400px 左右，下面 400+ px 会直接露出背景图，
+ * 视觉上像"页面没铺满"。撑满后由 .panel 兜底成白底。
+ */
+.main > div {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .page-head {
@@ -241,18 +254,20 @@ body {
 /* 统计卡 */
 .stats {
   display: flex;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 8px;
+  margin-bottom: 10px;
   flex-wrap: wrap;
+  flex: 0 0 auto;
 }
 
 .stat {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 11px;
-  padding: 10px 16px;
-  min-width: 106px;
+  border-radius: 10px;
+  padding: 7px 14px;
+  min-width: 92px;
   cursor: default;
+  line-height: 1.25;
 }
 
 .stat-label {
@@ -262,9 +277,9 @@ body {
 }
 
 .stat-value {
-  font-size: 19px;
+  font-size: 17px;
   font-weight: 650;
-  line-height: 1.15;
+  line-height: 1.2;
 }
 
 .stat-value small {
@@ -563,20 +578,49 @@ body {
   color: var(--muted);
 }
 /* ---------- 列表页：左侧标签栏（借鉴参考平台） ---------- */
+/**
+ * 两栏布局：左侧标签卡 + 右侧内容。
+ *
+ * 关键几点（都是为了「内容少时不留大片空白」）：
+ *   1. flex: 1 + min-height: 0 → 这一栏吃掉 page-head 之外的所有高度
+ *   2. align-items: stretch → 右侧拉着撑满，不再顶在上面
+ *   3. 标签卡自己 align-self: flex-start → 保持内容高度，不被拉长
+ */
 .page-with-aside {
   display: flex;
   gap: 16px;
-  align-items: flex-start;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
 }
 
 .page-main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 右侧的表格面板吃掉剩余高度（内容少时也是白底，不露背景） */
+.page-main > .panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-main > .panel > .ant-table-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .tag-panel {
   width: 178px;
   flex: 0 0 178px;
+  /* 保持自身高度，不被 page-with-aside 拉长 */
+  align-self: flex-start;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -2093,37 +2137,6 @@ body {
   align-items: center;
   justify-content: center;
 }
-/* ===== 皮肤：背景图 + 半透明面板 ===== */
-/* 有背景图时，body 铺图并固定 */
-body.has-bg {
-  background-size: cover;
-  background-position: center;
-  background-attachment: fixed;
-  background-repeat: no-repeat;
-}
-
-/* 面板/卡片半透明（--panel-alpha 由 JS 注入，0.35~1） */
-body.has-bg .panel,
-body.has-bg .tool-card,
-body.has-bg .stat,
-body.has-bg .page-head,
-body.has-bg .settings-nav {
-  background: rgba(var(--panel-rgb, 255, 255, 255), var(--panel-alpha, 0.85));
-  backdrop-filter: blur(6px);
-}
-
-/* 侧边栏也半透明 */
-body.has-bg .sidebar {
-  background: rgba(var(--panel-rgb, 255, 255, 255), var(--panel-alpha, 0.85));
-  backdrop-filter: blur(6px);
-}
-
-/* 表格行保持不透明（否则文字看不清） */
-body.has-bg .ant-table,
-body.has-bg .ant-table-tbody > tr > td {
-  background: transparent;
-}
-
 /* ===== 皮肤设置卡片 ===== */
 .skin-row {
   display: flex;
@@ -2657,4 +2670,141 @@ body.has-bg .nav-group-label {
 body.has-bg .nav-group-label {
   font-weight: 600;
   letter-spacing: 0.2px;
+}
+/* ============================================================
+ * 皮肤：三层结构（背景图 → 蒙版 → 面板）
+ *
+ * 为什么需要蒙版：
+ *   只有「背景图 + 半透明面板」时，内容少的地方会大片露出背景图，
+ *   视觉上很刺眼，而且面板和背景糊在一起、没有层次。
+ *   中间加一层蒙版把背景压暗/柔化，面板才「浮」得起来。
+ *
+ * 层顺序（从下到上）：
+ *   body            背景图
+ *   body::before    蒙版（半透明纯色，强度可调）
+ *   .app            侧栏 + 主内容（面板在这一层）
+ * ============================================================ */
+
+body.has-bg {
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+/* 蒙版层：铺满窗口，不拦鼠标 */
+body.has-bg::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: rgba(18, 22, 34, var(--bg-overlay, 0.35));
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 蒙版是浅色时用白色，深色时用深灰（由 JS 注入具体值） */
+body.has-bg.bg-overlay-light::before {
+  background: rgba(255, 255, 255, var(--bg-overlay, 0.35));
+}
+
+/* 内容层要压在蒙版之上 */
+body.has-bg .app {
+  position: relative;
+  z-index: 1;
+}
+
+/* 有背景图时，面板/侧栏用半透明白 + 毛玻璃 */
+body.has-bg .sidebar {
+  background: rgba(var(--panel-rgb, 255, 255, 255), var(--panel-alpha, 0.85));
+  backdrop-filter: blur(10px) saturate(1.1);
+  border-right-color: rgba(255, 255, 255, 0.25);
+}
+
+body.has-bg .panel,
+body.has-bg .tool-card,
+body.has-bg .stat,
+body.has-bg .settings-nav {
+  background: rgba(var(--panel-rgb, 255, 255, 255), var(--panel-alpha, 0.85));
+  backdrop-filter: blur(10px) saturate(1.1);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* 页头不要底色（让它直接落在蒙版上，减少"白块堆叠"） */
+body.has-bg .page-head {
+  background: transparent;
+  backdrop-filter: none;
+}
+
+/* 让页头文字在蒙版上也清楚 */
+body.has-bg .page-title {
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+body.has-bg .page-desc {
+  color: rgba(255, 255, 255, 0.82);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* 表格行保持透明（否则一行行白块很碎） */
+body.has-bg .ant-table,
+body.has-bg .ant-table-tbody > tr > td {
+  background: transparent;
+}
+
+/* ============================================================
+ * 列表页：更紧凑的表格
+ *
+ * 原来的行高 48px 左右，一屏只能看 10 行出头，信息密度太低。
+ * 收到 38px 左右，一屏能多看 3-4 行，长列表滚动更少。
+ * ============================================================ */
+.ant-table-tbody > tr > td {
+  padding: 9px 14px !important;
+}
+
+.ant-table-thead > tr > th {
+  padding: 9px 14px !important;
+  font-size: 12px;
+}
+
+/* 面板头（筛选栏）也收紧一点 */
+.panel-head {
+  padding: 8px 14px;
+}
+
+/* 页头压缩：标题和描述别占太多竖向空间 */
+.page-head {
+  margin-bottom: 12px;
+}
+
+.page-title {
+  font-size: 18px;
+}
+
+
+/* ============================================================
+ * 设置页：目录配置行
+ *
+ * 6 个目录挤在一张卡里，每行「标签 + 输入框 + 选择按钮」，
+ * 下面跟一行灰色说明。比原来 4 张独立的卡紧凑很多。
+ * ============================================================ */
+.dir-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+}
+
+.dir-row-label {
+  width: 108px;
+  flex: 0 0 108px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.dir-row-hint {
+  font-size: 11.5px;
+  padding-left: 120px;
+  margin-top: -2px;
+  padding-bottom: 4px;
+  line-height: 1.5;
 }

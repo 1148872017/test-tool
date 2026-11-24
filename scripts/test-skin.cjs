@@ -83,7 +83,16 @@ check('CSS 有 skin-bg-preview', /\.skin-bg-preview/.test(css), 'no preview');
 const settingsSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'SettingsPage.tsx'), 'utf8');
 check('设置页接入 SkinCard', /<SkinCard/.test(settingsSrc), 'not used');
 check('有 sec-skin 锚点', /id="sec-skin"/.test(settingsSrc), 'no anchor');
-check('导航有「皮肤」', /label: '皮肤'/.test(settingsSrc), 'no nav item');
+check('导航有「外观」', /label: '外观'/.test(settingsSrc), 'no nav item');
+
+/* ---------- 背景蒙版（三层结构）---------- */
+check('有 bgOverlay 设置', /bgOverlay/.test(mainSrc), 'no overlay');
+check('有 bgOverlayColor 设置', /bgOverlayColor/.test(mainSrc), 'no overlay color');
+check('useSkin 注入 --bg-overlay', /--bg-overlay/.test(appSrc), 'not injected');
+check('CSS 有蒙版层', /body\.has-bg::before/.test(css), 'no overlay css');
+check('CSS 面板层在蒙版之上', /body\.has-bg \.app[\s\S]{0,120}z-index: 1/.test(css), 'no z-index');
+check('SkinCard 有蒙版滑块', /previewOverlay/.test(skinSrc), 'no overlay slider');
+check('CSS 有 dir-row', /\.dir-row/.test(css), 'no dir-row css');
 
 const failed = results.filter((r) => !r.ok);
 console.log('===== 皮肤设置测试 =====');

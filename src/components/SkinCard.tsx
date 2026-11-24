@@ -23,10 +23,15 @@ export default function SkinCard({ saveSettings, settings }: Props) {
   const [busy, setBusy] = useState(false);
   /** 拖动中的临时值（松手才保存，避免每帧都 toast「已保存」） */
   const [opacityDraft, setOpacityDraft] = useState<number | null>(null);
+  /** 蒙版强度草稿（拖动中） */
+  const [overlayDraft, setOverlayDraft] = useState<number | null>(null);
 
   const themeColor = settings.themeColor || 'purple';
   const bgOpacity = settings.bgOpacity === undefined ? 85 : settings.bgOpacity;
   const bgTextMode = settings.bgTextMode || 'auto';
+  const bgOverlay = settings.bgOverlay === undefined ? 35 : settings.bgOverlay;
+  const bgOverlayColor = settings.bgOverlayColor === 'light' ? 'light' : 'dark';
+  const shownOverlay = overlayDraft === null ? bgOverlay : overlayDraft;
   /** 滑块显示的值：拖动中优先用草稿 */
   const shownOpacity = opacityDraft === null ? bgOpacity : opacityDraft;
 
@@ -49,6 +54,18 @@ export default function SkinCard({ saveSettings, settings }: Props) {
   const commitOpacity = (v: number) => {
     setOpacityDraft(null);
     saveSettings({ bgOpacity: v });
+  };
+
+  /** 蒙版强度：拖动实时预览（直接改 CSS 变量） */
+  const previewOverlay = (v: number) => {
+    setOverlayDraft(v);
+    document.documentElement.style.setProperty('--bg-overlay', String(Math.max(0, Math.min(100, v)) / 100));
+  };
+
+  /** 蒙版强度：松手才保存 */
+  const commitOverlay = (v: number) => {
+    setOverlayDraft(null);
+    saveSettings({ bgOverlay: v });
   };
 
   /* ---------- 加载背景图 ---------- */
@@ -167,6 +184,37 @@ export default function SkinCard({ saveSettings, settings }: Props) {
             {shownOpacity}%
           </span>
         </div>
+      </div>
+
+      {/* 背景蒙版 */}
+      <div className="skin-row">
+        <div className="skin-row-label">背景蒙版</div>
+        <div className="skin-opacity">
+          <Slider
+            min={0}
+            max={100}
+            value={shownOverlay}
+            onChange={previewOverlay}
+            onChangeComplete={commitOverlay}
+            style={{ flex: 1, maxWidth: 260 }}
+            tooltip={{ formatter: (v) => `${v}%` }}
+          />
+          <span className="muted" style={{ fontSize: 12, minWidth: 40 }}>
+            {shownOverlay}%
+          </span>
+          <Segmented
+            size="small"
+            value={bgOverlayColor}
+            onChange={(v) => saveSettings({ bgOverlayColor: String(v) })}
+            options={[
+              { label: '压暗', value: 'dark' },
+              { label: '提亮', value: 'light' }
+            ]}
+          />
+        </div>
+      </div>
+      <div className="skin-hint muted">
+        蒙版是压在背景图上面的一层薄纱：强度越高背景越淡、面板越清晰。亮色背景图用「压暗」，暗色用「提亮」。
       </div>
 
       {/* 文字颜色 */}

@@ -103,14 +103,38 @@ function useSkin(settings: any) {
       root.style.removeProperty('--muted');
     }
 
+    /**
+     * 背景蒙版：压在背景图上面的一层纯色，把背景压暗/提亮。
+     *
+     * 为什么需要：
+     *   只有「背景图 + 半透明面板」时，内容少的地方大片露出背景图，
+     *   视觉刺眼、面板和背景糊在一起没有层次。
+     *
+     * 强度 0 → 蒙版全透明（等于没有）
+     * 强度 100 → 蒙版完全盖住背景图（只剩纯色）
+     * 建议 25-45：背景隐约可见，面板清晰浮起。
+     */
+    const overlayPct = settings && settings.bgOverlay !== undefined ? Number(settings.bgOverlay) : 35;
+    const overlayAlpha = Math.max(0, Math.min(100, overlayPct)) / 100;
+    root.style.setProperty('--bg-overlay', String(overlayAlpha));
+
+    if (settings && settings.bgOverlayColor === 'light') {
+      document.body.classList.add('bg-overlay-light');
+    } else {
+      document.body.classList.remove('bg-overlay-light');
+    }
+
     if (bgUrl) {
       document.body.classList.add('has-bg');
       document.body.style.backgroundImage = `url(${bgUrl})`;
     } else {
       document.body.classList.remove('has-bg');
       document.body.style.backgroundImage = '';
+      // 没背景图时蒙版也没意义，重置
+      root.style.setProperty('--bg-overlay', '0');
+      document.body.classList.remove('bg-overlay-light');
     }
-  }, [bgUrl, settings && settings.bgOpacity, settings && settings.bgTextMode]);
+  }, [bgUrl, settings && settings.bgOpacity, settings && settings.bgTextMode, settings && settings.bgOverlay, settings && settings.bgOverlayColor]);
 
   return bgUrl;
 }

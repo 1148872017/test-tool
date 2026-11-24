@@ -226,9 +226,22 @@ function pathMatches(codePath, apiPath) {
     /* ignore */
   }
 
-  // 代码路径是接口路径的后缀（代码可能省略了前缀）
-  if (b.endsWith(a) && a.length >= 4) return true;
-  if (a.endsWith(b) && b.length >= 4) return true;
+  /**
+   * 后缀匹配（代码可能省略了公共前缀）。
+   *
+   * 但要防误判：
+   *   页面清单是 '/login'，代码里有 '/api/login'（接口请求），
+   *   如果直接 endsWith，'/login' 会被判成"已覆盖"——这是错的，
+   *   页面归页面、接口归接口，不能混。
+   *
+   * 所以要求「短的那个路径」至少有两段（即至少 2 个斜杠），
+   *   '/v1/user'  → 2 个斜杠 → 可以后缀匹配（接口场景）
+   *   '/login'    → 1 个斜杠 → 不匹配（避免页面被接口误覆盖）
+   */
+  const segCount = (p) => (String(p).match(/\//g) || []).length;
+
+  if (b.endsWith(a) && segCount(a) >= 2) return true;
+  if (a.endsWith(b) && segCount(b) >= 2) return true;
 
   return false;
 }
@@ -236,10 +249,14 @@ function pathMatches(codePath, apiPath) {
 /**
  * 覆盖矩阵：接口清单 vs 代码里的路径。
  *
- * @param {any[]} apis 接口记录（data 里有 method/url）
- * @param {string} root 代码根目录
+ * @param {any[]} items  接口记录或页面记录
+ *   - 接口：data 里有 method / url / module
+ *   - 页面：data 里有 url / name / project
+ * @param {string} root  代码根目录
+ * @param {string} kind  'api'（接口）| 'page'（页面）
  * @returns {{
  *   ok: boolean,
+ *   kind: string,
  *   total: number,
  *   covered: number,
  *   uncovered: any[],
@@ -248,10 +265,11 @@ function pathMatches(codePath, apiPath) {
  *   message?: string
  * }}
  */
-function buildCoverage(apis, root) {
+function buildCoverage(items, root, kind = 'api') {
+  const k = kind === 'page' ? 'page' : 'api';
   const base = String(root || '').trim();
   if (!base || !fs.existsSync(base)) {
-    return { ok: false, total: 0, covered: 0, uncovered: [], coveredList: [], codePaths: [], message: '代码目录不存在' };
+    return { ok: false, kind: k, total: 0, covered: 0, uncovered: [], coveredList: [], codePaths: [], message: '代码目录不存在' };
   }
 
   const files = collectFiles(base);
@@ -272,29 +290,30 @@ function buildCoverage(apis, root) {
   const coveredList = [];
   const uncovered = [];
 
-  for (const api of apis || []) {
-    const d = api.data || {};
-    const apiPath = normalizePath(d.url || '');
-    if (!apiPath) continue;
+  for (const it of items || []) {
+    const d = it.data || {};
+    const target = normalizePath(d.url || d.path || '');
+    if (!target) continue;
 
-    const hits = codePaths.filter((cp) => pathMatches(cp.path, apiPath));
-    const item = {
-      id: api.id,
-      name: api.title || d.name || '',
-      method: d.method || '',
-      url: d.url || '',
-      module: d.module || '',
+    const hits = codePaths.filter((cp) => pathMatches(cp.path, target));
+    const entry = {
+      id: it.id,
+      name: it.title || d.name || '',
+      method: k === 'api' ? String(d.method || '') : '',
+      url: d.url || d.path || '',
+      module: d.module || d.project || '',
       hits: hits.length,
       files: Array.from(new Set(hits.map((h) => h.file))).slice(0, 5)
     };
 
-    if (hits.length) coveredList.push(item);
-    else uncovered.push(item);
+    if (hits.length) coveredList.push(entry);
+    else uncovered.push(entry);
   }
 
   const total = coveredList.length + uncovered.length;
   return {
     ok: true,
+    kind: k,
     total,
     covered: coveredList.length,
     uncovered,

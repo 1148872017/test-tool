@@ -471,21 +471,18 @@ export default function SettingsPage({ boot, onChanged }: Props) {
       <div className="page-head">
         <div>
           <div className="page-title">设置</div>
-          <div className="page-desc">安全、数据与备份</div>
+          <div className="page-desc">目录、环境、外观、行为、数据</div>
         </div>
       </div>
 
       {/* 侧边快速导航 */}
       <nav className="settings-nav">
         {[
+          // 6 个分组（原来是 10 个，太散）
+          { id: 'sec-dirs', label: '目录配置' },
           { id: 'sec-env', label: '开发环境' },
-          { id: 'sec-skin', label: '皮肤' },
-          { id: 'sec-cases', label: '测试用例' },
-          { id: 'sec-jmx', label: '压测（JMeter）' },
-          { id: 'sec-kb', label: '知识库' },
-          { id: 'sec-notes', label: '测试笔记' },
-          { id: 'sec-options', label: '选项配置' },
-          { id: 'sec-security', label: '安全' },
+          { id: 'sec-skin', label: '外观' },
+          { id: 'sec-behavior', label: '行为与安全' },
           { id: 'sec-data', label: '数据与备份' },
           { id: 'sec-about', label: '关于' }
         ].map((it) => (
@@ -513,24 +510,20 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         ))}
       </nav>
 
-      <div id="sec-env">
-        <EnvCard saveSettings={saveSettings} settings={settings} />
-      </div>
-
-      <div id="sec-skin">
-        <SkinCard saveSettings={saveSettings} settings={settings} />
-      </div>
-
-      <div id="sec-cases" className="tool-card" style={{ marginBottom: 14 }}>
+      <div id="sec-dirs" className="tool-card" style={{ marginBottom: 14 }}>
         <div className="tool-card-title">
-          <FolderOpenOutlined /> 测试用例
+          <FolderOpenOutlined /> 目录配置
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '6px 0' }}>
-          <div style={{ width: 120 }} className="muted">
-            用例目录
-          </div>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+          这 6 个目录都是<b>只读索引</b>：平台只扫描，不修改、不复制你的文件。
+        </div>
+
+        <div
+          className="dir-row"
+        >
+          <div className="dir-row-label">{'用例目录'}</div>
           <Input
-            style={{ flex: 1, maxWidth: 560 }}
+            style={{ flex: 1, maxWidth: 620 }}
             value={casesDir}
             placeholder="例如 D:\你的目录\test_cases"
             onChange={(e) => setCasesDir(e.target.value)}
@@ -542,21 +535,15 @@ export default function SettingsPage({ boot, onChanged }: Props) {
             选择…
           </Button>
         </div>
-        <div className="muted" style={{ fontSize: 12, paddingLeft: 134 }}>
-          只读索引：只扫描这个目录下的 markdown，不会修改任何文件
-        </div>
-      </div>
+        <div className="dir-row-hint muted">{'测试用例页：索引 markdown 用例'}</div>
 
-      <div id="sec-jmx" className="tool-card" style={{ marginBottom: 14 }}>
-        <div className="tool-card-title">
-          <DashboardOutlined /> 压测（JMeter）
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '6px 0' }}>
-          <div style={{ width: 120 }} className="muted">
-            jmx 目录
-          </div>
+        <div
+          className="dir-row"
+          style={{ borderTop: '1px solid #f0f2f8' }}
+        >
+          <div className="dir-row-label">{'jmx 目录'}</div>
           <Input
-            style={{ flex: 1, maxWidth: 560 }}
+            style={{ flex: 1, maxWidth: 620 }}
             value={jmxDir}
             placeholder="例如 D:\你的目录\jmx"
             onChange={(e) => setJmxDir(e.target.value)}
@@ -568,29 +555,15 @@ export default function SettingsPage({ boot, onChanged }: Props) {
             选择…
           </Button>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '6px 0', borderTop: '1px solid #f0f2f8' }}>
-          <div style={{ width: 120 }} className="muted">
-            JMeter 路径
-          </div>
+        <div className="dir-row-hint muted">{'压测脚本页：索引 .jmx 脚本'}</div>
+
+        <div
+          className="dir-row"
+          style={{ borderTop: '1px solid #f0f2f8' }}
+        >
+          <div className="dir-row-label">{'压测报告目录'}</div>
           <Input
-            style={{ flex: 1, maxWidth: 560 }}
-            value={jmeterPath}
-            placeholder="留空自动探测（支持 JMETER_HOME 环境变量）"
-            onChange={(e) => setJmeterPath(e.target.value)}
-            onBlur={() => {
-              if (jmeterPath !== (settings.jmeterPath || '')) saveSettings({ jmeterPath });
-            }}
-          />
-          <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickJmeter}>
-            选择…
-          </Button>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '6px 0', borderTop: '1px solid #f0f2f8' }}>
-          <div style={{ width: 120 }} className="muted">
-            压测报告目录
-          </div>
-          <Input
-            style={{ flex: 1, maxWidth: 560 }}
+            style={{ flex: 1, maxWidth: 620 }}
             value={reportDir}
             placeholder="例如 D:\你的目录\jmx\压测结果"
             onChange={(e) => setReportDir(e.target.value)}
@@ -602,15 +575,15 @@ export default function SettingsPage({ boot, onChanged }: Props) {
             选择…
           </Button>
         </div>
-        <div className="muted" style={{ fontSize: 12, paddingLeft: 134 }}>
-          「测试执行 → 导入压测报告」默认扫这个目录；每个子目录算一次跑批（含 result.jtl 或 html-report）
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '6px 0', borderTop: '1px solid #f0f2f8' }}>
-          <div style={{ width: 120 }} className="muted">
-            Allure 报告目录
-          </div>
+        <div className="dir-row-hint muted">{'「测试执行 → 导入压测报告」默认扫这里；每个子目录算一次跑批（含 result.jtl 或 html-report）'}</div>
+
+        <div
+          className="dir-row"
+          style={{ borderTop: '1px solid #f0f2f8' }}
+        >
+          <div className="dir-row-label">{'Allure 报告目录'}</div>
           <Input
-            style={{ flex: 1, maxWidth: 560 }}
+            style={{ flex: 1, maxWidth: 620 }}
             value={allureDir}
             placeholder="例如 D:\你的目录\Project（会自动找里面的 allure-results）"
             onChange={(e) => setAllureDir(e.target.value)}
@@ -622,36 +595,15 @@ export default function SettingsPage({ boot, onChanged }: Props) {
             选择…
           </Button>
         </div>
-        <div className="muted" style={{ fontSize: 12, paddingLeft: 134 }}>
-          「报告分析」打开时默认扫这个目录（递归找 allure-results）；仍然可以手动「选目录」
-        </div>
-        <div style={{ paddingLeft: 134, fontSize: 12, marginTop: 4 }}>
-          {jmeterPath ? (
-            <span style={{ color: '#3fbf7f' }}>
-              <CheckCircleOutlined /> 已配置
-              {jmeterVersion ? ` · JMeter ${jmeterVersion}` : ''}
-            </span>
-          ) : (
-            <span style={{ color: '#f5a623' }}>
-              <WarningOutlined /> 未找到 JMeter —— 点「选择…」指定 bin\jmeter.bat，否则「启动 JMeter」按钮不可用
-            </span>
-          )}
-        </div>
-        <div className="muted" style={{ fontSize: 12, paddingLeft: 134, marginTop: 2 }}>
-          只读索引 jmx，不修改文件；配好路径后可在列表里一键用 JMeter GUI 打开脚本
-        </div>
-      </div>
+        <div className="dir-row-hint muted">{'「报告分析」打开时默认扫这里（递归找 allure-results）；仍然可以手动「选目录」'}</div>
 
-      <div id="sec-kb" className="tool-card" style={{ marginBottom: 14 }}>
-        <div className="tool-card-title">
-          <BookOutlined /> 知识库
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '6px 0' }}>
-          <div style={{ width: 120 }} className="muted">
-            知识库目录
-          </div>
+        <div
+          className="dir-row"
+          style={{ borderTop: '1px solid #f0f2f8' }}
+        >
+          <div className="dir-row-label">{'知识库目录'}</div>
           <Input
-            style={{ flex: 1, maxWidth: 560 }}
+            style={{ flex: 1, maxWidth: 620 }}
             value={kbDir}
             placeholder="例如 D:\你的目录\知识库"
             onChange={(e) => setKbDir(e.target.value)}
@@ -663,21 +615,15 @@ export default function SettingsPage({ boot, onChanged }: Props) {
             选择…
           </Button>
         </div>
-        <div className="muted" style={{ fontSize: 12, paddingLeft: 134 }}>
-          只读索引 markdown（业务规则沉淀等），自动跳过 _archive / _review 归档目录
-        </div>
-      </div>
+        <div className="dir-row-hint muted">{'知识库页：索引 markdown（业务规则沉淀等），自动跳过 _archive / _review 归档目录'}</div>
 
-      <div id="sec-notes" className="tool-card" style={{ marginBottom: 14 }}>
-        <div className="tool-card-title">
-          <FileTextOutlined /> 测试笔记
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '6px 0' }}>
-          <div style={{ width: 120 }} className="muted">
-            笔记目录
-          </div>
+        <div
+          className="dir-row"
+          style={{ borderTop: '1px solid #f0f2f8' }}
+        >
+          <div className="dir-row-label">{'笔记目录'}</div>
           <Input
-            style={{ flex: 1, maxWidth: 560 }}
+            style={{ flex: 1, maxWidth: 620 }}
             value={notesDir}
             placeholder="例如 D:\你的目录\notes"
             onChange={(e) => setNotesDir(e.target.value)}
@@ -689,12 +635,56 @@ export default function SettingsPage({ boot, onChanged }: Props) {
             选择…
           </Button>
         </div>
-        <div className="muted" style={{ fontSize: 12, paddingLeft: 134 }}>
-          只读索引 markdown 笔记；用 Typora 等专业编辑器改，平台只读。「导入 md」会把外部文件移动到这里
+        <div className="dir-row-hint muted">{'测试笔记页：索引 markdown；用 Typora 改，平台只读。「导入 md」会把外部文件移动到这里'}</div>
+      </div>
+
+      <div id="sec-env">
+        <EnvCard saveSettings={saveSettings} settings={settings} />
+
+        {/* JMeter 单独一行：它不在 EnvCard 的通用探测里（要选 jmeter.bat） */}
+        <div className="tool-card" style={{ marginBottom: 14 }}>
+          <div className="tool-card-title">
+            <DashboardOutlined /> JMeter
+          </div>
+          <div className="dir-row" style={{ borderTop: 'none' }}>
+            <div className="dir-row-label">jmeter.bat</div>
+            <Input
+              style={{ flex: 1, maxWidth: 620 }}
+              value={jmeterPath}
+              placeholder="留空自动探测（支持 JMETER_HOME 环境变量）"
+              onChange={(e) => setJmeterPath(e.target.value)}
+              onBlur={() => {
+                if (jmeterPath !== (settings.jmeterPath || '')) saveSettings({ jmeterPath });
+              }}
+            />
+            <Button size="small" icon={<FolderOpenOutlined />} onClick={doPickJmeter}>
+              选择…
+            </Button>
+          </div>
+          <div className="dir-row-hint muted">
+            {jmeterPath ? (
+              <span style={{ color: '#3fbf7f' }}>
+                <CheckCircleOutlined /> 已配置
+                {jmeterVersion ? ` · JMeter ${jmeterVersion}` : ''}
+                {' '}（生成的 .jmx 会用这个版本号，打开时不提示版本不一致）
+              </span>
+            ) : (
+              <span style={{ color: '#f5a623' }}>
+                <WarningOutlined /> 未找到 JMeter —— 点「选择…」指定 bin\jmeter.bat，否则「启动 JMeter」按钮不可用
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
-      <div id="sec-options" className="tool-card" style={{ marginBottom: 14 }}>
+      <div id="sec-skin">
+        <SkinCard saveSettings={saveSettings} settings={settings} />
+      </div>
+
+
+
+      <div id="sec-behavior">
+      <div className="tool-card" style={{ marginBottom: 14 }}>
         <div className="tool-card-title">
           <TagOutlined /> 选项配置
         </div>
@@ -704,7 +694,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         <OptionEditor />
       </div>
 
-      <div id="sec-security" className="tool-card" style={{ marginBottom: 14 }}>
+      <div className="tool-card" style={{ marginBottom: 14 }}>
         <div className="tool-card-title">
           <LockOutlined /> 安全
         </div>
@@ -824,6 +814,8 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         ) : null}
       </div>
 
+      </div>
+
       <div id="sec-data" className="tool-card" style={{ marginBottom: 14 }}>
         <div className="tool-card-title">
           <SaveOutlined /> 数据与备份
@@ -939,7 +931,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         </div>
       </div>
 
-      <div className="tool-card">
+      <div id="sec-about" className="tool-card">
         <div className="tool-card-title">关于</div>
         <div style={{ display: 'flex', gap: 24, fontSize: 12.5, color: '#4a5165', flexWrap: 'wrap' }}>
           <span>

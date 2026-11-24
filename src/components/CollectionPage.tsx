@@ -779,6 +779,11 @@ export default function CollectionPage({
 
       <div className="panel">
         <div className="panel-head">
+          {/*
+            布局：左边「环境筛选」，右边「搜索 + 计数 + 排序」两组。
+            spacer 放在中间把两组推开——之前放在搜索框后面，
+            导致左边两个元素挤在一起、中间空一大片。
+          */}
           {filterOptions.length ? (
             <Segmented
               size="small"
@@ -787,15 +792,15 @@ export default function CollectionPage({
               options={[{ label: '全部环境', value: 'all' }, ...filterOptions]}
             />
           ) : null}
+          <span className="spacer" />
           <Input
             allowClear
-            style={{ width: 260 }}
+            style={{ width: 280 }}
             prefix={<SearchOutlined style={{ color: '#9aa1b4' }} />}
             placeholder="搜索标题、内容、标签"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
           />
-          <span className="spacer" />
           <span className="muted" style={{ fontSize: 12 }}>
             {filtered.length} / {all.length} 条
           </span>
