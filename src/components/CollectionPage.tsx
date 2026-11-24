@@ -271,7 +271,16 @@ export default function CollectionPage({
   const doExport = async () => {
     setBusyIO(true);
     try {
-      const res = await api.exportData(true, conf.key);
+      /**
+       * 集合页导出默认**不含密码明文**。
+       *
+       * 为什么要改（原来传的是 true）：
+       *   导出后用户很可能直接发给别人 / 传网盘，
+       *   里面带着 DPAPI 解出来的原始密码——静默泄露。
+       *   需要密码时去「设置 → 数据与备份 → 导出含密码」，
+       *   那里有明确的二次确认。
+       */
+      const res = await api.exportData(false, conf.key);
       if (res && res.ok) toast(`已导出 ${res.count} 条${res.file ? '：' + res.file : ''}`);
       else if (res && res.message) toast(res.message, 'warning');
     } catch (e: any) {
@@ -661,12 +670,44 @@ export default function CollectionPage({
               上次同步变更 · {impact.changed.length}
             </Button>
           ) : null}
-          <Button icon={<UploadOutlined />} onClick={doImport} loading={busyIO}>
-            导入备份
-          </Button>
-          <Button icon={<DownloadOutlined />} onClick={doExport} loading={busyIO}>
-            导出
-          </Button>
+          {/*
+            hover 提示（用户要求）：光看「导入/导出」不知道导的是什么，
+            所以写清楚：对象（本集合）、格式（JSON）、行为（合并 vs 覆盖）。
+          */}
+          <Tooltip
+            title={
+              <div style={{ lineHeight: 1.7 }}>
+                <div>从 JSON 备份文件<b>合并</b>记录到「{conf.name}」</div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  · 只认 .json（集合级导入不支持整库 .db）
+                  <br />· 已有的 id 会更新，不会重复
+                  <br />· 标签和选项一起带过来
+                </div>
+              </div>
+            }
+          >
+            <Button icon={<UploadOutlined />} onClick={doImport} loading={busyIO}>
+              导入备份
+            </Button>
+          </Tooltip>
+          <Tooltip
+            title={
+              <div style={{ lineHeight: 1.7 }}>
+                <div>
+                  把「{conf.name}」的 <b>{all.length} 条</b>记录导出成 JSON 文件
+                </div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  · 含数据、标签、收藏状态
+                  <br />· <b>不含密码明文</b>（要带密码请去设置页「导出含密码」）
+                  <br />· 存到桌面，文件名带集合名和日期
+                </div>
+              </div>
+            }
+          >
+            <Button icon={<DownloadOutlined />} onClick={doExport} loading={busyIO}>
+              导出
+            </Button>
+          </Tooltip>
           <Button icon={<ReloadOutlined />} onClick={loadAll}>
             刷新
           </Button>

@@ -948,20 +948,81 @@ export default function SettingsPage({ boot, onChanged }: Props) {
             JSON 用来搬家（合并导入、保留原 id、带关联和选项）；.db 用来回滚（整库覆盖）
           </div>
           <Space>
-            <Button size="small" icon={<DatabaseOutlined />} onClick={doExportDb}>
-              导出整库
-            </Button>
-            <Button size="small" icon={<DownloadOutlined />} onClick={() => doExport(false)}>
-              导出
-            </Button>
-            <Popconfirm title="导出会包含明文密码，确定？" okText="确定" cancelText="取消" onConfirm={() => doExport(true)}>
-              <Button size="small" icon={<DownloadOutlined />}>
-                导出含密码
+            {/*
+              四个按钮差别大，光看文字分不清（用户要求加 hover 提示）：
+                导出整库   → .db 数据库文件（整库，可回滚）
+                导出       → JSON（搬家/分享，密码加密或不含）
+                导出含密码 → JSON + 明文密码（只在本机用）
+                导入       → JSON 合并 或 .db 整库覆盖
+            */}
+            <Tooltip
+              title={
+                <div style={{ lineHeight: 1.7 }}>
+                  <div>导出整个 <b>data.db</b> 数据库文件</div>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    · 包含所有集合 + 关联 + 选项配置
+                    <br />· 用「恢复」能整库回滚到这个状态
+                    <br />· 换机器时优先用这个
+                  </div>
+                </div>
+              }
+            >
+              <Button size="small" icon={<DatabaseOutlined />} onClick={doExportDb}>
+                导出整库
               </Button>
+            </Tooltip>
+
+            <Tooltip
+              title={
+                <div style={{ lineHeight: 1.7 }}>
+                  <div>导出所有集合为 <b>JSON</b>（不含密码明文）</div>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    · 适合分享给别人 / 提交到仓库
+                    <br />· 导入时是<b>合并</b>，不会覆盖现有数据
+                    <br />· 需要密码也带走？用右边「导出含密码」
+                  </div>
+                </div>
+              }
+            >
+              <Button size="small" icon={<DownloadOutlined />} onClick={() => doExport(false)}>
+                导出
+              </Button>
+            </Tooltip>
+
+            <Popconfirm title="导出会包含明文密码，确定？" okText="确定" cancelText="取消" onConfirm={() => doExport(true)}>
+              <Tooltip
+                title={
+                  <div style={{ lineHeight: 1.7 }}>
+                    <div>导出所有集合为 <b>JSON + 明文密码</b></div>
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      · 只在自己机器间搬运用
+                      <br />· <b style={{ color: '#e5534b' }}>别外发、别进 git</b>
+                      <br />· 含 DPAPI 密文解出来的原始密码
+                    </div>
+                  </div>
+                }
+              >
+                <Button size="small" icon={<DownloadOutlined />}>
+                  导出含密码
+                </Button>
+              </Tooltip>
             </Popconfirm>
-            <Button size="small" icon={<UploadOutlined />} onClick={doImport}>
-              导入
-            </Button>
+
+            <Tooltip
+              title={
+                <div style={{ lineHeight: 1.7 }}>
+                  <div>从备份文件恢复数据</div>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    · <b>JSON</b> → 合并（保留原 id，已有的更新）
+                    <br />· <b>.db</b> → 整库覆盖（破坏性，会先弹确认）
+                  </div>
+                </div>
+              }
+            >
+              <Button size="small" icon={<UploadOutlined />} onClick={doImport}>
+                导入
+              </Button>
+            </Tooltip>
           </Space>
         </div>
 
