@@ -23,6 +23,7 @@ const sqlgen = require('../shared/sqlgen');
 const openapifile = require('./openapifile');
 const allure = require('./allure');
 const codescan = require('./codescan');
+const depsCheck = require('./deps');
 const { TOOLS, COLLECTION_MAP } = require('../shared/collections');
 
 const DEBUG = process.env.TT_DEBUG === '1';
@@ -942,6 +943,7 @@ function registerIpc() {
       domain: payload.domain,
       port: payload.port,
       onError: payload.onError,
+      csv: payload.csv,
       jmeterVersion
     });
     return Object.assign({}, gen, { jmeterVersion: jmeterVersion || '5.6.3' });
@@ -973,6 +975,7 @@ function registerIpc() {
       domain: payload.domain,
       port: payload.port,
       onError: payload.onError,
+      csv: payload.csv,
       jmeterVersion
     });
     if (!gen.ok) return gen;
@@ -1073,7 +1076,8 @@ function registerIpc() {
     const input = {
       className: String(payload.className || '').trim(),
       page: payload.page,
-      json: payload.json
+      json: payload.json,
+      sql: payload.sql
     };
 
     // 接口数据来源：优先 apiData（OpenAPI 文件解析结果），其次 apiId（查库）
@@ -1102,7 +1106,8 @@ function registerIpc() {
     const input = {
       className: String(payload.className || '').trim(),
       page: payload.page,
-      json: payload.json
+      json: payload.json,
+      sql: payload.sql
     };
     if (payload.apiData) {
       input.api = payload.apiData;
@@ -1442,6 +1447,19 @@ function registerIpc() {
   });
 
   /** 选代码目录 */
+  /**
+   * 依赖冲突检查（pom.xml / requirements.txt）。
+   *
+   * 只看「同一声明出现多次 / 版本不一致 / 占位符没定义」，
+   * 不做传递依赖分析（那要联网查 Maven Central，成本远超收益）。
+   */
+  ipcMain.handle('codescan:deps', async (e, { root } = {}) => {
+    assertUnlocked();
+    const dir = (root && String(root).trim()) || settings.projectDir || '';
+    if (!dir) return { ok: false, message: '没配代码目录' };
+    return depsCheck.checkDeps(dir);
+  });
+
   ipcMain.handle('codescan:pickDir', async () => {
     assertUnlocked();
     const picked = await dialog.showOpenDialog(win, {

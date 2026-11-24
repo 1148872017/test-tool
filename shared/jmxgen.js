@@ -225,6 +225,9 @@ function sampleXml(api, depth, rtLimit) {
  *   - onError     出错时（continue / startnextloop / stopthread）
  *   - rtLimit     RT 上限（毫秒，0 = 不生成持续时间断言）
  *   - jmeterVersion  JMeter 版本（从设置里的 jmeterPath 读，默认 5.6.3）
+ *   - csv  参数化配置（可选）：
+ *          { fileName: 'data.csv', variableNames: 'userName,mobile',
+ *            delimiter: ',', recycle: true, stopThread: false, encoding: 'UTF-8' }
  * @returns {{ok: boolean, xml?: string, filename?: string, message?: string}}
  */
 function generateJmx(opts = {}) {
@@ -297,6 +300,25 @@ function generateJmx(opts = {}) {
   L.push(`${pad(4)}<stringProp name="ThreadGroup.duration">${useDuration ? String(duration) : ''}</stringProp>`);
   L.push(`${pad(4)}<stringProp name="ThreadGroup.delay"></stringProp>`);
   L.push(`${pad(3)}</ThreadGroup>`);
+
+  // ---- CSV 数据文件设置（参数化）----
+  // 放在线程组下、采样器之前，对这个线程组里所有请求生效。
+  const csv = opts.csv && String(opts.csv.fileName || '').trim() ? opts.csv : null;
+  if (csv) {
+    const varNames = String(csv.variableNames || '').trim();
+    L.push(`${pad(3)}<CSVDataSet guiclass="TestBeanGUI" testclass="CSVDataSet" testname="CSV 数据文件设置" enabled="true">`);
+    L.push(`${pad(4)}<stringProp name="filename">${esc(String(csv.fileName).trim())}</stringProp>`);
+    L.push(`${pad(4)}<stringProp name="fileEncoding">${esc(String(csv.encoding || 'UTF-8'))}</stringProp>`);
+    L.push(`${pad(4)}<stringProp name="delimiter">${esc(String(csv.delimiter || ','))}</stringProp>`);
+    L.push(`${pad(4)}<stringProp name="variableNames">${esc(varNames)}</stringProp>`);
+    L.push(`${pad(4)}<boolProp name="quotedData">false</boolProp>`);
+    L.push(`${pad(4)}<boolProp name="recycle">${csv.recycle === false ? 'false' : 'true'}</boolProp>`);
+    L.push(`${pad(4)}<boolProp name="stopThread">${csv.stopThread ? 'true' : 'false'}</boolProp>`);
+    L.push(`${pad(4)}<boolProp name="ignoreFirstLine">${csv.ignoreFirstLine ? 'true' : 'false'}</boolProp>`);
+    L.push(`${pad(4)}<stringProp name="shareMode">shareMode.all</stringProp>`);
+    L.push(`${pad(3)}</CSVDataSet>`);
+    L.push(`${pad(3)}<hashTree/>`);
+  }
 
   // ---- 采样器 ----
   L.push(`${pad(3)}<hashTree>`);

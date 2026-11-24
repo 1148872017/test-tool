@@ -7,6 +7,7 @@ import { COLLECTION_MAP } from '../../shared/collections';
 import VarsEditor from './VarsEditor';
 import ScenePicker from './ScenePicker';
 import AccountsEditor, { dropEmptyAccounts } from './AccountsEditor';
+import PageElementsEditor, { dropEmptyElements } from './PageElementsEditor';
 import { visibleFields } from '../../shared/runs';
 import { asArray, fieldOptions, getOptionsSync, labelOf, loadOptions, OptionsMap } from '../options';
 
@@ -135,6 +136,10 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
         if (f.type === 'accounts' && payload[f.key]) {
           payload[f.key] = dropEmptyAccounts(String(payload[f.key]));
         }
+        // 页面元素：丢掉空行 + 序列化成 JSON
+        if (f.type === 'elements' && payload[f.key]) {
+          payload[f.key] = dropEmptyElements(payload[f.key]);
+        }
       }
       const saved = await api.saveRecord({
         id: record && record.id,
@@ -238,6 +243,8 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
         return <Input.Password value={v} onChange={(e) => set(f.key, e.target.value)} placeholder={f.placeholder} />;
       case 'accounts':
         return <AccountsEditor value={v} onChange={(next) => set(f.key, next)} />;
+      case 'elements':
+        return <PageElementsEditor value={v} onChange={(next) => set(f.key, next)} placeholder={f.placeholder} />;
       case 'scene':
         return <ScenePicker value={v} onChange={(next) => set(f.key, next)} placeholder={f.placeholder} />;
       case 'vars':

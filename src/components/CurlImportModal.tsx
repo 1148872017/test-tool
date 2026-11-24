@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, Input, Button, Alert, Tag, Space, Tooltip } from 'antd';
+import { Modal, Input, Button, Alert, Tag, Space } from 'antd';
 import { ImportOutlined, WarningOutlined } from '@ant-design/icons';
 import { parseCurl } from '../../shared/curl.js';
 

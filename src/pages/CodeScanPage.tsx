@@ -8,7 +8,8 @@ import {
   CloseCircleOutlined,
   WarningOutlined,
   FileSearchOutlined,
-  AppstoreOutlined
+  AppstoreOutlined,
+  ApartmentOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
@@ -42,7 +43,9 @@ const sevMeta = (s: string) => {
 
 export default function CodeScanPage() {
   const [root, setRoot] = useState('');
-  const [view, setView] = useState<'coverage' | 'hardcoded'>('coverage');
+  const [view, setView] = useState<'coverage' | 'hardcoded' | 'deps'>('coverage');
+  /** 依赖检查结果 */
+  const [deps, setDeps] = useState<any>(null);
   /** 覆盖矩阵的对象：接口 / 页面 */
   const [covKind, setCovKind] = useState<'api' | 'page'>('api');
   const [busy, setBusy] = useState(false);
@@ -90,6 +93,26 @@ export default function CodeScanPage() {
       toast(`扫描 ${res.scannedFiles} 个文件，发现 ${res.summary.total} 个问题`);
     } catch (e: any) {
       toast('扫描失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /* ---------- 依赖检查 ---------- */
+  const doDeps = async () => {
+    setBusy(true);
+    try {
+      const res = await api.codescanDeps(root || undefined);
+      if (!res.ok) {
+        toast(res.message || '检查失败', 'error');
+        return;
+      }
+      setDeps(res);
+      setView('deps');
+      if (res.message) toast(res.message, 'info');
+      else toast(`检查 ${res.poms} 个 pom + ${res.reqs} 个 requirements，发现 ${res.summary.total} 个问题`);
+    } catch (e: any) {
+      toast('检查失败：' + (e && e.message ? e.message : e), 'error');
     } finally {
       setBusy(false);
     }
@@ -156,11 +179,14 @@ export default function CodeScanPage() {
           <Button size="small" icon={<SafetyOutlined />} onClick={doHardcoded} loading={busy}>
             硬编码检查
           </Button>
+          <Button size="small" icon={<ApartmentOutlined />} onClick={doDeps} loading={busy}>
+            依赖检查
+          </Button>
         </Space>
       </div>
 
       {/* 视图切换 */}
-      {cov || scan ? (
+      {cov || scan || deps ? (
         <div className="codescan-view-bar">
           <Segmented
             size="small"
@@ -171,7 +197,8 @@ export default function CodeScanPage() {
                 label: `${covKind === 'page' ? '页面' : '接口'}覆盖${cov && cov.kind === covKind ? ` (${cov.covered}/${cov.total})` : ''}`,
                 value: 'coverage'
               },
-              { label: `硬编码${scan ? ` (${scan.summary.total})` : ''}`, value: 'hardcoded' }
+              { label: `硬编码${scan ? ` (${scan.summary.total})` : ''}`, value: 'hardcoded' },
+              { label: `依赖${deps ? ` (${deps.summary.total})` : ''}`, value: 'deps' }
             ]}
           />
         </div>
@@ -255,6 +282,65 @@ export default function CodeScanPage() {
                 </div>
               </>
             ) : null}
+          </>
+        )
+      ) : null}
+
+      {/* 依赖检查 */}
+      {view === 'deps' ? (
+        !deps ? (
+          <div className="codescan-empty">
+            <Empty description="点「依赖检查」扫描 pom.xml / requirements.txt" />
+          </div>
+        ) : (
+          <>
+            <div className="cov-summary">
+              <div className="cov-stat">
+                <div className="cov-stat-value" style={{ color: '#e5534b' }}>
+                  {deps.summary.high || 0}
+                </div>
+                <div className="cov-stat-label">高危</div>
+              </div>
+              <div className="cov-stat">
+                <div className="cov-stat-value" style={{ color: '#f5a623' }}>
+                  {deps.summary.medium || 0}
+                </div>
+                <div className="cov-stat-label">中危</div>
+              </div>
+              <div className="cov-stat">
+                <div className="cov-stat-value">{deps.summary.total}</div>
+                <div className="cov-stat-label">问题总数</div>
+              </div>
+              <div className="cov-stat" style={{ flex: 2 }}>
+                <div className="cov-stat-value">{deps.poms + deps.reqs}</div>
+                <div className="cov-stat-label">
+                  扫描文件（{deps.poms} 个 pom.xml + {deps.reqs} 个 requirements）
+                </div>
+              </div>
+            </div>
+
+            {deps.message ? <Alert type="info" showIcon message={deps.message} /> : null}
+
+            {!deps.issues.length ? (
+              <Alert type="success" showIcon message="没有发现问题" />
+            ) : (
+              <div className="issue-list">
+                {deps.issues.map((it: any, i: number) => {
+                  const m = sevMeta(it.severity);
+                  return (
+                    <div className="issue-row" key={i}>
+                      <Tag color={m.color}>{m.label}</Tag>
+                      <span className="issue-label">{it.title}</span>
+                      <span className="issue-file mono muted">{it.file}</span>
+                      <div className="issue-snippet mono">{it.detail}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="muted" style={{ fontSize: 11.5 }}>
+              只查「同一声明重复 / 版本不一致 / 占位符没定义」，不做传递依赖分析（用 mvn dependency:tree 更准）。
+            </div>
           </>
         )
       ) : null}

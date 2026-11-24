@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Input, Button, Space, Select, Tag, InputNumber, Slider, Switch, DatePicker, Segmented } from 'antd';
+import { Input, Button, Space, Select, Tag, InputNumber, Switch, DatePicker, Segmented } from 'antd';
 import { CopyOutlined, SyncOutlined, SwapOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import api from '../api';

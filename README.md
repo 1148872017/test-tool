@@ -71,7 +71,7 @@
 | 功能 | 一句话说明 |
 |---|---|
 | **网站管理** | 一个站点存多个账号，一键打开 + 复制密码 |
-| **页面元素** | Playwright 定位器维护，一键生成 Page Object |
+| **页面元素** | **表格化维护** Playwright 定位器，一键生成 Page Object |
 | **SQL 片段** | 存常用 SQL，变量填完复制 |
 | **接口记录** | 从 Apifox 同步 / 粘贴 cURL 导入，一键复制成 cURL |
 | **测试执行** | 接口测试 / 压测跑一次记一笔，指标自动汇总成表 |
@@ -266,8 +266,8 @@ select * from t_order where order_no = {{orderNo}} and create_time > {{today}}
 | **Python · pytest** | 接口测试类（pytest + requests） |
 | **Java · Playwright POM** | 页面对象类 |
 | **Python · Playwright POM** | 页面对象类 |
-| **Java · POJO** | 从 JSON 生成实体类（Lombok） |
-| **Python · Pydantic** | 从 JSON 生成数据模型 |
+| **Java · POJO** | 从 JSON **或建表语句**生成实体类（Lombok） |
+| **Python · Pydantic** | 从 JSON **或建表语句**生成数据模型 |
 
 **效果示例**（Java REST Assured）：
 
@@ -290,6 +290,17 @@ public class PetApiTest {
 }
 ```
 
+**页面元素怎么维护**：
+
+侧边栏 **页面元素** → 新增 → 表格里逐行填：
+
+| 名称 | 定位器 | 说明 |
+|---|---|---|
+| `usernameInput` | `#username` | 用户名输入框 |
+| `submitBtn` | `[data-testid=submit]` | 登录按钮 |
+
+然后到「代码生成」选 **Playwright POM** → 从已有页面载入 → 一键生成 Page Object。
+
 **用法**：
 
 1. 侧边栏 **代码生成**
@@ -310,6 +321,52 @@ public class PetApiTest {
 >
 > 支持 JSON 和 YAML；Swagger 2.0 会提示「请重新导出为 OpenAPI 3」。
 
+#### 断言模板库（复制粘贴专用）
+
+侧边栏 **代码生成** 页右上角有个「脚本模板」入口（或从「脚本模板」抽屉进入），按分类浏览、填变量、一键复制。
+
+| 分类 | 内容 |
+|---|---|
+| **接口断言** | RestAssured：状态码 / JSON 字段 / JSON Schema；pytest：JSON 字段 / JSON Schema |
+| **UI 断言** | Playwright：元素可见性 / 文本包含 / 属性值 |
+| 提取 | JSON 提取器、正则提取、边界提取器 |
+| 断言 | JMeter 的 JSR223 断言（状态码/关键字/JSON/响应时间） |
+| 生成 / 加密 / 流程 | UUID、时间戳、AES、If 控制器等 |
+
+> 一共 18 个模板。每个都有「什么时候用」「怎么加」「有什么坑」三段说明。
+
+
+**从建表语句生成**（不连数据库）：
+
+选「Java · POJO」→ 数据源切到 **CREATE TABLE** → 粘贴建表语句：
+
+```sql
+CREATE TABLE `t_order` (
+  `id` bigint(20) NOT NULL COMMENT '主键',
+  `order_no` varchar(64) NOT NULL COMMENT '订单号',
+  `amount` decimal(10,2) COMMENT '金额',
+  `created_at` datetime COMMENT '创建时间'
+);
+```
+
+生成：
+
+```java
+public class Order {
+    /** 主键 */
+    private Long id;
+    /** 订单号 */
+    private String orderNo;
+    /** 金额 */
+    private java.math.BigDecimal amount;
+    /** 创建时间 */
+    private java.time.LocalDateTime createdAt;
+}
+```
+
+> 类型自动映射（bigint→Long、decimal→BigDecimal、datetime→LocalDateTime、bit→Boolean…），
+> 类名按表名推断（t_order → Order），字段注释从 `COMMENT` 提取。
+> MySQL 和 SQLite 的建表语句都认。
 #### 代码调试：在平台里跑代码
 
 **痛点**：调 JMeter 的 Groovy 脚本要「改 jmx → 开 JMeter → 跑 → 看日志 → 关 JMeter」，一轮 2 分钟。
@@ -380,6 +437,19 @@ public class PetApiTest {
 | **高** | 硬编码密码、硬编码 Token/密钥 |
 | **中** | 硬编码 URL、`Thread.sleep()`、**断言过弱** |
 | **低** | 绝对 XPath、深层 CSS 选择器 |
+
+**③ 依赖冲突检查**：
+
+扫 `pom.xml` 和 `requirements.txt`，查三类问题：
+
+| 问题 | 例子 |
+|---|---|
+| 同一声明出现多次 | `org.junit:junit-jupiter` 在同一个 pom 里出现 2 次 |
+| 同一依赖多个版本 | `→ 5.9.0 / 5.10.0` |
+| 版本占位符没定义 | `${undefined.prop}` 但 properties 里没这个键 |
+
+> **不做传递依赖分析**——那要解析完整依赖树（含 parent、dependencyManagement、profiles）还得联网查
+> Maven Central。IDE 的 `mvn dependency:tree` 更准，这里只查「肉眼能看出的冲突」。
 
 **断言质量检查**：
 
@@ -488,6 +558,18 @@ Timeout <N>ms waiting for #btn     ← 同一组
 | **响应断言** | 状态码 200 |
 | **持续时间断言** | RT 上限（可配，0 = 不生成） |
 
+**CSV 参数化**（勾「启用 CSV 参数化」）：
+
+| 配置 | 说明 |
+|---|---|
+| CSV 文件 | 相对 jmx 所在目录，如 `data.csv` |
+| 变量名 | 逗号分隔，如 `userName,mobile` |
+| 读完循环 | 数据用完后从头再来（压测常用） |
+| 读完停止线程 | 数据用完就停（想跑完所有数据时用） |
+| 忽略首行 | CSV 有表头时勾上 |
+
+生成后在 JMeter 里用 `${userName}` 引用，和「测试数据」页导出的多字段 CSV 正好配套。
+
 > **JMeter 版本自动对齐**：生成时会从「设置 → 压测」里配的 JMeter 路径**读出版本号**写进 jmx。
 > 这样用你自己的 JMeter 打开时**不会弹「版本不一致」**。
 > 生成后在「JMeter 版本」那行能看到当前用的版本。
@@ -589,7 +671,7 @@ SET FOREIGN_KEY_CHECKS = 1;
 | 地址 | 北京市朝阳区xx路xx号 |
 | 公司名 | xx科技有限公司 |
 | UUID | 550e8400-e29b-41d4-a716-446655440000 |
-| 日期 | 2026-11-24 |
+| 日期 | 2026-11-24（**可指定范围**：从 2020-01-01 到 2026-12-31 之间随机） |
 | 金额 | 1234.56 |
 | 订单号 | ORD20261124123456789 |
 
@@ -646,9 +728,9 @@ Base64 编解码、时间戳转换、哈希（MD5/SHA1/SHA256/SHA512）、UUID �
 | 规划模块 | 状态 | 说明 |
 |---|---|---|
 | **一. 代码骨架生成** | ✅ **全做了** | ① OpenAPI（JSON/YAML）→ Java/Python 骨架 ② 页面元素 → Playwright POM（**元素存库**）③ JSON → POJO/Pydantic ④ 断言模板库（脚本模板） |
-| **二. 压测辅助 + 造数** | ✅ **全做了** | ① jmx 生成（线程组/断言/RT 上限）② 造数（单类型 + **多字段组合**，导出 CSV/JSON）③ MySQL **和 SQLite** 快照/清理/还原 |
-| **三. 代码质量体检** | ⚠️ **部分** | ① UI 反模式（sleep/绝对XPath/深层CSS）✅ ② 硬编码（URL/Token/密码）✅ + **断言质量** ✅ ③ **依赖冲突检查没做** |
-| **四. 覆盖矩阵** | ⚠️ **部分** | ① 接口覆盖矩阵 ✅（接口清单 vs 代码路径）② **页面覆盖矩阵没做** ③ 用例映射：已有「用例↔接口关联」，没做 Excel 导入 |
+| **二. 压测辅助 + 造数** | ✅ **全做了** | ① jmx 生成（线程组/断言/RT 上限/**CSV 参数化**）② 造数（单类型 + **多字段组合** + **指定时间范围**，导出 CSV/JSON）③ MySQL **和 SQLite** 快照/清理/还原 |
+| **三. 代码质量体检** | ✅ **全做了** | ① UI 反模式（sleep/绝对XPath/深层CSS）② 硬编码（URL/Token/密码）+ **断言质量** ③ **依赖冲突检查** |
+| **四. 覆盖矩阵** | ⚠️ **部分** | ① 接口覆盖矩阵 ✅ ② **页面覆盖矩阵** ✅ ③ 用例映射：已有「用例↔接口关联」，没做 Excel 导入 |
 | **五. 报告聚合** | ✅ **全做了** | ① Allure 解析 + 失败聚类 + Flaky 追踪 ② jtl 分析（TPS/分位/**按接口错误率排序**） |
 | **六. Git 变更影响面** | ❌ **不做** | 收益低（IDE 的 Find Usages 更准），成本高（要解析 import 关系） |
 
@@ -656,10 +738,10 @@ Base64 编解码、时间戳转换、哈希（MD5/SHA1/SHA256/SHA512）、UUID �
 
 | 不做 | 原因 |
 |---|---|
-| 依赖冲突检查 | 要解析 `pom.xml` 的完整依赖树（含传递依赖），还得联网查 Maven Central |
-| 页面覆盖矩阵 | 平台没有「页面清单」这个数据源，得有类似 Apifox 的页面文档才能对比 |
 | Excel 用例映射 | 已有「用例 ↔ 接口关联」功能，够用；Excel 格式千变万化，导入成本高 |
+| Allure 拖拽导入 | 只能「扫描/选目录」，拖拽要改 Electron 文件拖放，收益小 |
 | Git 变更影响面 | IDEA 的 Find Usages 更准，做了也是重复 |
+| Maven 传递依赖分析 | 要解析完整依赖树 + 联网查 Maven Central，用 `mvn dependency:tree` 更准 |
 
 **技术栈差异**：规划里建议 FastAPI / Spring Boot，实际用的是 **Electron + Node**。
 功能一样能做，只是实现方式不同（模板引擎用 EJS 而不是 FreeMarker/Jinja2）。

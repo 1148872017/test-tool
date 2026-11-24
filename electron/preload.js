@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld('api', {
   codescanCoverage: (root, kind) => invoke('codescan:coverage', { root, kind }),
   codescanHardcoded: (root) => invoke('codescan:hardcoded', { root }),
   codescanPickDir: () => invoke('codescan:pickDir'),
+  codescanDeps: (root) => invoke('codescan:deps', { root }),
 
   /** 订阅代码运行输出（返回取消订阅函数） */
   onRunnerOutput: (cb) => {

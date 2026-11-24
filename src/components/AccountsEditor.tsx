@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Input, Button, Select, Tag, Tooltip, Checkbox } from 'antd';
-import { PlusOutlined, DeleteOutlined, CopyOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, CopyOutlined, StarFilled } from '@ant-design/icons';
 import { fieldOptions, getOptionsSync, loadOptions, OptionsMap } from '../options';
 import { toast } from '../msg';
 

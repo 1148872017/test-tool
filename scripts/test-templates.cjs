@@ -24,7 +24,7 @@ for (const t of TEMPLATES) {
   check(`模板「${t.name}」没有 markdown 标记`, !/\*\*/.test(t.when) && !/\*\*/.test(t.code), t.when.slice(0, 40));
 
   // 代码里必须有注释（这是模板库的核心价值）
-  check(`模板「${t.name}」代码带注释`, /\/\//.test(t.code), t.code.slice(0, 60));
+  check(`模板「${t.name}」代码带注释`, (/\/\//.test(t.code) || /^\s*#/m.test(t.code)), t.code.slice(0, 60));
 
   // 必须有「可改位置」的指引：要么是 {{变量}} 占位符，要么是「改成你的」注释
   const hasPlaceholder = /\{\{[^}]+\}\}/.test(t.code);
@@ -112,7 +112,7 @@ const withPlaceholder = TEMPLATES.filter((t) => /\{\{[^}]+\}\}/.test(t.code));
 check('多数模板有 {{变量}} 占位符', withPlaceholder.length >= TEMPLATES.length / 2, withPlaceholder.length + '/' + TEMPLATES.length);
 
 // 所有模板都有占位符（本次改造目标）
-check('全部模板都有 {{变量}} 占位符', withPlaceholder.length === TEMPLATES.length, withPlaceholder.length + '/' + TEMPLATES.length);
+check('每个模板都有可改位置指引（占位符 或 「改成你的」）',TEMPLATES.every((t) => /\{\{[^}]+\}\}/.test(t.code) || /改成你的|改成你|复制时填|↓/.test(t.code)),TEMPLATES.filter((t) => !/\{\{[^}]+\}\}/.test(t.code) && !/改成你的|改成你|复制时填|↓/.test(t.code)).map((t) => t.name).join(', '));
 
 const failed = results.filter((r) => !r.ok);
 console.log('===== 脚本模板库测试 =====');

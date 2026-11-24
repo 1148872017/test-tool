@@ -144,7 +144,7 @@ const NO_CODE_NEEDED = [
     use: '仅一次控制器（Once Only Controller）',
     how: '右键线程组 → 添加 → 逻辑控制器 → 仅一次控制器；把登录请求放进去',
     note: '压测常见模式：登录一次，然后循环压业务接口'
-  }
+  },
 ];
 
 /**
@@ -156,7 +156,9 @@ const TEMPLATE_CATEGORIES = [
   { key: 'assert', name: '断言', color: 'gold', order: 2 },
   { key: 'generate', name: '生成', color: 'blue', order: 3 },
   { key: 'crypto', name: '加密', color: 'purple', order: 4 },
-  { key: 'flow', name: '流程', color: 'cyan', order: 5 }
+  { key: 'flow', name: '流程', color: 'cyan', order: 5 },
+  { key: 'api-assert', name: '接口断言', color: 'geekblue', order: 6 },
+  { key: 'ui-assert', name: 'UI 断言', color: 'magenta', order: 7 }
 ];
 
 const CATEGORY_MAP = TEMPLATE_CATEGORIES.reduce((acc, c) => {
@@ -443,7 +445,180 @@ log.info("canContinue = " + ok)
 
 // 然后在 If Controller 里写：\${canContinue} == "true"`,
     gotcha: 'If Controller 默认会把条件当字符串比较，写 ${canContinue} 时要注意引号'
-  }
+  },
+
+  /* ========== 接口断言（RestAssured / pytest）========== */
+  {
+    id: 'api-assert-status',
+    category: 'api-assert',
+    name: 'RestAssured：状态码断言',
+    when: '最简单的接口断言：确认返回 200',
+    where: 'IDEA 里，.then() 后面',
+    vars: [{ name: 'expectedCode', value: '200', desc: '期望的 HTTP 状态码' }],
+    code: [
+      '// 期望的状态码（改成你的）',
+      '.then()',
+      '    .statusCode({{expectedCode}});',
+      '',
+      '// 允许多个状态码：',
+      '// .statusCode(anyOf(is(200), is(201)));'
+    ].join('\n'),
+    gotcha: '只校验状态码不算合格的接口测试——业务失败也可能返回 200'
+  },
+
+  {
+    id: 'api-assert-json-field',
+    category: 'api-assert',
+    name: 'RestAssured：JSON 字段值断言',
+    when: '要校验业务字段（code / msg / data.xxx）',
+    where: 'IDEA 里，.then() 后面',
+    vars: [
+      { name: 'fieldPath', value: 'code', desc: 'JSON 路径（支持 data.id 嵌套）' },
+      { name: 'expected', value: '0', desc: '期望值' }
+    ],
+    code: [
+      'import static org.hamcrest.Matchers.*;',
+      '',
+      '.then()',
+      '    .statusCode(200)',
+      '    .body("{{fieldPath}}", equalTo({{expected}}));',
+      '',
+      '// 只要求字段存在：',
+      '// .body("{{fieldPath}}", notNullValue());'
+    ].join('\n'),
+    gotcha: '数字用 equalTo(0)，字符串用 equalTo("0")——类型不匹配会失败'
+  },
+
+  {
+    id: 'api-assert-json-schema',
+    category: 'api-assert',
+    name: 'RestAssured：JSON 结构校验（Schema）',
+    when: '要确认返回结构没变（字段齐全、类型正确）',
+    where: 'IDEA 里；Schema 放 src/test/resources/schemas/',
+    vars: [
+      { name: 'schemaFile', value: 'login-response.json', desc: 'schemas 下的文件名' }
+    ],
+    code: [
+      '// 校验返回结构和 Schema 文件一致（字段齐全、类型正确）',
+      'import static io.restassured.module.jsv.JsonSchemaValidator.*;',
+      '',
+      '.then()',
+      '    .statusCode(200)',
+      '    .body(matchesJsonSchemaInClasspath("schemas/{{schemaFile}}"));'
+    ].join('\n'),
+    gotcha: '要加依赖 io.rest-assured:json-schema-validator，否则类找不到'
+  },
+
+  {
+    id: 'api-assert-pytest-json',
+    category: 'api-assert',
+    name: 'pytest：JSON 字段断言',
+    when: 'Python 接口测试里校验业务字段',
+    where: 'PyCharm 里，requests 之后',
+    vars: [
+      { name: 'field', value: 'code', desc: '字段名' },
+      { name: 'expected', value: '0', desc: '期望值' }
+    ],
+    code: [
+      '# 先断状态码（失败时把响应前 200 字打出来）',
+      'assert resp.status_code == 200, f"HTTP {resp.status_code}: {resp.text[:200]}"',
+      '',
+      '# 再断业务字段（field 改成你的字段名）',
+      'body = resp.json()',
+      'assert body["{{field}}"] == {{expected}}, f"字段值不对：{body}"'
+    ].join('\n'),
+    gotcha: '断言里带上实际值（f-string），失败时不用再手动打印'
+  },
+
+  {
+    id: 'api-assert-pytest-schema',
+    category: 'api-assert',
+    name: 'pytest：JSON Schema 校验',
+    when: 'Python 里校验返回结构',
+    where: 'PyCharm 里；pip install jsonschema',
+    vars: [],
+    code: [
+      '# 校验返回结构和 SCHEMA 一致（pip install jsonschema）',
+      'import jsonschema',
+      '',
+      '# 改成你的接口结构',
+      'SCHEMA = {',
+      '    "type": "object",',
+      '    "required": ["code", "data"],',
+      '    "properties": {',
+      '        "code": {"type": "integer"},',
+      '        "data": {"type": "object"},',
+      '    },',
+      '}',
+      '',
+      'jsonschema.validate(resp.json(), SCHEMA)'
+    ].join('\n'),
+    gotcha: '校验失败抛 ValidationError，pytest 会当成失败'
+  },
+
+  /* ========== UI 断言（Playwright）========== */
+  {
+    id: 'ui-assert-visible',
+    category: 'ui-assert',
+    name: 'Playwright：元素可见 / 隐藏',
+    when: '确认元素出现或消失',
+    where: 'Playwright 测试方法里',
+    vars: [
+      { name: 'selector', value: '[data-testid=submit]', desc: '定位器（优先 data-testid）' }
+    ],
+    code: [
+      '// 可见（自动等待，最多 30s）',
+      'await expect(page.locator("{{selector}}")).toBeVisible();',
+      '',
+      '// 隐藏 / 不存在',
+      'await expect(page.locator("{{selector}}")).toBeHidden();'
+    ].join('\n'),
+    gotcha: '不要用 isVisible() 再 assert——它不等待，元素没渲染就返回 false'
+  },
+
+  {
+    id: 'ui-assert-text',
+    category: 'ui-assert',
+    name: 'Playwright：文本包含 / 相等',
+    when: '校验元素文字',
+    where: 'Playwright 测试方法里',
+    vars: [
+      { name: 'selector', value: '.toast', desc: '定位器' },
+      { name: 'text', value: '保存成功', desc: '期望文字' }
+    ],
+    code: [
+      '// 包含（最常用）',
+      'await expect(page.locator("{{selector}}")).toContainText("{{text}}");',
+      '',
+      '// 完全相等（支持正则）',
+      'await expect(page.locator("{{selector}}")).toHaveText(/^保存成功$/);'
+    ].join('\n'),
+    gotcha: 'toContainText 会自动 trim + 等待；toHaveText 要求完全一致'
+  },
+
+  {
+    id: 'ui-assert-attr',
+    category: 'ui-assert',
+    name: 'Playwright：属性值 / 输入框值',
+    when: '校验 href / disabled / class，或输入框内容',
+    where: 'Playwright 测试方法里',
+    vars: [
+      { name: 'selector', value: '#username', desc: '定位器' },
+      { name: 'attr', value: 'value', desc: '属性名' },
+      { name: 'expected', value: 'admin', desc: '期望值' }
+    ],
+    code: [
+      '// 属性值',
+      'await expect(page.locator("{{selector}}")).toHaveAttribute("{{attr}}", "{{expected}}");',
+      '',
+      '// 输入框的值（专用断言，比 toHaveAttribute 更准）',
+      'await expect(page.locator("{{selector}}")).toHaveValue("{{expected}}");',
+      '',
+      '// 禁用状态',
+      'await expect(page.locator("{{selector}}")).toBeDisabled();'
+    ].join('\n'),
+    gotcha: '用户输入的值不在 attribute 里，要用 toHaveValue()'
+  },
 ];
 
 module.exports = { NO_CODE_NEEDED, TEMPLATES, TEMPLATE_CATEGORIES, CATEGORY_MAP };

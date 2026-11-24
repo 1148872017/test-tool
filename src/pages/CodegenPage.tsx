@@ -37,6 +37,11 @@ export default function CodegenPage() {
   const [openapiIdx, setOpenapiIdx] = useState<number>(-1);
   const [openapiBusy, setOpenapiBusy] = useState(false);
   const [jsonText, setJsonText] = useState('{\n  "code": 0,\n  "msg": "ok"\n}');
+  /** model 模式的数据源：JSON 响应体 / CREATE TABLE 建表语句 */
+  const [modelSource, setModelSource] = useState<'json' | 'sql'>('json');
+  const [sqlText, setSqlText] = useState(
+    'CREATE TABLE t_order (\n  id bigint(20) NOT NULL COMMENT 主键,\n  order_no varchar(64) NOT NULL COMMENT 订单号,\n  amount decimal(10,2) COMMENT 金额,\n  created_at datetime COMMENT 创建时间\n);'
+  );
   const [pages, setPages] = useState<any[]>([]);
   const [pageId, setPageId] = useState('');
   const [pageName, setPageName] = useState('login');
@@ -139,6 +144,8 @@ export default function CodegenPage() {
         }
       } else if (kind === 'page') {
         payload.page = { name: pageName, url: pageUrl, elements };
+      } else if (modelSource === 'sql') {
+        payload.sql = sqlText;
       } else {
         payload.json = jsonText;
       }
@@ -170,6 +177,7 @@ export default function CodegenPage() {
         if (apiSource === 'file') payload.apiData = currentApiData();
         else payload.apiId = apiId;
       } else if (kind === 'page') payload.page = { name: pageName, url: pageUrl, elements };
+      else if (modelSource === 'sql') payload.sql = sqlText;
       else payload.json = jsonText;
 
       const res = await api.codegenSave(payload);
@@ -192,22 +200,8 @@ export default function CodegenPage() {
     toast('代码已复制');
   };
 
-  /** 把「名称 = 定位器」文本解析成元素数组 */
-  const parseElements = (text: string): PageElement[] => {
-    const out: PageElement[] = [];
-    for (const line of String(text || '').split('\n')) {
-      const t = line.trim();
-      if (!t) continue;
-      const i = t.indexOf('=');
-      if (i <= 0) continue;
-      out.push({
-        name: t.slice(0, i).trim(),
-        selector: t.slice(i + 1).trim(),
-        desc: ''
-      });
-    }
-    return out;
-  };
+  /** 解析 elements 字段（兼容 JSON 数组和旧的多行文本） */
+  const parseElements = (text: string): PageElement[] => parseElementsShared(text);
 
   /** 从「页面元素」集合载入一个页面 */
   const doLoadPage = (id: string) => {
@@ -468,15 +462,48 @@ export default function CodegenPage() {
 
           {kind === 'model' ? (
             <>
-              <div className="codegen-label">JSON 示例</div>
-              <Input.TextArea
-                className="mono"
-                rows={12}
-                value={jsonText}
-                onChange={(e) => setJsonText(e.target.value)}
-                spellCheck={false}
-                placeholder='{"code": 0, "data": {...}}'
+              <div className="codegen-label">数据来源</div>
+              <Segmented
+                size="small"
+                value={modelSource}
+                onChange={(v) => setModelSource(v as 'json' | 'sql')}
+                options={[
+                  { label: 'JSON 响应体', value: 'json' },
+                  { label: 'CREATE TABLE', value: 'sql' }
+                ]}
               />
+
+              {modelSource === 'json' ? (
+                <>
+                  <div className="codegen-label" style={{ marginTop: 6 }}>
+                    JSON 示例
+                  </div>
+                  <Input.TextArea
+                    className="mono"
+                    rows={12}
+                    value={jsonText}
+                    onChange={(e) => setJsonText(e.target.value)}
+                    spellCheck={false}
+                    placeholder='{"code": 0, "data": {...}}'
+                  />
+                </>
+              ) : (
+                <>
+                  <div className="codegen-label" style={{ marginTop: 6 }}>
+                    建表语句（MySQL / SQLite 都认）
+                  </div>
+                  <Input.TextArea
+                    className="mono"
+                    rows={12}
+                    value={sqlText}
+                    onChange={(e) => setSqlText(e.target.value)}
+                    spellCheck={false}
+                  />
+                  <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+                    从建表语句推断字段和类型（不连数据库）。类名默认按表名取（t_order → Order）。
+                  </div>
+                </>
+              )}
             </>
           ) : null}
         </div>

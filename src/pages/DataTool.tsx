@@ -83,10 +83,25 @@ function genUuid() {
   });
 }
 
-function genDate() {
-  const start = new Date(2020, 0, 1).getTime();
-  const end = Date.now();
-  return new Date(start + Math.random() * (end - start)).toISOString().slice(0, 10);
+/**
+ * 日期生成。
+ *
+ * 规划要求「指定范围的时间戳」，所以支持传起止日期。
+ * 不传就退回默认范围（2020-01-01 ~ 今天）。
+ *
+ * @param {string} from 起始日期 YYYY-MM-DD（含）
+ * @param {string} to   结束日期 YYYY-MM-DD（含）
+ */
+function genDate(from, to) {
+  const startMs = from ? new Date(from + 'T00:00:00').getTime() : new Date(2020, 0, 1).getTime();
+  const endMs = to ? new Date(to + 'T23:59:59').getTime() : Date.now();
+  // 范围非法（或者反了）时退回默认，避免生成 Invalid Date
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    const s0 = new Date(2020, 0, 1).getTime();
+    const e0 = Date.now();
+    return new Date(s0 + Math.random() * (e0 - s0)).toISOString().slice(0, 10);
+  }
+  return new Date(startMs + Math.random() * (endMs - startMs)).toISOString().slice(0, 10);
 }
 
 function genAmount() {
@@ -138,6 +153,9 @@ export default function DataTool() {
   const [multiRows, setMultiRows] = useState<string[][]>([]);
 
   const [count, setCount] = useState(5);
+  /** 日期范围（只在「日期」类型时用） */
+  const [dateFrom, setDateFrom] = useState('2020-01-01');
+  const [dateTo, setDateTo] = useState('2026-12-31');
 
   /** 上限 10 万（CSV 导出用，太多会卡） */
   const normalizeCount = () => Math.max(1, Math.min(100000, Number(count) || 1));
@@ -147,7 +165,9 @@ export default function DataTool() {
 
     if (mode === 'single') {
       const def = TYPES.find((t) => t.value === type) || TYPES[0];
-      setRows(Array.from({ length: n }, () => def.fn()));
+      // 日期类型用自定义范围；其他类型传 undefined，忽略
+      const gen = () => (def.value === 'date' ? genDate(dateFrom, dateTo) : def.fn());
+      setRows(Array.from({ length: n }, gen));
       return;
     }
 
@@ -157,10 +177,14 @@ export default function DataTool() {
       toast('至少填一个字段名', 'warning');
       return;
     }
-    const resolved = valid.map((f) => ({
-      fixed: f.fixed,
-      fn: (TYPES.find((t) => t.value === f.type) || TYPES[0]).fn
-    }));
+    const resolved = valid.map((f) => {
+      const t = TYPES.find((x) => x.value === f.type) || TYPES[0];
+      return {
+        fixed: f.fixed,
+        // 日期字段也走自定义范围
+        fn: t.value === 'date' ? () => genDate(dateFrom, dateTo) : t.fn
+      };
+    });
     setMultiRows(
       Array.from({ length: n }, () => resolved.map((r) => (r.fixed ? r.fixed : r.fn())))
     );
@@ -297,6 +321,28 @@ export default function DataTool() {
           />
           {mode === 'single' ? (
             <Select value={type} onChange={setType} options={TYPES} style={{ width: 140 }} />
+          ) : null}
+
+          {/* 日期类型：可以指定范围（规划要求「指定范围的时间戳」） */}
+          {type === 'date' ? (
+            <Space size={4}>
+              <span className="muted">从</span>
+              <Input
+                size="small"
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                style={{ width: 140 }}
+              />
+              <span className="muted">到</span>
+              <Input
+                size="small"
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                style={{ width: 140 }}
+              />
+            </Space>
           ) : null}
           <Space size={6}>
             <span className="muted">数量</span>

@@ -21,6 +21,7 @@
  */
 
 const ejs = require('ejs');
+const { parseCreateTable } = require('./sqlschema');
 
 /* ============================================================
  * 工具函数
@@ -361,13 +362,13 @@ import lombok.Data;
 /**
  * <%= className %>
  *
- * 由「测试工作台」从 JSON 生成。
+ * 由「测试工作台」生成（数据来源：JSON 或建表语句）。
  */
 @Data
 public class <%= className %> {
 <% fields.forEach(function (f) { -%>
 
-    /** <%= f.key %> */
+    /** <%- f.comment || f.key %> */
     private <%- f.javaType %> <%= f.name %>;
 <% }); -%>
 }
@@ -378,7 +379,7 @@ const TPL_DATACLASS_PYTHON = `# -*- coding: utf-8 -*-
 """
 <%= className %>
 
-由「测试工作台」从 JSON 生成。
+由「测试工作台」生成（数据来源：JSON 或建表语句）。
 """
 from typing import Any, List, Optional
 from pydantic import BaseModel, Field
@@ -386,7 +387,7 @@ from pydantic import BaseModel, Field
 
 class <%= className %>(BaseModel):
 <% fields.forEach(function (f) { -%>
-    <%= f.name %>: <%= f.pyType %> = Field(default=None, description="<%= f.key %>")
+    <%= f.name %>: <%- f.pyType %> = Field(default=None, description="<%- f.comment || f.key %>")
 <% }); -%>
 `;
 
@@ -488,7 +489,8 @@ function fieldsFromJson(jsonText) {
     key: k,
     name: camel(k),
     javaType: javaTypeOf(obj[k]),
-    pyType: pyTypeOf(obj[k])
+    pyType: pyTypeOf(obj[k]),
+    comment: k
   }));
 }
 
@@ -525,8 +527,36 @@ function generate(targetKey, input = {}) {
       }))
     };
   } else if (target.kind === 'model') {
-    const fields = fieldsFromJson(input.json);
-    if (!fields.length) return { ok: false, message: 'JSON 里没有可生成的字段' };
+    /**
+     * 两种输入：
+     *   input.json  → 从 JSON 响应体推断
+     *   input.sql   → 从 CREATE TABLE 建表语句解析（规划要求「DB → POJO」，
+     *                 这里不直连数据库，改成粘贴建表语句）
+     */
+    let fields;
+
+    if (input.sql && String(input.sql).trim()) {
+      const parsed = parseCreateTable(input.sql);
+      if (!parsed.ok) return { ok: false, message: parsed.message };
+      fields = parsed.columns.map((c) => ({
+        key: c.name,
+        name: c.camel,
+        javaType: c.javaType,
+        pyType: c.pyType,
+        // 字段注释写进 @Schema / comment
+        comment: c.comment || c.name
+      }));
+      // 表名推断类名：t_order → Order，user_info → UserInfo
+      if (!input.className) {
+        const t = parsed.table || '';
+        const stripped = t.replace(/^t_/i, '');
+        if (stripped) input.className = pascal(stripped);
+      }
+    } else {
+      fields = fieldsFromJson(input.json);
+      if (!fields.length) return { ok: false, message: 'JSON 里没有可生成的字段（或粘贴建表语句）' };
+    }
+
     ctx = {
       className: input.className || 'DataModel',
       fields

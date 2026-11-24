@@ -251,8 +251,8 @@ const COLLECTIONS = [
       {
         key: 'elements',
         label: '元素定位器',
-        type: 'textarea',
-        placeholder: '每条一行，格式：名称 = 定位器\nusernameInput = #username\nsubmitBtn = button[type=submit]'
+        type: 'elements',
+        placeholder: '每个元素一行：名称 + 定位器 + 说明'
       },
       {
         key: 'note',

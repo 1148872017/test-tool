@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Table, Input, Button, Tag, Drawer, Segmented, Select, Tooltip, Alert } from 'antd';
+import { Table, Input, Button, Tag, Drawer, Segmented, Tooltip, Alert } from 'antd';
 import {
   ReloadOutlined,
   SearchOutlined,

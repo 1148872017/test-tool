@@ -41,6 +41,13 @@ export default function ScriptGenPage() {
   const [jmxFile, setJmxFile] = useState('');
   /** 生成时用的 JMeter 版本（从设置里的 jmeterPath 读） */
   const [jmeterVersion, setJmeterVersion] = useState('');
+  /** CSV 参数化 */
+  const [csvEnabled, setCsvEnabled] = useState(false);
+  const [csvFile, setCsvFile] = useState('data.csv');
+  const [csvVars, setCsvVars] = useState('userName,mobile');
+  const [csvRecycle, setCsvRecycle] = useState(true);
+  const [csvStopThread, setCsvStopThread] = useState(false);
+  const [csvIgnoreFirst, setCsvIgnoreFirst] = useState(false);
 
   /* ============ 数据库 SQL（MySQL / SQLite）============ */
   const [sqlMode, setSqlMode] = useState<'snapshot' | 'cleanup' | 'restore'>('snapshot');
@@ -67,6 +74,18 @@ export default function ScriptGenPage() {
     })();
   }, []);
 
+  /** 组装 CSV 参数（没启用就返回 undefined，jmxgen 会跳过） */
+  const buildCsv = () => {
+    if (!csvEnabled) return undefined;
+    return {
+      fileName: csvFile,
+      variableNames: csvVars,
+      recycle: csvRecycle,
+      stopThread: csvStopThread,
+      ignoreFirstLine: csvIgnoreFirst
+    };
+  };
+
   /* ---------- 生成 jmx ---------- */
   const doGenJmx = async () => {
     if (!apiIds.length) {
@@ -85,7 +104,8 @@ export default function ScriptGenPage() {
         rtLimit,
         domain,
         port,
-        onError
+        onError,
+        csv: buildCsv()
       });
       if (!res.ok) {
         toast(res.message || '生成失败', 'error');
@@ -120,7 +140,8 @@ export default function ScriptGenPage() {
         rtLimit,
         domain,
         port,
-        onError
+        onError,
+        csv: buildCsv()
       });
       if (res.canceled) return;
       if (!res.ok) {
@@ -303,6 +324,52 @@ export default function ScriptGenPage() {
                 <Input size="small" value={port} onChange={(e) => setPort(e.target.value)} placeholder="自动" />
               </div>
             </div>
+
+            {/* CSV 参数化（规划要求「参数化配置」） */}
+            <div className="scriptgen-field">
+              <label>
+                <Checkbox checked={csvEnabled} onChange={(e) => setCsvEnabled(e.target.checked)}>
+                  启用 CSV 参数化（CSV Data Set Config）
+                </Checkbox>
+              </label>
+            </div>
+
+            {csvEnabled ? (
+              <>
+                <div className="scriptgen-row">
+                  <div className="scriptgen-field">
+                    <label>CSV 文件（相对 jmx 所在目录）</label>
+                    <Input size="small" value={csvFile} onChange={(e) => setCsvFile(e.target.value)} />
+                  </div>
+                  <div className="scriptgen-field">
+                    <label>变量名（逗号分隔）</label>
+                    <Input
+                      size="small"
+                      value={csvVars}
+                      placeholder="userName,mobile"
+                      onChange={(e) => setCsvVars(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="scriptgen-field">
+                  <Space size={12} wrap>
+                    <Checkbox checked={csvRecycle} onChange={(e) => setCsvRecycle(e.target.checked)}>
+                      读完循环（recycle）
+                    </Checkbox>
+                    <Checkbox checked={csvStopThread} onChange={(e) => setCsvStopThread(e.target.checked)}>
+                      读完停止线程
+                    </Checkbox>
+                    <Checkbox checked={csvIgnoreFirst} onChange={(e) => setCsvIgnoreFirst(e.target.checked)}>
+                      忽略首行（表头）
+                    </Checkbox>
+                  </Space>
+                </div>
+                <div className="muted" style={{ fontSize: 11.5 }}>
+                  {/* 用 {'...'} 包起来，否则 esbuild 会把这里当插值 */}
+                  {'CSV 里每行一条数据，请求里用 ${变量名} 引用（如 ${userName}）'}
+                </div>
+              </>
+            ) : null}
 
             <div className="scriptgen-field">
               <label>JMeter 版本</label>

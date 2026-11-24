@@ -269,7 +269,7 @@ const SEED: Record<string, any[]> = {
         name: '登录页',
         url: '/login',
         project: 'OTA-automation',
-        elements: 'usernameInput = #username\npasswordInput = #password\nsubmitBtn = button[type=submit]\nrememberCheckbox = input[name=remember]',
+        elements: '[{"name":"usernameInput","selector":"#username","desc":"用户名输入框"},{"name":"passwordInput","selector":"#password","desc":"密码输入框"},{"name":"submitBtn","selector":"button[type=submit]","desc":"登录按钮"}]',
         note: '演示数据'
       },
       tags: []
@@ -596,6 +596,17 @@ export function installMockIfNeeded() {
     sqlgenListBackups: async () => ({ ok: true, list: [] }),
 
     /* ---- 代码生成（mock）---- */
+    openapiPickFile: async () => ({ ok: false, canceled: true }),
+    openapiParseFile: async () => ({
+      ok: true,
+      file: 'D:/demo/openapi.json',
+      doc: { title: '示例模块', version: '1.0.0', baseUrl: '' },
+      items: [
+        { tmpId: 'tmp-0', name: '创建用户', method: 'POST', url: '/user', module: '用户', paramTable: '[]', body: '', bodyType: 'none' },
+        { tmpId: 'tmp-1', name: '查用户', method: 'GET', url: '/user/{id}', module: '用户', paramTable: '[]', body: '', bodyType: 'none' }
+      ]
+    }),
+
     codegenTargets: async () => ({
       ok: true,
       targets: [
@@ -663,6 +674,35 @@ export function installMockIfNeeded() {
         { rule: 'sleep', label: '硬编码 sleep', severity: 'medium', hint: 'sleep 会让测试变慢且不稳定', file: 'D:/mock/Project/example/BaseApiTest.java', line: 64, snippet: 'Thread.sleep(1000L * attempt);' },
         { rule: 'sleep', label: '硬编码 sleep', severity: 'medium', hint: 'sleep 会让测试变慢且不稳定', file: 'D:/mock/Project/example/BaseApiTest.java', line: 75, snippet: 'Thread.sleep(1000L * attempt);' },
         { rule: 'absolute-xpath', label: '绝对 XPath', severity: 'low', hint: '绝对 XPath 极易失效', file: 'D:/mock/Project/example/LoginPage.java', line: 12, snippet: 'By.xpath("/html/body/div[1]/span")' }
+      ]
+    }),
+    codescanDeps: async () => ({
+      ok: true,
+      poms: 1,
+      reqs: 0,
+      summary: { high: 1, medium: 2, low: 0, total: 3 },
+      issues: [
+        {
+          kind: 'maven-version-conflict',
+          severity: 'high',
+          title: '同一依赖声明了不同版本',
+          detail: 'org.junit:junit-jupiter → 5.9.0 / 5.10.0',
+          file: 'pom.xml'
+        },
+        {
+          kind: 'maven-duplicate',
+          severity: 'medium',
+          title: '依赖声明了多次',
+          detail: 'org.junit:junit-jupiter 在同一个 pom 里出现 2 次',
+          file: 'pom.xml'
+        },
+        {
+          kind: 'pip-duplicate',
+          severity: 'medium',
+          title: '同一个 requirements 里包重复',
+          detail: 'requests 出现 2 次',
+          file: 'requirements.txt'
+        }
       ]
     }),
     codescanPickDir: async () => ({ ok: false, canceled: true }),
