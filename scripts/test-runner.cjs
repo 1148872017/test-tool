@@ -144,11 +144,11 @@ check('detect 找不到返回空串', runner.detect('nonexistent-xyz-abc') === '
 
 /* ---------- 5. IPC 已注册 ---------- */
 const mainSrc = require('./_electron-src.cjs').readElectronSource();
-check('有 runner:list', /ipcMain\.handle\('runner:list'/.test(mainSrc), 'no runner:list');
-check('有 runner:run', /ipcMain\.handle\('runner:run'/.test(mainSrc), 'no runner:run');
-check('有 runner:cancel', /ipcMain\.handle\('runner:cancel'/.test(mainSrc), 'no runner:cancel');
-check('有 projects:scan', /ipcMain\.handle\('projects:scan'/.test(mainSrc), 'no projects:scan');
-check('有 projects:testClasses', /ipcMain\.handle\('projects:testClasses'/.test(mainSrc), 'no projects:testClasses');
+check('有 runner:list', /handle\('runner:list'/.test(mainSrc), 'no runner:list');
+check('有 runner:run', /handle\('runner:run'/.test(mainSrc), 'no runner:run');
+check('有 runner:cancel', /handle\('runner:cancel'/.test(mainSrc), 'no runner:cancel');
+check('有 projects:scan', /handle\('projects:scan'/.test(mainSrc), 'no projects:scan');
+check('有 projects:testClasses', /handle\('projects:testClasses'/.test(mainSrc), 'no projects:testClasses');
 
 /* ---------- 6. preload 已暴露 ---------- */
 const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
@@ -161,7 +161,9 @@ const pageSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'Code
 check('组件订阅输出', /onRunnerOutput/.test(pageSrc), 'no subscribe');
 check('组件有运行按钮', /doRun/.test(pageSrc), 'no run');
 check('组件有取消按钮', /doCancel/.test(pageSrc), 'no cancel');
-check('组件支持 Ctrl+Enter', /ctrlKey.*Enter/.test(pageSrc), 'no shortcut');
+// 第 3 波起快捷键统一走 useHotkeys（window 级监听，焦点不在编辑器里也能按），
+// 断言接线而不是断言旧的 textarea onKeyDown 写法。
+check('组件支持 Ctrl+Enter', /'Ctrl\+Enter':/.test(pageSrc) && /useHotkeys/.test(pageSrc), 'no shortcut');
 check('组件有输出面板', /runner-output/.test(pageSrc), 'no output panel');
 check('Maven 模式不显示编辑器', /!isMaven \?/.test(pageSrc), 'maven shows editor');
 
@@ -247,7 +249,7 @@ check('手动指定优先于自动探测', /if \(settings\.javaHome\) \{/.test(m
 check('runner:list 返回 jdks', /jdks: runner\.listJdks\(\)/.test(mainSrc2), 'no jdks');
 check('runner:list 返回 pythons', /pythons: runner\.listPythons\(\)/.test(mainSrc2), 'no pythons');
 check('runner:list 返回 manual', /manual: \{/.test(mainSrc2), 'no manual');
-check('有 runner:openBrowserDir', /ipcMain\.handle\('runner:openBrowserDir'/.test(mainSrc2), 'no openBrowserDir');
+check('有 runner:openBrowserDir', /handle\('runner:openBrowserDir'/.test(mainSrc2), 'no openBrowserDir');
 
 /* ---------- 15. 前端：EnvCard + 侧边导航 + 引导弹窗 + 提示条 ---------- */
 const envCardSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'EnvCard.tsx'), 'utf8');
@@ -307,7 +309,7 @@ check('Maven 有「选择…」按钮', /选择…/.test(envCardSrc2), 'no pick 
 check('Maven 用 api.pickFile', /api\.pickFile/.test(envCardSrc2), 'no pickFile');
 
 /* ---------- 20. util:pickFile IPC ---------- */
-check('有 util:pickFile', /ipcMain\.handle\('util:pickFile'/.test(mainSrc3), 'no pickFile ipc');
+check('有 util:pickFile', /handle\('util:pickFile'/.test(mainSrc3), 'no pickFile ipc');
 const preloadSrc2 = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
 check('preload 暴露 pickFile', /pickFile: \(payload\)/.test(preloadSrc2), 'not exposed');
 

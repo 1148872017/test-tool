@@ -19,9 +19,9 @@ const openapi = require('../openapi');
 let clipboardTimer = null;
 
 function register(deps) {
-  const { ipcMain, app, dialog, store, fs, path, clipboard, getWindow, getSettings, assertUnlocked, logStartup } = deps;
+  const { handle, app, dialog, store, fs, path, clipboard, getWindow, getSettings, assertUnlocked, logStartup } = deps;
 
-  ipcMain.handle('clipboard:copy', async (e, { text, secret }) => {
+  handle('clipboard:copy', async (e, { text, secret }) => {
     const value = String(text === undefined || text === null ? '' : text);
     clipboard.writeText(value);
     if (secret) {
@@ -42,9 +42,9 @@ function register(deps) {
   });
 
   // ---- 应用内更新（检查 / 下载 / 安装）----
-  ipcMain.handle('update:check', async (e, { force } = {}) => updater.checkUpdate(!!force));
+  handle('update:check', async (e, { force } = {}) => updater.checkUpdate(!!force));
 
-  ipcMain.handle('update:download', async (e, { asset } = {}) => {
+  handle('update:download', async (e, { asset } = {}) => {
     const res = await updater.download(asset, (info) => {
       try {
         const win = getWindow();
@@ -56,11 +56,11 @@ function register(deps) {
     return res;
   });
 
-  ipcMain.handle('update:cancel', async () => updater.cancel());
+  handle('update:cancel', async () => updater.cancel());
 
-  ipcMain.handle('update:cleanup', async () => updater.cleanup());
+  handle('update:cleanup', async () => updater.cleanup());
 
-  ipcMain.handle('update:install', async (e, { file } = {}) => {
+  handle('update:install', async (e, { file } = {}) => {
     const res = await updater.install(file);
     if (res.ok) {
       // 安装器已启动，自己退出让出文件占用
@@ -74,7 +74,7 @@ function register(deps) {
   });
 
   // ---- 接口只读镜像：Apifox 导出的 openapi.json → 幂等 upsert ----
-  ipcMain.handle('apis:sync', async (e, payload = {}) => {
+  handle('apis:sync', async (e, payload = {}) => {
     assertUnlocked();
     let file = payload && payload.file ? String(payload.file) : '';
     if (!file) {
@@ -108,7 +108,7 @@ function register(deps) {
   });
 
   // ---- 上次同步的变更（关掉卡片后还能从列表页重新打开影响面清单） ----
-  ipcMain.handle('apis:lastSync', async () => {
+  handle('apis:lastSync', async () => {
     assertUnlocked();
     return store.lastSyncChanges();
   });

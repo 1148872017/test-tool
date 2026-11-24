@@ -6,6 +6,8 @@ const fs = require('fs');
 const store = require('./store');
 const demo = require('./demo');
 const sharedHelpers = require('./shared-helpers');
+const ipcGuard = require('./ipc-guard');
+const navGuard = require('./nav-guard');
 
 const DEBUG = process.env.TT_DEBUG === '1';
 if (DEBUG) app.commandLine.appendSwitch('remote-debugging-port', '9222');
@@ -220,6 +222,8 @@ function assertUnlocked() {
 
 function createWindow() {
   const iconPath = path.join(__dirname, '..', 'build', 'icon.ico');
+  /** app 自己的页面目录（导航护栏用） */
+  const distDir = path.join(__dirname, '..', 'dist');
   win = new BrowserWindow({
     width: 1380,
     height: 880,
@@ -233,10 +237,51 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      /**
+       * sandbox: true（v0.43.0）
+       *
+       * 原来是 false，等于渲染进程崩了就是个普通进程。preload.js 只用
+       * contextBridge + ipcRenderer（**没有任何 Node 模块 require**），
+       * 沙箱里完全够用。改完必须回归 preload 的 window.api 是否仍然可用
+       * （test-security.cjs 静态校验 preload 不依赖 Node，真机由冒烟覆盖）。
+       */
+      sandbox: true,
       spellcheck: false
     }
   });
+
+  /**
+   * 导航护栏（High：markdown 外链 → RCE）
+   *
+   * 知识库/笔记的 markdown 用 innerHTML 渲染，DOMPurify 会保留 <a href>。
+   * 没有这两道口子的话：点外链 → 窗口导航到 evil.com → 那个页面还握着
+   * 已注入的 window.api → 直接调任意 IPC（导出整库、装更新）。
+   *
+   * 规则：
+   *   - will-navigate：只放行 app 自己的 file:// 页面（dist/ 下），其余拦掉，
+   *     http/https 的转系统浏览器；
+   *   - setWindowOpenHandler：一律 deny（不新开窗），http/https 同样转
+   *     shell.openExternal —— 外部页面永远进不了这个 BrowserWindow。
+   */
+  win.webContents.on('will-navigate', (event, url) => {
+    if (navGuard.isAppUrl(url, distDir)) return;
+    event.preventDefault();
+    logStartup('blocked navigation: ' + url);
+    if (navGuard.isExternalUrlAllowed(url)) {
+      shell.openExternal(url).catch(() => {});
+    }
+  });
+
+  // typeof 兜底：测试桩里的 webContents 只实现了最小接口
+  if (typeof win.webContents.setWindowOpenHandler === 'function') {
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      logStartup('blocked window.open: ' + url);
+      if (navGuard.isExternalUrlAllowed(url)) {
+        shell.openExternal(url).catch(() => {});
+      }
+      return { action: 'deny' };
+    });
+  }
 
   Menu.setApplicationMenu(null);
   win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
@@ -376,9 +421,17 @@ function createTray() {
  *   - 运行期状态一律用函数取值（getWindow/getSettings/isLocked/setLocked），
  *     因为 win / settings 会被重新赋值，直接传引用会拿到旧值
  *   - 跨域共用的 helper 从 shared-helpers.js 来
+ *
+ * **handle(channel, fn) 是唯一的注册方式**（v0.43.0）：
+ *   默认要求已解锁，白名单在 electron/ipc-guard.js 里。
+ *   各域模块一律用 `const { handle } = deps` 注册通道，不再直接 ipcMain.handle ——
+ *   否则「锁屏不是安全边界」那个缺口会立刻回潮（scripts/test-ipc-unique.cjs 有护栏）。
  */
 function registerIpc() {
   const dir = path.join(__dirname, 'ipc');
+  /** 路径守卫额外放行的根：数据目录自己（含 backups/、skin/） */
+  const extraRoots = () => [DATA_DIR, store.backupDir].filter(Boolean);
+
   const deps = {
     ipcMain,
     dialog,
@@ -400,6 +453,23 @@ function registerIpc() {
       locked = !!value;
     },
     assertUnlocked,
+    /**
+     * 统一注册入口（默认带解锁守卫）。
+     * 白名单见 electron/ipc-guard.js 的 UNLOCK_WHITELIST。
+     */
+    handle: ipcGuard.createHandle({ ipcMain, assertUnlocked }),
+    /**
+     * 路径归属守卫：不在「设置里的目录 / 会话内选过扫过的目录 / 数据目录」内
+     * 一律返回 { ok:false, code:'OUTSIDE_ROOT' }。
+     * 用法：`const bad = assertPathIn(dir); if (bad) return bad;`
+     */
+    assertPathIn: (target, moreRoots) =>
+      sharedHelpers.assertPathIn(target, extraRoots().concat(Array.isArray(moreRoots) ? moreRoots : []), settings),
+    isPathAllowed: (target, moreRoots) =>
+      sharedHelpers.isPathAllowed(target, extraRoots().concat(Array.isArray(moreRoots) ? moreRoots : []), settings),
+    /** dialog 选过 / 显式扫描过的目录记进本会话白名单 */
+    rememberPicked: sharedHelpers.rememberPicked,
+    rememberRoot: sharedHelpers.rememberRoot,
     detectJmeter: () => sharedHelpers.detectJmeter(settings, saveSettings),
     jmeterVersionOf: sharedHelpers.jmeterVersionOf,
     launchJmeter: (jmxFile) => sharedHelpers.launchJmeter(settings, saveSettings, jmxFile),

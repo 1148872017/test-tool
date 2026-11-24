@@ -11,7 +11,7 @@ const depsCheck = require('../deps');
 const { RULES, SCAN_PACKS } = require('../scan-rules');
 
 function register(deps) {
-  const { ipcMain, dialog, store, getWindow, getSettings, assertUnlocked } = deps;
+  const { handle, dialog, store, getWindow, getSettings, assertUnlocked, assertPathIn, rememberPicked } = deps;
 
   /* ==================== 代码扫描 ==================== *
    * 覆盖矩阵（接口清单 vs 代码路径）+ 硬编码检查。
@@ -23,7 +23,7 @@ function register(deps) {
    * 前端「规则」勾选面板靠它渲染：默认全选，用户可以关掉不想看的规则，
    * 关掉的规则由 codescan:coverage / codescan:hardcoded 的 ruleIds 参数带回来。
    */
-  ipcMain.handle('codescan:rules', async () => {
+  handle('codescan:rules', async () => {
     assertUnlocked();
     return {
       ok: true,
@@ -46,7 +46,7 @@ function register(deps) {
    * 为什么需要：接口记录可能是全公司文档（100 个），
    * 某个项目只负责其中几个模块。不筛选就会报一堆无关的「未覆盖」。
    */
-  ipcMain.handle('codescan:modules', async (e, { kind } = {}) => {
+  handle('codescan:modules', async (e, { kind } = {}) => {
     assertUnlocked();
     const k = kind === 'page' ? 'page' : 'api';
     const items = k === 'page' ? store.list('pages') : store.list('apis');
@@ -70,11 +70,14 @@ function register(deps) {
    *   root    代码根目录（空 = settings.projectDir）
    *   ruleIds 只跑这些覆盖取数规则（缺省 = 全部，行为与 v0.41.2 一致）
    */
-  ipcMain.handle('codescan:coverage', async (e, { root, kind, modules, ruleIds } = {}) => {
+  handle('codescan:coverage', async (e, { root, kind, modules, ruleIds } = {}) => {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.projectDir || '';
     if (!dir) return { ok: false, message: '没配代码目录' };
+    // 入参守卫：只扫设置里的目录 / 本会话选过扫过的目录（v0.43.0）
+    const bad = assertPathIn(dir);
+    if (bad) return bad;
 
     /**
      * 清单来源：
@@ -106,11 +109,13 @@ function register(deps) {
    *
    * payload: { root, ruleIds }  代码根目录 + 本次勾选的规则（缺省 = 全部）
    */
-  ipcMain.handle('codescan:hardcoded', async (e, { root, ruleIds } = {}) => {
+  handle('codescan:hardcoded', async (e, { root, ruleIds } = {}) => {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.projectDir || '';
     if (!dir) return { ok: false, message: '没配代码目录' };
+    const bad = assertPathIn(dir);
+    if (bad) return bad;
     return codescan.scanHardcoded(dir, { ruleIds });
   });
 
@@ -120,22 +125,26 @@ function register(deps) {
    * 只看「同一声明出现多次 / 版本不一致 / 占位符没定义」，
    * 不做传递依赖分析（那要联网查 Maven Central，成本远超收益）。
    */
-  ipcMain.handle('codescan:deps', async (e, { root } = {}) => {
+  handle('codescan:deps', async (e, { root } = {}) => {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.projectDir || '';
     if (!dir) return { ok: false, message: '没配代码目录' };
+    const bad = assertPathIn(dir);
+    if (bad) return bad;
     return depsCheck.checkDeps(dir);
   });
 
   /** 选代码目录 */
-  ipcMain.handle('codescan:pickDir', async () => {
+  handle('codescan:pickDir', async () => {
     assertUnlocked();
     const picked = await dialog.showOpenDialog(getWindow(), {
       title: '选择代码目录',
       properties: ['openDirectory']
     });
     if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+    // 用户明确选过的目录 → 本会话可信根（后面 coverage/hardcoded/deps 要用）
+    rememberPicked(picked.filePaths[0]);
     return { ok: true, dir: picked.filePaths[0] };
   });
 }

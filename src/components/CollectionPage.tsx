@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Table, Input, Button, Tag, Popconfirm, Segmented, Select, Dropdown, Modal, Tooltip } from 'antd';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ReloadOutlined, Table, Input, Button, Tag, Popconfirm, Segmented, Select, Dropdown, Modal, Tooltip } from 'antd';
+import type { InputRef } from 'antd';
 import {
   PlusOutlined,
   ReloadOutlined,
@@ -15,13 +16,15 @@ import {
   TagOutlined,
   CloudDownloadOutlined,
   BarChartOutlined,
-  DownOutlined,
+  MoreOutlined,
   ImportOutlined,
-  FileTextOutlined
+  FileTextOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
-import { buildCurl, fmtTime } from '../utils';
+import { buildCurl, fmtTime, recordToText } from '../utils';
 import RecordForm from './RecordForm';
 import RecordDetail from './RecordDetail';
 import VarFillModal from './VarFillModal';
@@ -29,9 +32,11 @@ import SyncResultModal from './SyncResultModal';
 import ChangeImpactModal from './ChangeImpactModal';
 import ImportReportModal from './ImportReportModal';
 import CurlImportModal from './CurlImportModal';
+import PageShell from './shell/PageShell';
 import { parseAccounts, AccountRow } from './AccountsEditor';
 import { ROLE_OPTIONS } from '../../shared/collections';
 import { asArray, fieldOptions, getOptionsSync, loadOptions, OptionsMap } from '../options';
+import { capabilitiesOf, hasHeaderAction, HeaderAction } from '../features/collections/capabilities';
 
 type Props = {
   conf: any;
@@ -94,6 +99,32 @@ function searchableText(data: any): string {
   return JSON.stringify(out);
 }
 
+/**
+ * 页头「⋯」菜单的动作元数据。
+ *
+ * 注意：这里只有「怎么显示」，没有「哪个集合支持」——
+ * 后者在 shared/collections.js 的 capabilities.headerActions 里。
+ */
+const HEADER_ACTION_META: Record<HeaderAction, { label: string; icon: React.ReactNode }> = {
+  importData: { label: '导入备份', icon: <UploadOutlined /> },
+  importTemplate: { label: '下载模板', icon: <FileTextOutlined /> },
+  exportData: { label: '导出', icon: <DownloadOutlined /> },
+  refresh: { label: '刷新', icon: <ReloadOutlined /> },
+  importReport: { label: '导入压测报告', icon: <BarChartOutlined /> },
+  importCurl: { label: '粘贴 cURL 导入', icon: <ImportOutlined /> },
+  syncOpenApi: { label: '从 Apifox 同步', icon: <CloudDownloadOutlined /> },
+  impact: { label: '上次同步变更', icon: <CloudDownloadOutlined /> }
+};
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** 时间戳 → HH:mm（状态栏「上次同步 12:03」） */
+function clockText(ts: number): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+}
+
 export default function CollectionPage({
   conf,
   onCounts,
@@ -138,6 +169,11 @@ export default function CollectionPage({
   const [opts, setOpts] = useState<OptionsMap>(getOptionsSync());
   const [reportOpen, setReportOpen] = useState(false);
   const [impactOpen, setImpactOpen] = useState(false);
+  /** 左侧标签栏可折叠（窄窗口时把 176px 让给表格） */
+  const [asideOpen, setAsideOpen] = useState(true);
+  const searchRef = useRef<InputRef>(null);
+
+  const caps = useMemo(() => capabilitiesOf(conf), [conf]);
 
   const loadAll = async () => {
     setLoading(true);
@@ -150,6 +186,23 @@ export default function CollectionPage({
       setLoading(false);
     }
   };
+
+  /**
+   * 清空所有筛选（空状态里的「清空筛选」按钮用）。
+   *
+   * 原来空状态只有一句「换个关键词，或点左侧「全部」清空筛选」——
+   * 让用户自己去找，而且「全部」在左侧标签栏第一项，不好找。
+   * 空状态必须自带下一步按钮（三态组件的设计原则）。
+   */
+  const clearAllFilters = () => {
+    setKeyword('');
+    setFavOnly(false);
+    setEnvFilter('');
+    setTagFilter('');
+  };
+
+  /** 当前是否有任何筛选条件生效 */
+  const hasAnyFilter = !!(keyword || favOnly || envFilter || tagFilter);
 
   useEffect(() => {
     setKeyword('');
@@ -194,12 +247,12 @@ export default function CollectionPage({
 
   // 接口记录页：读上次同步的变更，页头给个入口（有变更才有，没变更不占地方）
   useEffect(() => {
-    if (conf.sync !== 'openapi') return;
+    if (caps.sync !== 'openapi') return;
     api
       .lastSyncChanges()
       .then((v: any) => setImpact(v && v.changed && v.changed.length ? v : null))
       .catch(() => {});
-  }, [conf.key]);
+  }, [conf.key, caps.sync]);
 
   // 从用例抽屉点接口跳过来：列表到齐后直接把那条记录打开
   useEffect(() => {
@@ -213,9 +266,22 @@ export default function CollectionPage({
 
   const favoriteCount = useMemo(() => all.filter((r) => r.favorite).length, [all]);
   const weekCount = useMemo(() => all.filter((r) => Date.now() - r.created_at < 7 * 86400000).length, [all]);
-  const noFav = !!conf.noFavorite;
-  const opensInBrowser = (conf.actions || []).indexOf('open') >= 0;
-  const openField = conf.openField || 'url';
+  /**
+   * 上次同步时间：同步结果里的 at 优先；没有就看记录上的 syncedAt。
+   * 只用来显示，不参与任何同步判断。
+   */
+  const lastSyncAt = useMemo(() => {
+    const list: number[] = [];
+    if (impact && impact.at) list.push(Number(impact.at));
+    for (const r of all) {
+      const v = Number((r.data || {}).syncedAt || 0);
+      if (v) list.push(v);
+    }
+    return list.length ? Math.max.apply(null, list) : 0;
+  }, [all, impact]);
+  // 全部能力都从 capabilities 读：页面里不再按集合 key 写分支
+  const noFav = !caps.favorite;
+  const opensInBrowser = !!caps.open;
 
   const filterOptions = useMemo(() => {
     if (!conf.filterField) return [];
@@ -366,6 +432,40 @@ export default function CollectionPage({
     setFormOpen(true);
   };
 
+  /**
+   * 快捷键（状态栏有提示，所以必须真的能用）：
+   *   Ctrl/⌘ + N 新增
+   *   /          聚焦搜索（输入框里按 / 不抢）
+   *   Esc        关闭详情抽屉
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing =
+        !!el &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          el.isContentEditable);
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        openCreate();
+        return;
+      }
+      if (e.key === '/' && !typing) {
+        e.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (e.key === 'Escape' && detail) {
+        setDetail(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [detail]);
+
   /** cURL 解析完成 → 关弹窗，用解析结果预填表单 */
   const onCurlImport = (parsed: any) => {
     setFormRecord(null);
@@ -413,6 +513,94 @@ export default function CollectionPage({
     setFormOpen(true);
   };
 
+  /**
+   * 页头「⋯」菜单：动作集合与顺序完全由 capabilities.headerActions 决定。
+   * 处理函数按动作 key 分发，不判断集合 key。
+   */
+  const runHeaderAction = (key: string) => {
+    if (key === 'importData') doImport();
+    else if (key === 'importTemplate') doTemplate();
+    else if (key === 'exportData') doExport();
+    else if (key === 'refresh') loadAll();
+    else if (key === 'importReport') setReportOpen(true);
+    else if (key === 'importCurl') setCurlOpen(true);
+    else if (key === 'syncOpenApi') doSync();
+    else if (key === 'impact') setImpactOpen(true);
+  };
+
+  /** 菜单项说明：保留原来 hover 提示里的「导什么 / 什么格式 / 会不会覆盖」 */
+  const headerActionDesc = (action: HeaderAction): React.ReactNode => {
+    if (action === 'importData') {
+      return (
+        <>
+          <div>
+            从 JSON 备份文件<b>合并</b>记录到「{conf.name}」
+          </div>
+          <div className="pg-menu-desc">
+            · 只认 .json（集合级导入不支持整库 .db）
+            <br />· 已有的 id 会更新，不会重复
+            <br />· 标签和选项一起带过来
+          </div>
+        </>
+      );
+    }
+    if (action === 'importTemplate') {
+      return (
+        <>
+          <div>
+            下载「{conf.name}」的<b>导入模板</b>（一条字段齐全的示例记录）
+          </div>
+          <div className="pg-menu-desc">
+            · 格式和「导出」完全一致，能<b>直接导入</b>
+            <br />· 照着把示例值改成你自己的，再点「导入备份」
+            <br />· 集合加字段后模板会自动跟着变
+          </div>
+        </>
+      );
+    }
+    if (action === 'exportData') {
+      return (
+        <>
+          <div>
+            把「{conf.name}」的 <b>{all.length} 条</b>记录导出成 JSON 文件
+          </div>
+          <div className="pg-menu-desc">
+            · 含数据、标签、收藏状态
+            <br />· <b>不含密码明文</b>（要带密码请去设置页「导出含密码」）
+            <br />· 存到桌面，文件名带集合名和日期
+          </div>
+        </>
+      );
+    }
+    if (action === 'importReport') return <div>选 JMeter 报告目录，自动填一条压测记录</div>;
+    if (action === 'importCurl') return <div>粘贴 cURL，解析后预填接口表单</div>;
+    if (action === 'syncOpenApi') return <div>从 Apifox 导出的 openapi.json 同步接口镜像（幂等）</div>;
+    if (action === 'impact') return <div>看上次同步改了哪些接口、影响哪些用例</div>;
+    return <div>重新读取列表</div>;
+  };
+
+  const headerMenuItems = caps.headerActions
+    .filter((action) => action !== 'impact' || !!(impact && impact.changed && impact.changed.length))
+    .map((action) => {
+      const meta = HEADER_ACTION_META[action];
+      const ioBusy = action === 'importData' || action === 'importTemplate' || action === 'exportData';
+      return {
+        key: action,
+        icon: meta.icon,
+        disabled: (ioBusy && busyIO) || (action === 'syncOpenApi' && syncing),
+        label: (
+          <div className="pg-menu-item">
+            <div className="pg-menu-title">
+              {meta.label}
+              {action === 'impact' && impact ? ` · ${impact.changed.length}` : ''}
+              {action === 'syncOpenApi' && syncing ? '（同步中…）' : ''}
+            </div>
+            <div className="pg-menu-help">{headerActionDesc(action)}</div>
+          </div>
+        )
+      };
+    });
+
   const copy = async (text: string, secret = false, label = '已复制') => {
     if (!text) {
       toast('没有内容可复制', 'warning');
@@ -422,9 +610,21 @@ export default function CollectionPage({
     toast(label);
   };
 
+  /**
+   * 列表行内「复制」：行为由 capabilities.copyKinds[0] 决定。
+   *
+   * accounts → 优先默认账号密码（30 秒后自动清空）
+   * sql      → 打开变量填充弹窗
+   * curl     → 生成 cURL
+   * text     → 整条记录转人话文本
+   *
+   * 加新格式只需要在 shared/collections.js 里写明，页面不用改。
+   */
   const quickCopy = async (r: any) => {
     const d = r.data || {};
-    if (conf.key === 'sites') {
+    const kind = caps.copyKinds[0] || 'text';
+
+    if (kind === 'accounts') {
       // 账号在 accounts 数组里：优先默认账号，其次第一个
       const list = parseAccounts(String(d.accounts || ''));
       if (!list.length) {
@@ -437,12 +637,12 @@ export default function CollectionPage({
       toast('这个账号没填账号或密码', 'warning');
       return;
     }
-    if (conf.key === 'sqls') {
+    if (kind === 'sql') {
       setVarTarget(r);
       return;
     }
-    if (conf.key === 'apis') return copy(buildCurl(r), false, 'cURL 已复制');
-    if (conf.key === 'notes') return copy(d.content || '', false, '正文已复制');
+    if (kind === 'curl') return copy(buildCurl(r), false, 'cURL 已复制');
+    return copy(recordToText(r, conf, linkMap), false, '整条已复制');
   };
 
   /**
@@ -457,7 +657,7 @@ export default function CollectionPage({
    *   4. 没有账号 → 只打开 URL
    */
   const openSite = async (r: any) => {
-    const url = String((r.data || {})[openField] || '').trim();
+    const url = String((r.data || {})[caps.open || 'url'] || '').trim();
     if (!url) {
       toast('这条记录没有填地址', 'warning');
       return;
@@ -598,10 +798,10 @@ export default function CollectionPage({
     .map((key: string) => ({ key, f: conf.fields.find((x: any) => x.key === key), weight: FIELD_WEIGHT[key] || 1 }))
     .filter((x: any) => x.f);
   const hasList = listMeta.length > 0;
-  // 名称列宽度：按集合调整。
-  // sites 的账号列内容长（用途 + 账号 + 角色），名称列收窄到 32%；
-  // 其他集合保持 50%。
-  const titlePct = !hasList ? 64 : conf.key === 'sites' ? 32 : 50;
+  // 名称列宽度来自 capabilities.titleWidthPct。
+  // 迁移注脚：旧实现写的是 conf.key === 'sites' ? 32 : 50；
+  // 现在站点（账号列内容长）在 shared/collections.js 里配 32，组件不再认识集合名。
+  const titlePct = !hasList ? 64 : caps.titleWidthPct;
   const titleWidth = `${titlePct}%`;
   const restPct = hasList ? 100 - titlePct : 36;
   const totalWeight = listMeta.reduce((s: number, x: any) => s + x.weight, 0) + 1.1 + 1.1;
@@ -685,199 +885,61 @@ export default function CollectionPage({
   ];
 
   return (
-    <div>
-      <div className="page-head">
-        <div>
-          <div className="page-title">
-            {conf.name}
-            <span style={{ fontSize: 12, color: '#9aa1b4', fontWeight: 400, marginLeft: 2 }}>{all.length} 条</span>
-          </div>
-          <div className="page-desc">{conf.desc}</div>
-        </div>
-        <div className="page-head-right">
-          {conf.key === 'runs' ? (
-            <Button icon={<BarChartOutlined />} onClick={() => setReportOpen(true)}>
-              导入压测报告
-            </Button>
-          ) : null}
-          {impact && impact.changed && impact.changed.length ? (
-            <Button type="link" size="small" className="impact-entry" onClick={() => setImpactOpen(true)}>
-              上次同步变更 · {impact.changed.length}
-            </Button>
-          ) : null}
-          {/*
-            hover 提示（用户要求）：光看「导入/导出」不知道导的是什么，
-            所以写清楚：对象（本集合）、格式（JSON）、行为（合并 vs 覆盖）。
-          */}
-          <Tooltip
-            title={
-              <div style={{ lineHeight: 1.7 }}>
-                <div>从 JSON 备份文件<b>合并</b>记录到「{conf.name}」</div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  · 只认 .json（集合级导入不支持整库 .db）
-                  <br />· 已有的 id 会更新，不会重复
-                  <br />· 标签和选项一起带过来
-                </div>
-              </div>
-            }
-          >
-            <Button icon={<UploadOutlined />} onClick={doImport} loading={busyIO}>
-              导入备份
-            </Button>
-          </Tooltip>
-          <Tooltip
-            title={
-              <div style={{ lineHeight: 1.7 }}>
-                <div>
-                  下载「{conf.name}」的<b>导入模板</b>（一条字段齐全的示例记录）
-                </div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  · 格式和「导出」完全一致，能<b>直接导入</b>
-                  <br />· 照着把示例值改成你自己的，再点左边「导入备份」
-                  <br />· 集合加字段后模板会自动跟着变
-                </div>
-              </div>
-            }
-          >
-            <Button icon={<FileTextOutlined />} onClick={doTemplate} loading={busyIO}>
-              下载模板
-            </Button>
-          </Tooltip>
-          <Tooltip
-            title={
-              <div style={{ lineHeight: 1.7 }}>
-                <div>
-                  把「{conf.name}」的 <b>{all.length} 条</b>记录导出成 JSON 文件
-                </div>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  · 含数据、标签、收藏状态
-                  <br />· <b>不含密码明文</b>（要带密码请去设置页「导出含密码」）
-                  <br />· 存到桌面，文件名带集合名和日期
-                </div>
-              </div>
-            }
-          >
-            <Button icon={<DownloadOutlined />} onClick={doExport} loading={busyIO}>
-              导出
-            </Button>
-          </Tooltip>
-          <Button icon={<ReloadOutlined />} onClick={loadAll}>
-            刷新
+    <>
+      <PageShell
+      title={conf.name}
+      desc={conf.desc}
+      count={all.length}
+      fill
+      actions={
+        <>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            新增
           </Button>
-          {conf.sync === 'openapi' || conf.key === 'apis' ? (
-            <Dropdown
-              trigger={['click']}
-              menu={{
-                items: [
-                  { key: 'manual', label: '手动新增', icon: <PlusOutlined /> },
-                  { key: 'curl', label: '粘贴 cURL 导入', icon: <ImportOutlined /> },
-                  ...(conf.sync === 'openapi'
-                    ? [{ key: 'apifox', label: '从 Apifox 同步', icon: <CloudDownloadOutlined /> }]
-                    : [])
-                ],
-                onClick: ({ key }) => {
-                  if (key === 'manual') openCreate();
-                  else if (key === 'curl') setCurlOpen(true);
-                  else if (key === 'apifox') doSync();
-                }
-              }}
-            >
-              <Button type="primary" icon={<PlusOutlined />} loading={syncing}>
-                新增 <DownOutlined style={{ fontSize: 10, marginLeft: 2 }} />
-              </Button>
-            </Dropdown>
-          ) : (
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新增
-            </Button>
-          )}
-        </div>
-      </div>
+          <Dropdown
+            trigger={['click']}
+            placement="bottomRight"
+            menu={{ items: headerMenuItems, onClick: ({ key }) => runHeaderAction(key) }}
+          >
+            <Button icon={<MoreOutlined />} aria-label="更多操作" title="更多操作" />
+          </Dropdown>
+        </>
+      }
+      bar={
+        <>
+          <Button
+            type="text"
+            size="small"
+            className="pg-aside-toggle"
+            icon={asideOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
+            title={asideOpen ? '收起标签栏' : '展开标签栏'}
+            onClick={() => setAsideOpen((v) => !v)}
+          />
 
-      <div className="page-with-aside">
-        <aside className="tag-panel">
-          <div className="tag-panel-head">
-            <span>
-              <TagOutlined /> 标签
-            </span>
-            <span className="tag-panel-count">{tagList.length}</span>
-          </div>
-          <div
-            className={'tag-item' + (tagFilter === '' && !(favOnly && !noFav) ? ' active' : '')}
+          <button
+            type="button"
+            className={'pg-chip' + (!favOnly && !tagFilter ? ' active' : '')}
             onClick={() => {
-              setTagFilter('');
               setFavOnly(false);
+              setTagFilter('');
             }}
           >
-            <span className="tag-dot" />
-            <span className="tag-name">全部</span>
-            <span className="tag-count">{all.length}</span>
-          </div>
+            全部 <b>{all.length}</b>
+          </button>
           {!noFav ? (
-            <div
-              className={'tag-item' + (favOnly ? ' active' : '')}
+            <button
+              type="button"
+              className={'pg-chip' + (favOnly ? ' active' : '')}
+              title="只看收藏"
               onClick={() => {
-                setFavOnly(!favOnly);
+                setFavOnly((v) => !v);
                 setTagFilter('');
               }}
-              title="只看收藏"
             >
-              <span className="tag-dot" style={{ background: '#f5b301' }} />
-              <span className="tag-name">收藏</span>
-              <span className="tag-count">{favoriteCount}</span>
-            </div>
+              收藏 <b>{favoriteCount}</b>
+            </button>
           ) : null}
-          <div className="tag-divider" />
-          {tagList.length ? (
-            tagList.map((t) => (
-              <div
-                key={t.name}
-                className={'tag-item' + (tagFilter === t.name ? ' active' : '')}
-                title={t.name}
-                onClick={() => {
-                  setTagFilter(tagFilter === t.name ? '' : t.name);
-                  setFavOnly(false);
-                }}
-              >
-                <span className="tag-dot" />
-                <span className="tag-name">{t.name}</span>
-                <span className="tag-count">{t.count}</span>
-              </div>
-            ))
-          ) : (
-            <div className="tag-empty">暂无标签</div>
-          )}
-        </aside>
 
-        <div className="page-main">
-          <div className="stats">
-        <div className="stat">
-          <div className="stat-label">全部</div>
-          <div className="stat-value">{all.length}</div>
-        </div>
-        {!noFav ? (
-          <div
-            className={'stat clickable' + (favOnly ? ' active' : '')}
-            onClick={() => setFavOnly((v) => !v)}
-            title="点击只看收藏"
-          >
-            <div className="stat-label">收藏</div>
-            <div className="stat-value">{favoriteCount}</div>
-          </div>
-        ) : null}
-        <div className="stat">
-          <div className="stat-label">本周新增</div>
-          <div className="stat-value">{weekCount}</div>
-        </div>
-      </div>
-
-      <div className="panel">
-        <div className="panel-head">
-          {/*
-            布局：左边「环境筛选」，右边「搜索 + 计数 + 排序」两组。
-            spacer 放在中间把两组推开——之前放在搜索框后面，
-            导致左边两个元素挤在一起、中间空一大片。
-          */}
           {filterOptions.length ? (
             <Segmented
               size="small"
@@ -886,23 +948,38 @@ export default function CollectionPage({
               options={[{ label: '全部环境', value: 'all' }, ...filterOptions]}
             />
           ) : null}
-          <span className="spacer" />
+
+          {tagList.length ? (
+            <Select
+              size="small"
+              allowClear
+              className="pg-tag-filter"
+              value={tagFilter || undefined}
+              placeholder="标签"
+              onChange={(v) => {
+                setTagFilter(v ? String(v) : '');
+                setFavOnly(false);
+              }}
+              options={tagList.map((t) => ({ value: t.name, label: `${t.name}（${t.count}）` }))}
+            />
+          ) : null}
+
+          <span className="pg-bar-spacer" />
+
           <Input
+            ref={searchRef}
             allowClear
-            style={{ width: 280 }}
-            prefix={<SearchOutlined style={{ color: '#9aa1b4' }} />}
+            className="pg-search"
+            prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />}
             placeholder="搜索标题、内容、标签"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
           />
-          <span className="muted" style={{ fontSize: 12 }}>
-            {filtered.length} / {all.length} 条
-          </span>
           <Select
             size="small"
+            className="pg-sort"
             value={sortKey}
             onChange={setSortKey}
-            style={{ width: 132 }}
             options={[
               { value: 'updated_desc', label: '最近修改' },
               { value: 'updated_asc', label: '最早修改' },
@@ -910,49 +987,144 @@ export default function CollectionPage({
               { value: 'title_desc', label: '名称 Z→A' }
             ]}
           />
-        </div>
-        <Table
-          dataSource={filtered}
-          columns={columns}
-          rowKey="id"
-          size="middle"
-          tableLayout="fixed"
-          loading={loading}
-          showSorterTooltip={false}
-          pagination={{
-            pageSize: 50,
-            current: Math.min(page, Math.max(1, Math.ceil(filtered.length / 50))),
-            onChange: setPage,
-            hideOnSinglePage: true,
-            showSizeChanger: false,
-            size: 'small'
-          }}
-          locale={{
-            emptyText: (
-              <div className="empty-state">
-                <div className="empty-icon">
-                  <InboxOutlined />
-                </div>
-                <div className="empty-title">{keyword || tagFilter ? '没有匹配的记录' : `还没有${conf.name}记录`}</div>
-                <div className="empty-desc">
-                  {keyword || tagFilter ? '换个关键词，或点左侧「全部」清空筛选' : '点下面按钮录入第一条，之后就能一键复制/打开'}
-                </div>
-                {!keyword && !tagFilter ? (
-                  <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-                    新增
-                  </Button>
-                ) : null}
+        </>
+      }
+      status={
+        <>
+          <span>共 {all.length} 条</span>
+          {filtered.length !== all.length ? <span>当前 {filtered.length} 条</span> : null}
+          <span className="pg-status-sep">·</span>
+          <span>本周新增 {weekCount}</span>
+          <span className="pg-status-sep">·</span>
+          <span>上次同步 {lastSyncAt ? clockText(lastSyncAt) : '—'}</span>
+          <span className="pg-status-spacer" />
+          <span className="pg-status-keys">Ctrl+N 新增 · / 搜索 · Esc 关闭详情</span>
+        </>
+      }
+    >
+      <div className={'collection-body' + (asideOpen ? '' : ' collection-body--folded')}>
+        {asideOpen ? (
+          <aside className="tag-panel collection-aside">
+            <div className="tag-panel-head">
+              <span>
+                <TagOutlined /> 标签
+              </span>
+              <span className="tag-panel-count">{tagList.length}</span>
+            </div>
+            <div
+              className={'tag-item' + (tagFilter === '' && !(favOnly && !noFav) ? ' active' : '')}
+              onClick={() => {
+                setTagFilter('');
+                setFavOnly(false);
+              }}
+            >
+              <span className="tag-dot" />
+              <span className="tag-name">全部</span>
+              <span className="tag-count">{all.length}</span>
+            </div>
+            {!noFav ? (
+              <div
+                className={'tag-item' + (favOnly ? ' active' : '')}
+                onClick={() => {
+                  setFavOnly(!favOnly);
+                  setTagFilter('');
+                }}
+                title="只看收藏"
+              >
+                <span className="tag-dot" style={{ background: '#f5b301' }} />
+                <span className="tag-name">收藏</span>
+                <span className="tag-count">{favoriteCount}</span>
               </div>
-            )
-          }}
-          onRow={(r) => ({
-            onClick: () => setDetail(r),
-            style: { cursor: 'pointer' }
-          })}
-        />
-      </div>
+            ) : null}
+            <div className="tag-divider" />
+            {tagList.length ? (
+              tagList.map((t) => (
+                <div
+                  key={t.name}
+                  className={'tag-item' + (tagFilter === t.name ? ' active' : '')}
+                  title={t.name}
+                  onClick={() => {
+                    setTagFilter(tagFilter === t.name ? '' : t.name);
+                    setFavOnly(false);
+                  }}
+                >
+                  <span className="tag-dot" />
+                  <span className="tag-name">{t.name}</span>
+                  <span className="tag-count">{t.count}</span>
+                </div>
+              ))
+            ) : (
+              <div className="tag-empty">暂无标签</div>
+            )}
+          </aside>
+        ) : null}
+
+        <div className="collection-main">
+          {/*
+            固定表头的实测结论：
+              `.pg-body` 是唯一滚动容器，antd 的 `sticky={{ offsetHeader: 0 }}`
+              会把手势列（而不是整张表）钉在滚动区顶部，正好覆盖在 .pg-bar 下方；
+              而 `scroll={{ y }}` 会给表格再套一层内部滚动，表头是保住了，
+              但筛选条 / 状态栏又会被拆成第二个滚动上下文——正是这次要消灭的。
+              所以这里用 sticky 属性 + 作用域 CSS（.pg-body .ant-table-thead th）兜底背景。
+          */}
+          <Table
+            className="collection-table"
+            dataSource={filtered}
+            columns={columns}
+            rowKey="id"
+            size="middle"
+            tableLayout="fixed"
+            loading={loading}
+            sticky={{ offsetHeader: 0 }}
+            showSorterTooltip={false}
+            pagination={{
+              pageSize: 50,
+              current: Math.min(page, Math.max(1, Math.ceil(filtered.length / 50))),
+              onChange: setPage,
+              hideOnSinglePage: true,
+              showSizeChanger: false,
+              size: 'small'
+            }}
+            locale={{
+              emptyText: (
+                <div className="empty-state">
+                  <div className="empty-icon">
+                    <InboxOutlined />
+                  </div>
+                  <div className="empty-title">
+                    {hasAnyFilter ? '没有匹配的记录' : `还没有${conf.name}记录`}
+                  </div>
+                  <div className="empty-desc">
+                    {hasAnyFilter
+                      ? '换个关键词，或者清掉当前的筛选条件'
+                      : '点下面按钮录入第一条，之后就能一键复制/打开'}
+                  </div>
+                  {/*
+                    空状态必须自带下一步动作（三态组件的设计原则）：
+                      有筛选 → 「清空筛选」
+                      没数据 → 「新增」
+                  */}
+                  {hasAnyFilter ? (
+                    <Button icon={<ReloadOutlined />} onClick={clearAllFilters}>
+                      清空筛选
+                    </Button>
+                  ) : (
+                    <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+                      新增
+                    </Button>
+                  )}
+                </div>
+              )
+            }}
+            onRow={(r) => ({
+              onClick: () => setDetail(r),
+              style: { cursor: 'pointer' }
+            })}
+          />
         </div>
       </div>
+      </PageShell>
 
       <RecordDetail
         record={detail}
@@ -1012,7 +1184,7 @@ export default function CollectionPage({
 
       <ChangeImpactModal data={impact} open={impactOpen} onClose={() => setImpactOpen(false)} onOpenCase={onOpenCase} />
 
-      {conf.key === 'runs' ? (
+      {hasHeaderAction(caps, 'importReport') ? (
         <ImportReportModal open={reportOpen} onClose={() => setReportOpen(false)} onImport={importReport} />
       ) : null}
 
@@ -1061,6 +1233,6 @@ export default function CollectionPage({
           ))}
         </div>
       </Modal>
-    </div>
+    </>
   );
 }

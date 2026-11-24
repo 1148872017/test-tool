@@ -34,7 +34,7 @@ export default function LockScreen({ hasPin, onUnlock }: Props) {
           <LockOutlined />
         </div>
         <div style={{ fontSize: 16, fontWeight: 600 }}>测试工作台已锁定</div>
-        <div style={{ color: '#7b8296', fontSize: 12.5, marginTop: 6, marginBottom: 18 }}>
+        <div style={{ color: 'var(--muted)', fontSize: 12.5, marginTop: 6, marginBottom: 18 }}>
           {hasPin ? '输入密码继续使用' : '点击进入'}
         </div>
 

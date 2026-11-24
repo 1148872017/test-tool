@@ -168,7 +168,7 @@ export default function PageElementsEditor({ value, onChange, placeholder }: Pro
         <Button size="small" type="link" icon={<PlusOutlined />} onClick={addRow}>
           添加元素
         </Button>
-        <span className="muted" style={{ fontSize: 11.5 }}>
+        <span className="muted" style={{ fontSize: 12 }}>
           {filled ? `${filled} 个元素` : placeholder || '至少填一个'}
         </span>
         <Tag style={{ fontSize: 11 }}>定位器优先用 data-testid</Tag>

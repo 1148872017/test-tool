@@ -1,4 +1,5 @@
-/* IPC 通道不能重复注册（重复会让应用启动直接崩） */
+/* IPC 通道不能重复注册（重复会让应用启动直接崩）
+ * + v0.43.0 新增：白名单之外的通道必须全部经 ipc-guard 的 handle() 注册（防回潮护栏） */
 const fs = require('fs');
 const path = require('path');
 
@@ -40,7 +41,7 @@ function listJs(dir) {
 }
 
 /**
- * 扫所有 ipcMain.handle('xxx')，找重复的通道名。
+ * 扫所有通道注册，找重复的通道名，并区分**注册方式**。
  *
  * 为什么这条重要（踩坑 #103）：
  *   用户装 0.41.0 后启动直接弹「启动失败」，
@@ -48,12 +49,16 @@ function listJs(dir) {
  *   原来的「打开数据目录」和后来加的「打开工作区」撞了名。
  *   Electron 第二次注册会直接抛异常，整个 app 起不来。
  *
- * 现在 handler 分散在 electron/ipc/*.js，跨文件撞名同样要拦，
- * 所以这里必须扫整个 electron/ 目录，而不是只看某一支文件。
+ * 为什么要区分 `handle('x')` 和 `ipcMain.handle('x')`（v0.43.0）：
+ *   前者是 main.js 里包了解锁守卫的统一入口（electron/ipc-guard.js），
+ *   后者是裸注册 —— 锁定态也能调，等于「锁屏不是安全边界」。
+ *   下面有一条护栏断言：**白名单之外，一个裸注册都不许有**。
  */
-const re = /ipcMain\.handle\('([^']+)'/g;
+const re = /(?:ipcMain\.)?handle\('([^']+)'/g;
 const seen = new Map();
 const dups = [];
+/** 通道 → 注册方式：'guarded'（带守卫）/ 'raw'（裸 ipcMain.handle） */
+const registration = new Map();
 for (const file of listJs(ELECTRON_DIR)) {
   const src = fs.readFileSync(file, 'utf8');
   re.lastIndex = 0; // 全局正则跨文件复用，每换一个文件必须归零
@@ -67,6 +72,9 @@ for (const file of listJs(ELECTRON_DIR)) {
     } else {
       seen.set(name, where);
     }
+    // 看这一处注册前面是不是带了 ipcMain.
+    const isRaw = src.slice(Math.max(0, m.index - 10), m.index).indexOf('ipcMain.') >= 0;
+    registration.set(name, isRaw ? 'raw' : 'guarded');
   }
 }
 
@@ -76,7 +84,7 @@ check('handler 总数 = ' + EXPECTED_CHANNELS + '（搬迁前后一致）', seen
 /* 反向验证：故意造一个重复能被抓出来 */
 {
   const fake = "ipcMain.handle('a:b', f);\nipcMain.handle('c:d', f);\nipcMain.handle('a:b', f);";
-  const r2 = /ipcMain\.handle\('([^']+)'/g;
+  const r2 = /(?:ipcMain\.)?handle\('([^']+)'/g;
   const s2 = new Set();
   let found = false;
   let x;
@@ -93,6 +101,63 @@ check('handler 总数 = ' + EXPECTED_CHANNELS + '（搬迁前后一致）', seen
   const invokes = [...preloadSrc.matchAll(/invoke\('([^']+)'/g)].map((x) => x[1]);
   const missing = [...new Set(invokes)].filter((ch) => !seen.has(ch));
   check('preload 里每个 invoke 都有 handler', missing.length === 0, missing);
+}
+
+/* ============================================================
+ * 解锁守卫护栏（v0.43.0）
+ *
+ * 断言两件事：
+ *   1. 白名单之外的通道**没有一个**是裸 ipcMain.handle 注册的；
+ *   2. 守卫的判定逻辑本身是对的（直接 require 真实的 ipc-guard.js）。
+ * 以后谁图省事写回 ipcMain.handle，这条会立刻红。
+ * ============================================================ */
+{
+  const guard = require(path.join(ELECTRON_DIR, 'ipc-guard.js'));
+  const whitelist = new Set(guard.UNLOCK_WHITELIST);
+
+  const bypass = [];
+  for (const [ch, how] of registration) {
+    if (how === 'raw') bypass.push(ch);
+  }
+  check('没有裸 ipcMain.handle 注册（全部走守卫入口）', bypass.length === 0, bypass);
+
+  const unguarded = [...seen.keys()].filter((ch) => !whitelist.has(ch) && registration.get(ch) !== 'guarded');
+  check('白名单之外的通道全部在守卫内', unguarded.length === 0, unguarded);
+
+  // 白名单里的通道必须真实存在（防止白名单写成孤儿、放行了不存在的名字）
+  const missingWhite = [...whitelist].filter((ch) => !seen.has(ch));
+  check('白名单里的通道都真实注册了', missingWhite.length === 0, missingWhite);
+
+  // 判定逻辑：敏感通道必须要求解锁
+  const mustLock = [
+    'data:export',
+    'data:import',
+    'data:exportDb',
+    'backup:now',
+    'backup:restore',
+    'data:openDir',
+    'data:clear',
+    'data:genFile',
+    'settings:set',
+    'clipboard:copy',
+    'update:download',
+    'update:install',
+    'records:list',
+    'skin:getImage'
+  ];
+  const notLocked = mustLock.filter((ch) => guard.needsUnlock(ch) !== true);
+  check('敏感通道都要求解锁', notLocked.length === 0, notLocked);
+
+  // 判定逻辑：白名单必须放行（否则锁屏页/解锁流程直接断）
+  const mustFree = [...whitelist].concat(['pin:set', 'pin:clear']);
+  const wronglyLocked = mustFree.filter((ch) => guard.needsUnlock(ch) !== false);
+  check('白名单（含 pin:*）不需要解锁', wronglyLocked.length === 0, wronglyLocked);
+
+  // pin 前缀匹配不能误伤（pin:xxx 放行，但 pinzip:x 不算）
+  check('pin:* 前缀放行', guard.needsUnlock('pin:anything') === false);
+  check('前缀只匹配 pin: 本身', guard.needsUnlock('pinned:set') === true);
+  // 空通道名按「需要解锁」处理（宁可拒绝）
+  check('空通道名默认要求解锁', guard.needsUnlock('') === true);
 }
 
 const failed = results.filter((r) => !r.ok);

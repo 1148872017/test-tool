@@ -409,7 +409,7 @@ export default function CasePage({ onOpenApi, openCase, onOpenedCase }: Props) {
               <Input
                 allowClear
                 style={{ width: 300 }}
-                prefix={<SearchOutlined style={{ color: '#9aa1b4' }} />}
+                prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />}
                 placeholder="搜标题、步骤、预期、规则号"
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}

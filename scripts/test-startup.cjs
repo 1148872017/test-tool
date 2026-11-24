@@ -105,7 +105,7 @@ const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: con
 (async () => {
   let crashed = null;
   try {
-    require('D:/AI_Workspace/Project/test-tool/electron/main.js');
+    require(path.join(__dirname, '..', 'electron', 'main.js'));
     // 等 whenReady 跑完 registerIpc
     await new Promise((r) => setTimeout(r, 2500));
   } catch (e) {

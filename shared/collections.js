@@ -89,6 +89,19 @@ const COLLECTIONS = [
     noFavorite: true,
     openField: 'url',
     actions: ['open'],
+    /**
+     * 能力描述（纯数据，主进程不读）。
+     * 页面只读这里，不再按 key 写 if/else —— 加第 6 个集合时只改本文件。
+     */
+    capabilities: {
+      open: 'url',
+      copyKinds: ['accounts'],
+      sync: null,
+      showRunLog: false,
+      favorite: false,
+      headerActions: ['importData', 'importTemplate', 'exportData', 'refresh'],
+      titleWidthPct: 32
+    },
     fields: [
       { key: 'name', label: '名称', type: 'text', required: true, placeholder: '如：资产管理系统-管理后台' },
       { key: 'url', label: '地址', type: 'url', placeholder: 'https://test.example.com/admin' },
@@ -115,6 +128,15 @@ const COLLECTIONS = [
     titlePlaceholder: '如：按订单号查退款流水',
     listFields: ['db'],
     actions: ['sql'],
+    capabilities: {
+      open: null,
+      copyKinds: ['sql'],
+      sync: null,
+      showRunLog: false,
+      favorite: true,
+      headerActions: ['importData', 'importTemplate', 'exportData', 'refresh'],
+      titleWidthPct: 50
+    },
     fields: [
       { key: 'name', label: '名称', type: 'text', required: true, placeholder: '如：按订单号查退款流水' },
       { key: 'db', label: '库 / 环境', type: 'text', placeholder: '如：test_order' },
@@ -134,6 +156,16 @@ const COLLECTIONS = [
     listFields: ['method', 'url'],
     actions: ['curl'],
     sync: 'openapi',
+    capabilities: {
+      open: null,
+      copyKinds: ['curl', 'text'],
+      sync: 'openapi',
+      showRunLog: true,
+      favorite: true,
+      // impact = 「上次同步变更」入口，只有真的读到变更才显示
+      headerActions: ['importCurl', 'syncOpenApi', 'importData', 'importTemplate', 'exportData', 'refresh', 'impact'],
+      titleWidthPct: 50
+    },
     fields: [
       { key: 'name', label: '名称', type: 'text', required: true, placeholder: '如：创建退款单' },
       { key: 'method', label: '方法', type: 'select', options: METHOD_OPTIONS, default: 'POST' },
@@ -173,6 +205,15 @@ const COLLECTIONS = [
     listFields: ['apiRef', 'kind', 'result', 'ranAt'],
     filterField: 'kind',
     noFavorite: true,
+    capabilities: {
+      open: null,
+      copyKinds: ['text'],
+      sync: null,
+      showRunLog: false,
+      favorite: false,
+      headerActions: ['importReport', 'importData', 'importTemplate', 'exportData', 'refresh'],
+      titleWidthPct: 50
+    },
     fields: [
       { key: 'name', label: '标题', type: 'text', required: true, placeholder: '如：下单链路 10 并发 1 分钟' },
       {
@@ -227,6 +268,15 @@ const COLLECTIONS = [
     titlePlaceholder: '如：登录页',
     listFields: ['url', 'project'],
     noFavorite: true,
+    capabilities: {
+      open: null,
+      copyKinds: ['text'],
+      sync: null,
+      showRunLog: false,
+      favorite: false,
+      headerActions: ['importData', 'importTemplate', 'exportData', 'refresh'],
+      titleWidthPct: 50
+    },
     fields: [
       {
         key: 'name',

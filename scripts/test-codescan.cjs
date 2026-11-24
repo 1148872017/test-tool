@@ -5,6 +5,9 @@ const os = require('os');
 
 const results = [];
 const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });
+/* 真实项目不存在时显式跳过：跳过要进汇总，不能静默变全绿 */
+const skipped = [];
+const skip = (name) => skipped.push(name);
 
 const cs = require('../electron/codescan.js');
 
@@ -41,9 +44,18 @@ const code2 = `
 const paths2 = cs.extractPaths(code2);
 check('提取：常量引用', paths2.includes('/api/login'), paths2);
 
-/* ---------- 4. 覆盖矩阵（真实项目）---------- */
-const realProj = 'D:/AI_Workspace/Project/example';
-if (fs.existsSync(realProj)) {
+/* ---------- 4. 覆盖矩阵（真实项目，可选增强）----------
+ * 示例项目路径相对本仓库（test-tool 的上级 Project/example），不再写死 D:/AI_Workspace/...；
+ * 目录不在就显式跳过——unit 档不允许依赖作者机器上的某个目录。 */
+const realProj = path.resolve(__dirname, '..', '..', 'example');
+const hasRealProj = fs.existsSync(realProj);
+
+const pages = [
+  { id: 'pg1', title: '登录页', data: { url: '/login', name: '登录页', project: 'demo' } },
+  { id: 'pg2', title: '订单列表', data: { url: '/order/list', name: '订单列表', project: 'demo' } }
+];
+
+if (hasRealProj) {
   const apis = [
     { id: '1', title: '登录', data: { method: 'POST', url: '/api/login', module: '认证' } },
     { id: '2', title: '不存在', data: { method: 'GET', url: '/api/not-exist', module: '测试' } }
@@ -54,38 +66,34 @@ if (fs.existsSync(realProj)) {
   check('覆盖：/api/login 已覆盖', cov.coveredList.some((c) => c.url === '/api/login'), cov.coveredList.map((c) => c.url));
   check('覆盖：/api/not-exist 未覆盖', cov.uncovered.some((u) => u.url === '/api/not-exist'), cov.uncovered.map((u) => u.url));
 
-  /* ---------- 页面覆盖矩阵（kind=page）---------- */
-  const pages = [
-    { id: 'pg1', title: '登录页', data: { url: '/login', name: '登录页', project: 'demo' } },
-    { id: 'pg2', title: '订单列表', data: { url: '/order/list', name: '订单列表', project: 'demo' } }
-  ];
+  /* 页面覆盖矩阵（kind=page，真实项目） */
   const covPage = cs.buildCoverage(pages, realProj, 'page');
   check('页面覆盖：kind=page', covPage.kind === 'page', covPage.kind);
-  check('页面覆盖：总数 2', covPage.total === 2, covPage.total);
+  check('页面覆盖：总数与传入页数一致', covPage.total === pages.length, covPage.total);
   check('页面覆盖：页面没有 method', covPage.uncovered.concat(covPage.coveredList).every((x) => x.method === ''), 'has method');
   check('页面覆盖：/login 不被 /api/login 误匹配', !covPage.coveredList.some((x) => x.url === '/login'), covPage.coveredList.map((x) => x.url));
-
-  // 造一个真有 page.goto 的项目
-  const pageProj = fs.mkdtempSync(path.join(os.tmpdir(), 'page-cov-'));
-  fs.writeFileSync(
-    path.join(pageProj, 'LoginPage.java'),
-    'public class LoginPage { void open() { page.navigate("/login"); } }',
-    'utf8'
-  );
-  const covPage2 = cs.buildCoverage(pages, pageProj, 'page');
-  check('页面覆盖：page.navigate 能命中', covPage2.coveredList.some((x) => x.url === '/login'), covPage2.coveredList.map((x) => x.url));
-  check('页面覆盖：未覆盖的其他页面', covPage2.uncovered.some((x) => x.url === '/order/list'), covPage2.uncovered.map((x) => x.url));
-  fs.rmSync(pageProj, { recursive: true, force: true });
-
-  /* ---------- 后缀匹配的严格条件 ---------- */
-  check('后缀匹配：多段可以（/v1/user）', cs.pathMatches('/v1/user', '/api/v1/user') === true);
-  check('后缀匹配：单段不行（/login vs /api/login）', cs.pathMatches('/api/login', '/login') === false);
 } else {
-  console.log('（跳过真实项目测试）');
+  skip('覆盖矩阵真实项目（不存在：' + realProj + '，8 项覆盖断言整体跳过）');
 }
 
-/* ---------- 5. 硬编码扫描（真实项目）---------- */
-if (fs.existsSync(realProj)) {
+/* 造一个真有 page.navigate 的项目（临时目录，任何机器都能跑） */
+const pageProj = fs.mkdtempSync(path.join(os.tmpdir(), 'page-cov-'));
+fs.writeFileSync(
+  path.join(pageProj, 'LoginPage.java'),
+  'public class LoginPage { void open() { page.navigate("/login"); } }',
+  'utf8'
+);
+const covPage2 = cs.buildCoverage(pages, pageProj, 'page');
+check('页面覆盖：page.navigate 能命中', covPage2.coveredList.some((x) => x.url === '/login'), covPage2.coveredList.map((x) => x.url));
+check('页面覆盖：未覆盖的其他页面', covPage2.uncovered.some((x) => x.url === '/order/list'), covPage2.uncovered.map((x) => x.url));
+fs.rmSync(pageProj, { recursive: true, force: true });
+
+/* ---------- 后缀匹配的严格条件（纯函数）---------- */
+check('后缀匹配：多段可以（/v1/user）', cs.pathMatches('/v1/user', '/api/v1/user') === true);
+check('后缀匹配：单段不行（/login vs /api/login）', cs.pathMatches('/api/login', '/login') === false);
+
+/* ---------- 5. 硬编码扫描（真实项目，可选增强）---------- */
+if (hasRealProj) {
   const scan = cs.scanHardcoded(realProj);
   check('硬编码：扫描成功', scan.ok === true, scan.message);
   check('硬编码：扫到文件', scan.scannedFiles > 0, scan.scannedFiles);
@@ -94,7 +102,7 @@ if (fs.existsSync(realProj)) {
   check('硬编码：问题有 file/line', scan.issues.length > 0 && !!scan.issues[0].file && scan.issues[0].line > 0, scan.issues[0]);
   check('硬编码：按严重程度排序', scan.issues[0].severity === 'high', scan.issues[0].severity);
 } else {
-  console.log('（跳过真实项目测试）');
+  skip('硬编码扫描真实项目（不存在：' + realProj + '，6 项断言整体跳过）');
 }
 
 /* ---------- 6. 造数据测规则 ---------- */
@@ -132,9 +140,9 @@ check('覆盖：空目录报错', cs.buildCoverage([], '').ok === false);
 
 /* ---------- 8. IPC ---------- */
 const mainSrc = require('./_electron-src.cjs').readElectronSource();
-check('有 codescan:coverage', /ipcMain\.handle\('codescan:coverage'/.test(mainSrc), 'no coverage');
-check('有 codescan:hardcoded', /ipcMain\.handle\('codescan:hardcoded'/.test(mainSrc), 'no hardcoded');
-check('有 codescan:pickDir', /ipcMain\.handle\('codescan:pickDir'/.test(mainSrc), 'no pickDir');
+check('有 codescan:coverage', /handle\('codescan:coverage'/.test(mainSrc), 'no coverage');
+check('有 codescan:hardcoded', /handle\('codescan:hardcoded'/.test(mainSrc), 'no hardcoded');
+check('有 codescan:pickDir', /handle\('codescan:pickDir'/.test(mainSrc), 'no pickDir');
 
 const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
 check('preload 有 codescanCoverage', /codescanCoverage:/.test(preloadSrc), 'no coverage');
@@ -157,6 +165,73 @@ check('页面有硬编码检查', /doHardcoded/.test(pageSrc), 'no hardcoded');
 check('页面有覆盖率进度条', /Progress/.test(pageSrc), 'no progress');
 check('页面有严重程度筛选', /sevFilter/.test(pageSrc), 'no filter');
 
+/* ============================================================
+ * 9.1 重设计：类型是「选择项」，不是「执行按钮」
+ *
+ * 改造前：4 个 size="small" 按钮点一下就开始扫 —— 想去看上次的结果，
+ *         却触发了一次全量扫描（语义错，还很慢）。
+ * 改造后：Segmented 只切视图，只有「开始扫描」执行。
+ * 这一组断言守的就是这条边界，别让人下次重构时又把它焊回去。
+ * ============================================================ */
+check('有 4 个扫描类型（接口/页面/代码体检/依赖）', /type ScanType = 'cov-api' \| 'cov-page' \| 'audit' \| 'deps'/.test(pageSrc), 'type union changed');
+check('SCAN_TYPES 表 4 条', (pageSrc.match(/value: '(?:cov-api|cov-page|audit|deps)'/g) || []).length === 4, 'not 4');
+check('类型选择用 Segmented', /<Segmented/.test(pageSrc), 'no segmented');
+check('有「开始扫描」按钮', /开始扫描/.test(pageSrc), 'no scan button');
+{
+  // 切视图的函数体（selectType → 下一个函数 doCoverage 之间）里不允许出现任何扫描调用
+  const i = pageSrc.indexOf('const selectType');
+  const j = pageSrc.indexOf('const doCoverage');
+  const seg = i >= 0 && j > i ? pageSrc.slice(i, j) : '';
+  check('切类型不触发扫描', seg.length > 0 && !/doCoverage\(|doHardcoded\(|doDeps\(/.test(seg), seg.slice(0, 140));
+}
+check('只有 doScan 一个执行入口', /const doScan = \(\) => \{[\s\S]{0,200}?doCoverage/.test(pageSrc), 'no doScan');
+check('规则面板改成右侧 Drawer', /<Drawer[\s\S]{0,200}?open=\{rulesOpen\}/.test(pageSrc) && /placement="right"/.test(pageSrc), 'no drawer');
+
+/* ---------- 9.2 摘要条 / rail / issue 行 ---------- */
+check('摘要条压成一行（36px）', /minHeight: 36/.test(pageSrc), 'no stat bar');
+check('不再用 4 张 cov-stat 大卡', !/className="cov-stat"/.test(pageSrc), 'still big cards');
+check('左栏 rail 宽 96px', /width: 96/.test(pageSrc), 'no rail');
+check('issue 行左边框按严重度变色', /borderLeftColor: SEV_BORDER/.test(pageSrc), 'no severity border');
+check('issue 行严重度同时有文字', /SEV_FULL\[it\.severity\]/.test(pageSrc), 'color-only channel');
+
+/* ---------- 9.3 三态：空 / 无匹配 / 失败 ---------- */
+check('页面用 StateEmpty', /<StateEmpty/.test(pageSrc), 'no StateEmpty');
+check('页面用 StateError（失败不清旧结果）', /<StateError/.test(pageSrc), 'no StateError');
+check('页面用 LoadingRows（加载占位）', /<LoadingRows/.test(pageSrc), 'no LoadingRows');
+check('页面不再用 antd Empty / .empty-state', !/<Empty/.test(pageSrc) && !/className="empty-state"/.test(pageSrc), 'old empty impl left');
+check('每类结果独立存 { data, at, error }', /type Slot = \{[\s\S]{0,400}?at: number/.test(pageSrc), 'no slot type');
+check('四类结果各一个槽位', ['setCovApiSlot', 'setCovPageSlot', 'setAuditSlot', 'setDepsSlot'].every((s) => pageSrc.includes(s)), 'missing slot');
+
+{
+  const statesDir = path.join(__dirname, '..', 'src', 'components', 'states');
+  const stateEmptySrc = fs.readFileSync(path.join(statesDir, 'StateEmpty.tsx'), 'utf8');
+  const stateErrorSrc = fs.readFileSync(path.join(statesDir, 'StateError.tsx'), 'utf8');
+  const loadingRowsSrc = fs.readFileSync(path.join(statesDir, 'LoadingRows.tsx'), 'utf8');
+
+  check('StateEmpty 覆盖三种成因', /'no-data' \| 'no-match' \| 'failed'/.test(stateEmptySrc), 'no kinds');
+  check('StateEmpty 有 page/inline 尺寸', /size\?: 'page' \| 'inline'/.test(stateEmptySrc), 'no size');
+  check(
+    'StateEmpty 三态默认动作文案正确',
+    /'no-data': '\+ 新增'/.test(stateEmptySrc) &&
+      /'no-match': '清空筛选'/.test(stateEmptySrc) &&
+      /failed: '去设置里配'/.test(stateEmptySrc),
+    'default action label wrong'
+  );
+  check('StateEmpty 的 failed 带可展开详情', /detail\?: React\.ReactNode/.test(stateEmptySrc), 'no detail');
+  check('StateError 有重试', /onRetry\?: \(\) => void/.test(stateErrorSrc) && /retryLabel/.test(stateErrorSrc), 'no retry');
+  check('StateError 有详情折叠', /detail\?: string/.test(stateErrorSrc), 'no detail');
+  check('StateError 标明「是上次的结果」', /staleLabel/.test(stateErrorSrc), 'no stale label');
+  check('LoadingRows 行高 38px（表格行高）', /rowHeight = 38/.test(loadingRowsSrc), 'not 38');
+  check('states 有统一出口', fs.existsSync(path.join(statesDir, 'index.ts')), 'no index.ts');
+}
+
+/* ---------- 9.4 6 个页面的空状态已统一 ---------- */
+for (const p of ['TrashPage', 'ReportPage', 'ScriptGenPage', 'DataTool', 'KnowledgePage', 'NotesPage']) {
+  const s = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', p + '.tsx'), 'utf8');
+  check(p + ' 用统一空状态', /components\/states\/StateEmpty/.test(s), 'no StateEmpty import');
+  check(p + ' 没有旧的空状态写法', !/className="empty-state"|className="empty-tip"/.test(s), 'old empty class left');
+}
+
 /* ---------- 10. 侧栏 ---------- */
 const collections = require('../shared/collections.js');
 check('TOOLS 有代码体检', collections.TOOLS.some((t) => t.key === 'codescan'), collections.TOOLS.map((t) => t.key));
@@ -175,5 +250,6 @@ check('侧栏有「辅助」', /label: '辅助'/.test(sidebarSrc), 'no 辅助');
 const failed = results.filter((r) => !r.ok);
 console.log('===== 代码体检测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));
-console.log('\n' + (results.length - failed.length) + '/' + results.length + ' passed');
+for (const name of skipped) console.log('  SKIP  ' + name);
+console.log(`\n${results.length - failed.length} passed, ${failed.length} failed, ${skipped.length} skipped`);
 process.exit(failed.length ? 1 : 0);

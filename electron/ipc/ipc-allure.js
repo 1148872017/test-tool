@@ -8,10 +8,10 @@
 const allure = require('../allure');
 
 function register(deps) {
-  const { ipcMain, dialog, getWindow, getSettings, assertUnlocked } = deps;
+  const { handle, dialog, getWindow, getSettings, assertUnlocked, assertPathIn, rememberPicked } = deps;
 
   /** 扫描根目录下所有 allure-results */
-  ipcMain.handle('allure:scan', async (e, { root } = {}) => {
+  handle('allure:scan', async (e, { root } = {}) => {
     assertUnlocked();
     const settings = getSettings();
     // 优先级：显式传的 root > 设置里的 allureDir > 项目目录
@@ -21,13 +21,15 @@ function register(deps) {
   });
 
   /** 选 allure-results 目录 */
-  ipcMain.handle('allure:pickDir', async () => {
+  handle('allure:pickDir', async () => {
     assertUnlocked();
     const picked = await dialog.showOpenDialog(getWindow(), {
       title: '选择 allure-results 目录',
       properties: ['openDirectory']
     });
     if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+    // 这个目录不写进 settings，必须记进会话白名单，否则随后的 allure:parse 会被守卫拦掉
+    rememberPicked(picked.filePaths[0]);
     return { ok: true, dir: picked.filePaths[0] };
   });
 
@@ -36,10 +38,13 @@ function register(deps) {
    *
    * 返回：用例列表 + 汇总 + 失败聚类。
    */
-  ipcMain.handle('allure:parse', async (e, { dir } = {}) => {
+  handle('allure:parse', async (e, { dir } = {}) => {
     assertUnlocked();
     const d = String(dir || '').trim();
     if (!d) return { ok: false, message: '缺少目录' };
+    // 入参守卫：只解析白名单目录（v0.43.0）
+    const bad = assertPathIn(d);
+    if (bad) return bad;
     const res = allure.parseAllureDir(d);
     if (!res.ok) return res;
     return Object.assign({}, res, {
@@ -52,10 +57,16 @@ function register(deps) {
    *
    * payload: { dirs: string[] }
    */
-  ipcMain.handle('allure:flaky', async (e, { dirs } = {}) => {
+  handle('allure:flaky', async (e, { dirs } = {}) => {
     assertUnlocked();
     const list = Array.isArray(dirs) ? dirs : [];
     if (!list.length) return { ok: false, message: '缺少目录列表', flaky: [] };
+
+    // 逐个校验：只要有一个越界就整单拒绝（不静默跳过，否则用户以为少了几次跑批）
+    for (const d of list) {
+      const bad = assertPathIn(String(d));
+      if (bad) return Object.assign({}, bad, { flaky: [] });
+    }
 
     const runs = [];
     const errors = [];

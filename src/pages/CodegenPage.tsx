@@ -336,7 +336,7 @@ export default function CodegenPage() {
                     {openapiFile ? '重新选择文件' : '选择 OpenAPI 文件（json / yaml）'}
                   </Button>
                   {openapiFile ? (
-                    <div className="muted mono" style={{ fontSize: 11.5, wordBreak: 'break-all' }}>
+                    <div className="muted mono" style={{ fontSize: 12, wordBreak: 'break-all' }}>
                       {openapiFile}
                     </div>
                   ) : null}
@@ -354,7 +354,7 @@ export default function CodegenPage() {
                           label: `${it.method} ${it.url} · ${it.name}`
                         }))}
                       />
-                      <div className="muted" style={{ fontSize: 11.5 }}>
+                      <div className="muted" style={{ fontSize: 12 }}>
                         共 {openapiItems.length} 个接口（从文件解析，不影响「接口记录」）
                       </div>
                     </>
@@ -499,7 +499,7 @@ export default function CodegenPage() {
                     onChange={(e) => setSqlText(e.target.value)}
                     spellCheck={false}
                   />
-                  <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
                     从建表语句推断字段和类型（不连数据库）。类名默认按表名取（t_order → Order）。
                   </div>
                 </>

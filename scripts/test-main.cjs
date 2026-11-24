@@ -106,6 +106,45 @@ function check(name, cond, extra) {
   results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });
 }
 
+/* 真实资产目录不存在时**显式跳过**：unit 档必须能在任何机器上绿，
+ * 但跳过要出现在汇总里，不能像以前那样假装跑过。 */
+const skipped = [];
+function skip(name) {
+  skipped.push(name);
+}
+
+/**
+ * 从 jtl 源文件独立数一遍样本行。
+ * 不复用 electron/jtl.js 的解析器，否则「自己证自己」没有意义。
+ */
+function countJtlSamples(file) {
+  if (!file || !fs.existsSync(file)) return 0;
+  let text = '';
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    return 0;
+  }
+  const head = text.slice(0, 400).trim();
+  // XML 格式（output_format=xml）：数样本节点
+  if (head.indexOf('<?xml') === 0 || head.indexOf('<testResults') === 0) {
+    return (text.match(/<(?:httpSample|sample)\b/g) || []).length;
+  }
+  // CSV 格式：按表头取 timeStamp / elapsed，数两列都是数字的行
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 2) return 0;
+  const header = lines[0].split(',').map((h) => h.trim());
+  const tsIdx = header.indexOf('timeStamp');
+  const elIdx = header.indexOf('elapsed');
+  if (tsIdx < 0 || elIdx < 0) return 0;
+  let n = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const c = lines[i].split(',');
+    if (Number.isFinite(Number(c[tsIdx])) && Number.isFinite(Number(c[elIdx]))) n++;
+  }
+  return n;
+}
+
 const call = (channel, payload) => handlers[channel]({}, payload);
 
 (async () => {
@@ -261,13 +300,18 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   const impAll = storeMod.importAll(mixed, null);
   check('不传集合时全部导入', impAll.imported === 2 && impAll.skipped === 0, impAll);
 
-  // 用例索引：走 IPC 读真实目录
+  // 用例索引：走 IPC 读真实目录。
+  // 目录不在就显式跳过——旧版这条断言「>500 条用例」，等于把作者机器的数据量当成了产品契约。
   const CASES_ROOT = process.env.CASES_ROOT || path.join(os.homedir(), 'Documents', '测试工作台', 'test_cases');
-  const scanned = await call('cases:scan', { root: CASES_ROOT });
-  check('用例扫描读到真实用例', scanned && scanned.totalCases > 500, scanned && scanned.totalCases);
-  check('用例扫描无解析错误', scanned && scanned.errors && scanned.errors.length === 0, scanned && scanned.errors);
-  const sample = scanned && scanned.files && scanned.files[0] && scanned.files[0].cases[0];
-  check('用例字段带风险等级与断言迹', !!sample && !!sample.risk && Array.isArray(sample.assertions), sample && sample.title);
+  if (fs.existsSync(CASES_ROOT)) {
+    const scanned = await call('cases:scan', { root: CASES_ROOT });
+    check('用例扫描读到用例', scanned && scanned.totalCases >= 1, scanned && scanned.totalCases);
+    check('用例扫描无解析错误', scanned && scanned.errors && scanned.errors.length === 0, scanned && scanned.errors);
+    const sample = scanned && scanned.files && scanned.files[0] && scanned.files[0].cases[0];
+    check('用例字段带风险等级与断言迹', !!sample && !!sample.risk && Array.isArray(sample.assertions), sample && sample.title);
+  } else {
+    skip('用例索引（真实用例目录不存在：' + CASES_ROOT + '）');
+  }
 
   // 重新加载数据库文件，验证持久化
   const raw2 = fs.readFileSync(dbPath);
@@ -427,68 +471,127 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   check('恢复前自动留了安全备份', !!restored.backupFile && fs.existsSync(restored.backupFile), restored.backupFile);
 
   // ---- jmx 索引（走 IPC 读真实目录）----
-  // 默认目录现在指向「文档\测试工作台」，测试要显式传真实路径
+  // 默认目录现在指向「文档\测试工作台」，测试要显式传真实路径。
+  // 目录 / 本机 JMeter 不在就显式跳过：这两样都是「这台机器装了什么」，不是产品契约。
   const REAL_JMX = process.env.JMX_ROOT || path.join(os.homedir(), 'Documents', '测试工作台', 'jmx');
   const REAL_REPORT = process.env.REPORT_ROOT || path.join(os.homedir(), 'Documents', '测试工作台', 'jmx', '压测结果');
   const REAL_KB = process.env.KB_ROOT || path.join(os.homedir(), 'Documents', '测试工作台', '知识库');
 
-  const jmxRes = await call('jmx:scan', { root: REAL_JMX });
-  check('jmx 扫描读到真实脚本', jmxRes && jmxRes.totalFiles >= 2, jmxRes && jmxRes.totalFiles);
-  check('jmx 扫描无错误', jmxRes && jmxRes.errors && jmxRes.errors.length === 0, jmxRes && jmxRes.errors);
-  check('jmx 探测到本机 JMeter', jmxRes && jmxRes.jmeter && jmxRes.jmeter.found && jmxRes.jmeter.version === '5.4.3', jmxRes && jmxRes.jmeter);
-  const jmxSample = jmxRes && jmxRes.files && jmxRes.files[0];
-  check('jmx 解析出线程组与采样器', !!jmxSample && jmxSample.threadGroups.length > 0 && jmxSample.samplers.length > 0, jmxSample && jmxSample.file);
-  check('jmx 带健康检查结果', !!jmxSample && !!jmxSample.health && Array.isArray(jmxSample.health.issues), jmxSample && jmxSample.health);
+  // JMeter 装没装是本机属性，和本机有没有 jmx 目录无关：app:init 已经让后端探过一次
+  const jmeterBat = (init && init.settings && init.settings.jmeterPath) || '';
+  const jmeterFound = !!jmeterBat;
+  let jmxFiles = [];
+  if (fs.existsSync(REAL_JMX)) {
+    const jmxRes = await call('jmx:scan', { root: REAL_JMX });
+    check('jmx 扫描读到真实脚本', jmxRes && jmxRes.totalFiles >= 1, jmxRes && jmxRes.totalFiles);
+    check('jmx 扫描无错误', jmxRes && jmxRes.errors && jmxRes.errors.length === 0, jmxRes && jmxRes.errors);
+    jmxFiles = (jmxRes && jmxRes.files) || [];
+
+    // 版本号是「本机装了什么」：只验证格式像版本号，不再写死 5.4.3
+    const jm = jmxRes && jmxRes.jmeter;
+    if (jmeterFound) {
+      check('jmx 扫描也报告找到 JMeter', !!(jm && jm.found && jm.path), jm);
+      check('jmx 版本号是 x.y[.z] 格式', typeof jm.version === 'string' && /^\d+\.\d+(?:\.\d+)?$/.test(jm.version), jm && jm.version);
+    } else {
+      check('jmx 扫描报告没找到 JMeter', !!(jm && jm.found === false), jm);
+    }
+
+    const jmxSample = jmxFiles[0];
+    check('jmx 解析出线程组与采样器', !!jmxSample && jmxSample.threadGroups.length > 0 && jmxSample.samplers.length > 0, jmxSample && jmxSample.file);
+    check('jmx 带健康检查结果', !!jmxSample && !!jmxSample.health && Array.isArray(jmxSample.health.issues), jmxSample && jmxSample.health);
+
+    // 打开目录：传目录要真的打开目录，不能打开父目录（v0.17.0 修的 bug）
+    const revealDir = await call('jmx:reveal', { file: jmxRes.root });
+    check('打开目录返回的就是该目录本身', revealDir && revealDir.ok && revealDir.dir === jmxRes.root, revealDir);
+  } else {
+    skip('jmx 索引（真实 jmx 目录不存在：' + REAL_JMX + '）');
+  }
+
+  // 这两条不需要真实资产：错误输入必须明确失败
   const jmxBad = await call('jmx:openGui', { file: 'D:\\不存在.jmx' });
   check('jmx 打开不存在的文件返回失败', jmxBad && jmxBad.ok === false, jmxBad);
-
-  // 打开目录：传目录要真的打开目录，不能打开父目录（v0.17.0 修的 bug）
-  const revealDir = await call('jmx:reveal', { file: jmxRes.root });
-  check('打开目录返回的就是该目录本身', revealDir && revealDir.ok && revealDir.dir === jmxRes.root, revealDir);
   const revealBad = await call('jmx:reveal', { file: 'D:\\不存在的目录' });
   check('打开不存在的路径返回失败而不是静默', revealBad && revealBad.ok === false, revealBad);
-  const launch = await call('jmx:launch');
-  check('启动 JMeter 成功（Windows 上 .bat 必须走 shell）', launch && launch.ok === true, launch);
-  check('启动返回实际命令，便于排查', launch && typeof launch.command === 'string' && launch.command.includes('jmeter.bat'), launch && launch.command);
-  check('启动返回 JMeter 版本', launch && launch.version === '5.4.3', launch && launch.version);
 
-  // 自动探测到的路径要落盘，否则设置页永远显示空
-  const initAfter = await call('app:init');
-  check('自动探测的 jmeterPath 已写回设置', initAfter && initAfter.settings.jmeterPath && initAfter.settings.jmeterPath.includes('jmeter.bat'), initAfter && initAfter.settings.jmeterPath);
+  if (jmeterFound) {
+    // app:init 探测到的路径要落盘，否则设置页永远显示空
+    check('自动探测的 jmeterPath 已写回设置', /^jmeter/i.test(path.basename(jmeterBat)), jmeterBat);
+  } else {
+    skip('自动探测的 jmeterPath 写回（本机未安装 JMeter）');
+  }
 
-  const guiOk = await call('jmx:openGui', { file: path.join(REAL_JMX, '测试计划.jmx') });
-  check('用 JMeter 打开指定脚本成功', guiOk && guiOk.ok === true, guiOk);
-  check('打开脚本的命令带 -t 和脚本路径', guiOk && guiOk.command && guiOk.command.includes('-t') && guiOk.command.includes('测试计划.jmx'), guiOk && guiOk.command);
+  // 真正拉起 JMeter GUI 的断言默认不跑：它会在桌面上弹窗口，不适合放进日常 `npm test`。
+  // 要冒烟验证 .bat 启动链路时设 TT_JMETER_SMOKE=1。
+  if (jmeterFound && process.env.TT_JMETER_SMOKE === '1') {
+    const launch = await call('jmx:launch');
+    check('启动 JMeter 成功（Windows 上 .bat 必须走 shell）', launch && launch.ok === true, launch);
+    check('启动返回实际命令，便于排查', !!launch && typeof launch.command === 'string' && !!launch.jmeter && launch.command.indexOf(path.basename(launch.jmeter)) >= 0, launch && launch.command);
+    check('启动返回 JMeter 版本', launch && typeof launch.version === 'string' && /^\d+\.\d+(?:\.\d+)?$/.test(launch.version), launch && launch.version);
+
+    // 用 JMeter 打开脚本：不写死文件名，直接用刚扫到的第一份脚本
+    if (jmxFiles.length) {
+      const guiTarget = jmxFiles[0].file;
+      const guiOk = await call('jmx:openGui', { file: guiTarget });
+      check('用 JMeter 打开指定脚本成功', guiOk && guiOk.ok === true, guiOk);
+      check('打开脚本的命令带 -t 和脚本路径', guiOk && guiOk.command && guiOk.command.includes('-t') && guiOk.command.includes(path.basename(guiTarget)), guiOk && guiOk.command);
+    } else {
+      skip('用 JMeter 打开指定脚本（jmx 目录里没有脚本）');
+    }
+  } else {
+    skip(
+      '启动 JMeter / 打开脚本（' +
+        (jmeterFound ? '默认不拉起 GUI，设 TT_JMETER_SMOKE=1 才跑' : '本机未安装 JMeter') +
+        '）'
+    );
+  }
   const guiNoFile = await call('jmx:openGui', {});
   check('不传脚本路径时给出明确错误码', guiNoFile && guiNoFile.ok === false && guiNoFile.code === 'NO_FILE', guiNoFile);
 
   // ---- 压测报告导入 ----
-  const repScan = await call('report:scan', { root: REAL_REPORT });
-  check('报告扫描读到真实跑批', repScan && repScan.reports && repScan.reports.length >= 1, repScan && repScan.reports && repScan.reports.length);
-  const rep0 = repScan && repScan.reports && repScan.reports[0];
-  check('报告解析出样本数', rep0 && rep0.samples === 50, rep0 && rep0.samples);
-  check('报告解析出 P95（从 jtl 算）', rep0 && rep0.p95 === 4, rep0 && rep0.p95);
-  check('报告带 html 报告路径', rep0 && rep0.files && !!rep0.files.htmlIndex, rep0 && rep0.files);
-  const repParse = await call('report:parse', { dir: rep0.dir });
-  check('按目录解析返回 ok', repParse && repParse.ok === true, repParse && repParse.message);
-  const repBad = await call('report:parse', { dir: 'D:\\不存在的报告目录' });
-  check('解析不存在的目录返回失败', repBad && repBad.ok === false, repBad);
+  if (fs.existsSync(REAL_REPORT)) {
+    const repScan = await call('report:scan', { root: REAL_REPORT });
+    check('报告扫描读到真实跑批', repScan && repScan.reports && repScan.reports.length >= 1, repScan && repScan.reports && repScan.reports.length);
+    const rep0 = repScan && repScan.reports && repScan.reports[0];
+    if (!rep0) {
+      // 扫不到报告就到此为止：绝不拿 undefined 去取 .dir（v0.42.0 的崩溃点）
+      check('报告目录里至少有一份能解析的报告', false, repScan && repScan.errors);
+    } else {
+      // 样本数不写死：从 jtl 源文件独立数一遍，要求两边一致
+      const jtlSamples = countJtlSamples(rep0.files && rep0.files.jtl);
+      const hasJtl = jtlSamples > 0;
+      check('报告样本数与 jtl 行数一致', rep0.samples > 0 && (hasJtl ? rep0.samples === jtlSamples : true), { samples: rep0.samples, jtlSamples });
+      // P95 不写死：只要求「从 jtl 算出来、大于 0、不超过最大值」
+      check('报告 P95 落在 (0, max] 区间内', hasJtl ? rep0.p95 > 0 && rep0.p95 <= rep0.max : rep0.p95 === null, { p95: rep0.p95, max: rep0.max, hasJtl });
+      check('报告带 html 报告路径字段', !!rep0.files && typeof rep0.files.htmlIndex === 'string' && (!rep0.files.htmlIndex || fs.existsSync(rep0.files.htmlIndex)), rep0.files);
+      const repParse = await call('report:parse', { dir: rep0.dir });
+      check('按目录解析返回 ok', repParse && repParse.ok === true, repParse && repParse.message);
+    }
+    const repBad = await call('report:parse', { dir: 'D:\\不存在的报告目录' });
+    check('解析不存在的目录返回失败', repBad && repBad.ok === false, repBad);
+  } else {
+    skip('压测报告导入（真实报告目录不存在：' + REAL_REPORT + '）');
+  }
 
   // ---- 知识库索引 ----
-  const kbRes = await call('kb:scan', { root: REAL_KB });
-  check('知识库扫描读到真实文档', kbRes && kbRes.totalDocs >= 10, kbRes && kbRes.totalDocs);
-  check('知识库扫描无错误', kbRes && kbRes.errors && kbRes.errors.length === 0, kbRes && kbRes.errors);
-  const kb0 = kbRes && kbRes.docs && kbRes.docs[0];
-  check('知识库文档带章节', !!kb0 && Array.isArray(kb0.sections), kb0 && kb0.title);
-  check('知识库跳过归档目录', kbRes && kbRes.docs.every((d) => d.dir.indexOf('_archive') < 0), kbRes && kbRes.docs.filter((d) => d.dir.indexOf('_archive') >= 0).map((d) => d.relPath));
+  if (fs.existsSync(REAL_KB)) {
+    const kbRes = await call('kb:scan', { root: REAL_KB });
+    check('知识库扫描读到真实文档', kbRes && kbRes.totalDocs >= 1, kbRes && kbRes.totalDocs);
+    check('知识库扫描无错误', kbRes && kbRes.errors && kbRes.errors.length === 0, kbRes && kbRes.errors);
+    const kb0 = kbRes && kbRes.docs && kbRes.docs[0];
+    check('知识库文档带章节', !!kb0 && Array.isArray(kb0.sections), kb0 && kb0.title);
+    check('知识库跳过归档目录', kbRes && kbRes.docs.every((d) => d.dir.indexOf('_archive') < 0), kbRes && kbRes.docs.filter((d) => d.dir.indexOf('_archive') >= 0).map((d) => d.relPath));
+  } else {
+    skip('知识库索引（真实知识库目录不存在：' + REAL_KB + '）');
+  }
   const kbBad = await call('kb:reveal', { file: 'D:\\不存在的知识库' });
   check('知识库打开不存在路径返回失败', kbBad && kbBad.ok === false, kbBad);
 
   // ---- 导入过滤器：按集合只认 JSON，整库才认 .db ----
   // 直接读后端源码确认逻辑（避免在测试里重复实现一遍）；
-  // data:import 已搬到 electron/ipc/ipc-records.js，所以扫整个 electron/ 目录
+  // data:import 已搬到 electron/ipc/ipc-records.js，所以扫整个 electron/ 目录。
+  // v0.43.0 起通道统一走 ipc-guard 的 handle()（带解锁守卫），不再写 ipcMain.handle。
   const mainSrc = require('./_electron-src.cjs').readElectronSource();
-  const importBlock = mainSrc.slice(mainSrc.indexOf("ipcMain.handle('data:import'"), mainSrc.indexOf("ipcMain.handle('backup:restore'"));
+  const importBlock = mainSrc.slice(mainSrc.indexOf("handle('data:import'"), mainSrc.indexOf("handle('backup:restore'"));
   check('按集合导入的过滤器只含 json', /conf\s*\?\s*\[\{\s*name:\s*'JSON',\s*extensions:\s*\['json'\]\s*\}\]/.test(importBlock), importBlock.slice(0, 300));
   check('整库导入的过滤器含 db', /extensions:\s*\['json',\s*'db'\]/.test(importBlock), importBlock.slice(0, 300));
   check('按集合选了 .db 会明确拒绝', /不能只导入某个集合/.test(importBlock));
@@ -525,7 +628,8 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   const failed = results.filter((r) => !r.ok);
   console.log('\n===== 主进程测试 =====');
   for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));
-  console.log(`\n${results.length - failed.length}/${results.length} passed`);
+  for (const name of skipped) console.log('  SKIP  ' + name);
+  console.log(`\n${results.length - failed.length} passed, ${failed.length} failed, ${skipped.length} skipped`);
   process.exit(failed.length ? 1 : 0);
 })().catch((e) => {
   console.error('TEST CRASH', e);

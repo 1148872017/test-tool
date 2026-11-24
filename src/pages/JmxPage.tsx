@@ -22,7 +22,7 @@ import ScriptTemplatesDrawer from '../components/ScriptTemplatesDrawer';
 const LEVEL_ICON: Record<string, any> = {
   error: <CloseCircleOutlined style={{ color: '#e5534b' }} />,
   warn: <WarningOutlined style={{ color: '#f5a623' }} />,
-  info: <InfoCircleOutlined style={{ color: '#9aa1b4' }} />,
+  info: <InfoCircleOutlined style={{ color: 'var(--text-3)' }} />,
   ok: <CheckCircleOutlined style={{ color: '#3fbf7f' }} />
 };
 
@@ -364,7 +364,7 @@ export default function JmxPage() {
               <Input
                 allowClear
                 style={{ width: 240 }}
-                prefix={<SearchOutlined style={{ color: '#9aa1b4' }} />}
+                prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />}
                 placeholder="搜文件名、线程组、接口路径、CSV"
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
@@ -661,7 +661,7 @@ export default function JmxPage() {
                     </div>
                   ))}
                 </div>
-                <div className="muted" style={{ fontSize: 11.5, marginTop: 6 }}>
+                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
                   同名监听器靠「挂在谁下面」区分；JMeter 里也是按这个层级显示的
                 </div>
               </section>

@@ -22,6 +22,7 @@ import {
 import api from '../api';
 import { toast } from '../msg';
 import { fmtTime } from '../utils';
+import { createDebouncedSaver, DebouncedSaver } from '../utils/debounceMap';
 
 /** 字节数 → 人类可读（1.2 MB / 850 KB） */
 const fmtBytes = (n: number) => {
@@ -102,6 +103,94 @@ export default function SettingsPage({ boot, onChanged }: Props) {
   const settings = boot.settings || {};
 
   /**
+   * 目录输入框的「边输边存」（8 个目录字段共用这个入口，但**每个字段各有各的计时器**）。
+   *
+   * 为什么不用 onBlur（踩坑 #100）：
+   *   用户填完目录直接点侧栏切页面时，blur 不一定触发，
+   *   或者触发了但保存还没完成，回来就变空了。
+   *   所以改成输入后 600ms 自动静默保存。
+   *
+   * 为什么必须每字段独立计时（踩坑 #100 第二次，v0.42.1 修）：
+   *   原来 8 个字段共用一个 useRef 计时器，每次输入都先清掉上一个计时器。
+   *   在「用例目录」敲完 600ms 内去改「压测目录」，前一个字段的计时器就被清掉了，
+   *   那个 key 的值永远不落库，界面上一点提示都没有 ——
+   *   这就是「填了目录切页面再回来变空」的真正原因。
+   *   现在按字段存计时器（实现见 utils/debounceMap.ts），互不干扰。
+   */
+  const dirSaverRef = useRef<DebouncedSaver | null>(null);
+  /** 已经发出、但服务端回执还没确认的输入：防止旧 settings 把用户正在输入的字洗掉 */
+  const dirSentRef = useRef<Map<string, string>>(new Map());
+  const dirSaver =
+    dirSaverRef.current ||
+    (dirSaverRef.current = createDebouncedSaver((patch) => {
+      const key = Object.keys(patch)[0];
+      if (key) dirSentRef.current.set(key, patch[key]);
+      // 静默保存：不弹 toast，否则输入框每停一下就刷一条「已保存」
+      saveSettings(patch, true);
+    }, 600));
+
+  /** 目录输入的防抖保存入口（保留原来的调用写法：saveDirDebounced('casesDir', 值)） */
+  const saveDirDebounced = (key: string, value: string) => {
+    dirSaver.save(key, value);
+  };
+
+  /** 立刻发出所有还没落库的目录（切页面 / 关窗口 / 窗口失焦时兜底用） */
+  const flushAllDirs = () => {
+    dirSaver.flushAll();
+  };
+
+  /**
+   * 卸载（切到别的页面）时必须立刻落库：
+   * 600ms 还没到就切页面的话，计时器会随组件一起消失，刚输入的目录就丢了。
+   */
+  useEffect(() => {
+    return () => {
+      flushAllDirs();
+    };
+    // dirSaver 存在 ref 里，整个生命周期只有一份实例，故意不写依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** 兜底：关窗口 / 页面隐藏 / 窗口失焦都先落库，不给「丢了还没提示」留口子 */
+  useEffect(() => {
+    const flush = () => flushAllDirs();
+    const onVisibility = () => {
+      // 只切到后台才 flush；切回前台不用多存一次
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('beforeunload', flush);
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('blur', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('blur', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * settings 回执回来了，能不能拿它覆盖输入框。
+   *
+   * 有待保存（还没发出）或已发出但服务端还没确认的输入时不覆盖：
+   * 否则「保存 A 字段」触发的 onChanged 刷新，会把用户正在输入的 B 字段洗回旧值，
+   * 表现出来就是「一边填一边被清空」，和 P0 是同一类「静默丢输入」。
+   */
+  const canSyncDir = (key: string, saved: string) => {
+    if (dirSaver.hasPending(key)) return false;
+    const sent = dirSentRef.current.get(key);
+    if (sent === undefined) return true;
+    if (sent === (saved || '')) {
+      // 服务端已经回执了这个值，之后可以正常同步
+      dirSentRef.current.delete(key);
+      return true;
+    }
+    return false;
+  };
+
+  /**
    * 目录类设置的初始化。
    *
    * 踩坑 #100：原来这里漏了 workspaceDir / allureDir / projectDir ——
@@ -109,17 +198,20 @@ export default function SettingsPage({ boot, onChanged }: Props) {
    * （组件重挂载时 state 回到初始的空串）。
    *
    * 以后加新目录字段，只要往这里补一行 + 依赖数组补一项。
+   *
+   * 每行都套 canSyncDir：正在输入 / 刚保存还没回执的字段不覆盖，
+   * 否则「保存 A 触发刷新」会把正在输入的 B 洗回旧值（v0.42.1 P0 的同类问题）。
    */
   useEffect(() => {
-    setWorkspaceDir(settings.workspaceDir || '');
-    setCasesDir(settings.casesDir || '');
-    setJmxDir(settings.jmxDir || '');
-    setJmeterPath(settings.jmeterPath || '');
-    setReportDir(settings.reportDir || '');
-    setAllureDir(settings.allureDir || '');
-    setKbDir(settings.kbDir || '');
-    setNotesDir(settings.notesDir || '');
-    setProjectDir(settings.projectDir || '');
+    if (canSyncDir('workspaceDir', settings.workspaceDir)) setWorkspaceDir(settings.workspaceDir || '');
+    if (canSyncDir('casesDir', settings.casesDir)) setCasesDir(settings.casesDir || '');
+    if (canSyncDir('jmxDir', settings.jmxDir)) setJmxDir(settings.jmxDir || '');
+    if (canSyncDir('jmeterPath', settings.jmeterPath)) setJmeterPath(settings.jmeterPath || '');
+    if (canSyncDir('reportDir', settings.reportDir)) setReportDir(settings.reportDir || '');
+    if (canSyncDir('allureDir', settings.allureDir)) setAllureDir(settings.allureDir || '');
+    if (canSyncDir('kbDir', settings.kbDir)) setKbDir(settings.kbDir || '');
+    if (canSyncDir('notesDir', settings.notesDir)) setNotesDir(settings.notesDir || '');
+    if (canSyncDir('projectDir', settings.projectDir)) setProjectDir(settings.projectDir || '');
   }, [
     settings.workspaceDir,
     settings.casesDir,
@@ -299,21 +391,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
     }
   };
 
-  /**
-   * 目录输入框的「边输边存」。
-   *
-   * 为什么不用 onBlur（踩坑 #100）：
-   *   用户填完目录直接点侧栏切页面时，blur 不一定触发，
-   *   或者触发了但保存还没完成，回来就变空了。
-   *   改成输入后 600ms 自动静默保存，怎么切都不会丢。
-   */
-  const dirSaveTimer = useRef<any>(null);
-  const saveDirDebounced = (key: string, value: string) => {
-    if (dirSaveTimer.current) clearTimeout(dirSaveTimer.current);
-    dirSaveTimer.current = setTimeout(() => {
-      saveSettings({ [key]: value }, true);
-    }, 600);
-  };
+  /* 目录输入框的「边输边存」见文件前面的 dirSaver / saveDirDebounced（每字段独立计时器） */
 
   /** 选工作区目录（通用选择器） */
   const doPickWorkspaceDir = async () => {
@@ -1190,7 +1268,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
           {updateState === 'downloading' ? (
             <div style={{ marginTop: 10, maxWidth: 460 }}>
               <Progress percent={updatePct} size="small" status="active" />
-              <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
                 {fmtBytes(updateReceived)} / {fmtBytes(updateTotal)}
                 {updateConns > 1 ? ` · ${updateConns} 连接` : ''}
                 {updateSpeed > 0 ? ` · ${fmtSpeed(updateSpeed)}` : ''}

@@ -5,9 +5,11 @@
  *
  * 皮肤的图片文件存在 {数据目录}/skin/ 下，设置里只存文件名。
  */
+const sharedHelpers = require('../shared-helpers');
+
 function register(deps) {
   const {
-    ipcMain,
+    handle,
     dialog,
     fs,
     path,
@@ -23,9 +25,9 @@ function register(deps) {
   /** 皮肤目录 */
   const skinDir = () => path.join(resolveDataDir(), 'skin');
 
-  ipcMain.handle('settings:get', async () => publicSettings());
+  handle('settings:get', async () => publicSettings());
 
-  ipcMain.handle('settings:set', async (e, patch) => {
+  handle('settings:set', async (e, patch) => {
     const settings = getSettings();
     const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'closeAction', 'workspaceDir', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'allureDir', 'kbDir', 'notesDir', 'projectDir', 'javaHome', 'pythonPath', 'mvnPath', 'themeColor', 'bgImage', 'bgOpacity', 'bgTextMode', 'bgOverlay', 'bgOverlayColor'];
     for (const key of allowed) {
@@ -36,7 +38,7 @@ function register(deps) {
   });
 
   /** 选背景图（复制到皮肤目录） */
-  ipcMain.handle('skin:pickImage', async () => {
+  handle('skin:pickImage', async () => {
     assertUnlocked();
     const picked = await dialog.showOpenDialog(getWindow(), {
       title: '选择背景图',
@@ -73,7 +75,7 @@ function register(deps) {
   });
 
   /** 清除背景图 */
-  ipcMain.handle('skin:clearImage', async () => {
+  handle('skin:clearImage', async () => {
     assertUnlocked();
     try {
       const dir = skinDir();
@@ -93,12 +95,21 @@ function register(deps) {
   });
 
   /** 读背景图（返回 data URL，给前端用） */
-  ipcMain.handle('skin:getImage', async () => {
+  handle('skin:getImage', async () => {
     assertUnlocked();
     const settings = getSettings();
     if (!settings.bgImage) return { ok: true, url: '' };
+    /**
+     * **路径穿越点**（v0.43.0 修补，High）：
+     * 老实现直接把 bgImage 拼到皮肤目录后面（path.join(skinDir(), bgImage)）—— bgImage 来自渲染进程
+     * （settings:set 的 allowed 白名单里就有它），传
+     * `..\..\..\Users\x\.ssh\id_rsa` 就能把私钥读成 base64 回给前端。
+     * 现在只接受 `bg.<图片扩展名>`：basename + 扩展名白名单，其余当没有背景图。
+     */
+    const safeName = sharedHelpers.safeSkinFileName(settings.bgImage);
+    if (!safeName) return { ok: true, url: '', rejected: true };
     try {
-      const full = path.join(skinDir(), settings.bgImage);
+      const full = path.join(skinDir(), safeName);
       if (!fs.existsSync(full)) return { ok: true, url: '' };
       const buf = fs.readFileSync(full);
       const ext = path.extname(full).toLowerCase().replace('.', '');

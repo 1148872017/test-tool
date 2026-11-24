@@ -10,27 +10,44 @@ const knowledge = require('../knowledge');
 const notesIndex = require('../notes');
 
 function register(deps) {
-  const { ipcMain, dialog, shell, fs, path, getWindow, getSettings, saveSettings, assertUnlocked } = deps;
+  const {
+    handle,
+    dialog,
+    shell,
+    fs,
+    path,
+    getWindow,
+    getSettings,
+    saveSettings,
+    assertUnlocked,
+    assertPathIn,
+    rememberPicked
+  } = deps;
 
   // ---- 知识库索引（只读，文件为准）----
-  ipcMain.handle('kb:scan', async (e, { root } = {}) => {
+  handle('kb:scan', async (e, { root } = {}) => {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.kbDir;
     return knowledge.scanKnowledge(dir, {});
   });
 
-  ipcMain.handle('kb:openFile', async (e, { file }) => {
+  handle('kb:openFile', async (e, { file }) => {
     assertUnlocked();
     if (!file) return { ok: false, message: '缺少文件路径' };
+    // 入参守卫：只允许打开白名单目录内的文件（v0.43.0）
+    const bad = assertPathIn(String(file));
+    if (bad) return bad;
     const err = await shell.openPath(String(file));
     return { ok: !err, message: err || '' };
   });
 
-  ipcMain.handle('kb:reveal', async (e, { file }) => {
+  handle('kb:reveal', async (e, { file }) => {
     assertUnlocked();
     if (!file) return { ok: false };
     const target = String(file);
+    const bad = assertPathIn(target);
+    if (bad) return bad;
     if (!fs.existsSync(target)) return { ok: false, message: '路径不存在：' + target };
     if (fs.statSync(target).isDirectory()) {
       const err = await shell.openPath(target);
@@ -40,7 +57,7 @@ function register(deps) {
     return { ok: true, dir: path.dirname(target) };
   });
 
-  ipcMain.handle('kb:pickDir', async () => {
+  handle('kb:pickDir', async () => {
     assertUnlocked();
     const settings = getSettings();
     const result = await dialog.showOpenDialog(getWindow(), {
@@ -50,28 +67,33 @@ function register(deps) {
     if (result.canceled || !result.filePaths.length) return { ok: false };
     settings.kbDir = result.filePaths[0];
     saveSettings();
+    rememberPicked(settings.kbDir);
     return { ok: true, dir: settings.kbDir };
   });
 
   // ---- 笔记索引（只读）+ 导入 md ----
-  ipcMain.handle('notes:scan', async (e, { root } = {}) => {
+  handle('notes:scan', async (e, { root } = {}) => {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.notesDir;
     return notesIndex.scanNotes(dir);
   });
 
-  ipcMain.handle('notes:openFile', async (e, { file }) => {
+  handle('notes:openFile', async (e, { file }) => {
     assertUnlocked();
     if (!file) return { ok: false, message: '缺少文件路径' };
+    const bad = assertPathIn(String(file));
+    if (bad) return bad;
     const err = await shell.openPath(String(file));
     return { ok: !err, message: err || '' };
   });
 
-  ipcMain.handle('notes:reveal', async (e, { file }) => {
+  handle('notes:reveal', async (e, { file }) => {
     assertUnlocked();
     if (!file) return { ok: false };
     const target = String(file);
+    const bad = assertPathIn(target);
+    if (bad) return bad;
     if (!fs.existsSync(target)) return { ok: false, message: '路径不存在：' + target };
     if (fs.statSync(target).isDirectory()) {
       const err = await shell.openPath(target);
@@ -81,7 +103,7 @@ function register(deps) {
     return { ok: true, dir: path.dirname(target) };
   });
 
-  ipcMain.handle('notes:pickDir', async () => {
+  handle('notes:pickDir', async () => {
     assertUnlocked();
     const settings = getSettings();
     const result = await dialog.showOpenDialog(getWindow(), {
@@ -91,6 +113,7 @@ function register(deps) {
     if (result.canceled || !result.filePaths.length) return { ok: false };
     settings.notesDir = result.filePaths[0];
     saveSettings();
+    rememberPicked(settings.notesDir);
     return { ok: true, dir: settings.notesDir };
   });
 
@@ -98,7 +121,7 @@ function register(deps) {
    * 导入 md：选文件 → 移动到笔记目录。
    * 先返回待确认清单（含冲突情况），界面确认后才真正移动。
    */
-  ipcMain.handle('notes:pickImport', async () => {
+  handle('notes:pickImport', async () => {
     assertUnlocked();
     const settings = getSettings();
     const result = await dialog.showOpenDialog(getWindow(), {
@@ -109,6 +132,8 @@ function register(deps) {
     if (result.canceled || !result.filePaths.length) return { ok: false };
 
     const root = settings.notesDir;
+    // 用户明确选过的文件 → 本会话可信根（导入时要读它们）
+    for (const f of result.filePaths) rememberPicked(f);
     const items = result.filePaths.map((f) => {
       const baseName = path.basename(f);
       const target = path.join(root, baseName);
@@ -123,7 +148,7 @@ function register(deps) {
     return { ok: true, root, items };
   });
 
-  ipcMain.handle('notes:import', async (e, { files, onConflict } = {}) => {
+  handle('notes:import', async (e, { files, onConflict } = {}) => {
     assertUnlocked();
     const settings = getSettings();
     const res = notesIndex.importNotes(files, settings.notesDir, onConflict);

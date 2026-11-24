@@ -10,9 +10,9 @@ const security = require('../security');
 const { TOOLS } = require('../../shared/collections');
 
 function register(deps) {
-  const { ipcMain, app, store, path, getSettings, saveSettings, setLocked, isLocked, publicSettings, detectJmeter } = deps;
+  const { handle, app, store, path, getSettings, saveSettings, setLocked, isLocked, publicSettings, detectJmeter } = deps;
 
-  ipcMain.handle('app:init', async () => {
+  handle('app:init', async () => {
     // 启动时探一次 JMeter，探到就落盘，设置页才看得见
     try {
       detectJmeter();
@@ -29,7 +29,7 @@ function register(deps) {
     };
   });
 
-  ipcMain.handle('app:info', async () => ({
+  handle('app:info', async () => ({
     version: app.getVersion(),
     schemaVersion: store.schemaVersion(),
     dataDir: path.dirname(store.dbPath),
@@ -39,12 +39,12 @@ function register(deps) {
     backups: store.listBackups()
   }));
 
-  ipcMain.handle('app:lock', async () => {
+  handle('app:lock', async () => {
     setLocked(true);
     return true;
   });
 
-  ipcMain.handle('app:unlock', async (e, { pin }) => {
+  handle('app:unlock', async (e, { pin }) => {
     const settings = getSettings();
     if (!settings.pin) {
       setLocked(false);
@@ -55,7 +55,7 @@ function register(deps) {
     return { ok, hasPin: true };
   });
 
-  ipcMain.handle('pin:set', async (e, { oldPin, pin }) => {
+  handle('pin:set', async (e, { oldPin, pin }) => {
     if (!pin || String(pin).length < 4) return { ok: false, message: '密码至少 4 位' };
     const settings = getSettings();
     if (settings.pin) {
@@ -68,7 +68,7 @@ function register(deps) {
     return { ok: true };
   });
 
-  ipcMain.handle('pin:clear', async (e, { pin }) => {
+  handle('pin:clear', async (e, { pin }) => {
     const settings = getSettings();
     if (settings.pin && !security.verifyPin(pin, settings.pin.salt, settings.pin.hash)) {
       return { ok: false, message: '密码不对' };

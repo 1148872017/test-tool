@@ -211,8 +211,8 @@ check('模板文件名带集合名', /导入模板-网站管理\.json$/.test(imp
  * 7. 后端接线：通道 / 钳制 / taskkill 真被用上
  * ============================================================ */
 const electronSrc = require('./_electron-src.cjs').readElectronSource();
-check('有 runner:detect 通道', /ipcMain\.handle\('runner:detect'/.test(electronSrc), 'no runner:detect');
-check('有 data:importTemplate 通道', /ipcMain\.handle\('data:importTemplate'/.test(electronSrc), 'no data:importTemplate');
+check('有 runner:detect 通道', /handle\('runner:detect'/.test(electronSrc), 'no runner:detect');
+check('有 data:importTemplate 通道', /handle\('data:importTemplate'/.test(electronSrc), 'no data:importTemplate');
 check('runner:run 里钳制超时', /clampTimeout\(payload\.timeout\)/.test(electronSrc), 'not clamped');
 check('runner:detect 把 java 和 javac 分开报', /javac: javacExe/.test(electronSrc), 'javac not separate');
 check('删掉旧的 child.kill 超时逻辑', !/spawn\('taskkill', \['\/pid'/.test(electronSrc), 'old lowercase taskkill left');
@@ -236,14 +236,29 @@ check('运行 payload 带 timeout', /timeout: timeoutMs/.test(pageSrc), 'no time
 check('超时提示写明秒数', /执行超过/.test(pageSrc), 'no timeout message');
 
 const collSrc = fs.readFileSync(path.join(ROOT, 'src', 'components', 'CollectionPage.tsx'), 'utf8');
-check('集合页有下载模板按钮', /下载模板\s*<\/Button>/.test(collSrc), 'no template button');
+const { COLLECTIONS: COLLECTION_DEFS } = require(path.join(ROOT, 'shared', 'collections.js'));
+const headerActions = COLLECTION_DEFS.map((c) => (c.capabilities && c.capabilities.headerActions) || []);
+
+/**
+ * 按钮位置断言改为数据级：
+ * 改造后「下载模板」不再是一个平铺 <Button>，而是页头「⋯」Dropdown 的菜单项，
+ * 源码顺序不再代表 UI 顺序。唯一事实源是 capabilities.headerActions，
+ * 所以直接断言这份数据的包含关系与相邻顺序。
+ */
+check(
+  '集合页有下载模板入口',
+  headerActions.every((actions) => actions.indexOf('importTemplate') >= 0),
+  headerActions
+);
 check('集合页调 importTemplate', /api\.importTemplate\(conf\.key\)/.test(collSrc), 'not wired');
-check('模板入口排在导入备份后面（挨着放）', (() => {
-  const tpl = /下载模板\s*<\/Button>/.exec(collSrc);
-  const imp = collSrc.indexOf('导入备份');
-  return !!tpl && imp >= 0 && tpl.index > imp;
-})(), { importAt: collSrc.indexOf('导入备份') });
-check('模板按钮有 hover 说明', /导入模板/.test(collSrc), 'no tooltip text');
+check(
+  '模板入口排在导入备份后面（挨着放）',
+  headerActions.every(
+    (actions) => actions.indexOf('importTemplate') === actions.indexOf('importData') + 1
+  ),
+  headerActions
+);
+check('模板菜单项有说明', /导入模板/.test(collSrc), 'no tooltip text');
 
 const failed = results.filter((r) => !r.ok);
 console.log('===== 代码调试 + 导入模板测试 =====');

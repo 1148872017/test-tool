@@ -117,9 +117,9 @@ check('坏 JSON 报错', cg.generate('pojo-java', { json: '{bad' }).ok === false
 
 /* ---------- 9. IPC 已注册 ---------- */
 const mainSrc = require('./_electron-src.cjs').readElectronSource();
-check('有 codegen:targets', /ipcMain\.handle\('codegen:targets'/.test(mainSrc), 'no targets');
-check('有 codegen:preview', /ipcMain\.handle\('codegen:preview'/.test(mainSrc), 'no preview');
-check('有 codegen:save', /ipcMain\.handle\('codegen:save'/.test(mainSrc), 'no save');
+check('有 codegen:targets', /handle\('codegen:targets'/.test(mainSrc), 'no targets');
+check('有 codegen:preview', /handle\('codegen:preview'/.test(mainSrc), 'no preview');
+check('有 codegen:save', /handle\('codegen:save'/.test(mainSrc), 'no save');
 
 const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
 check('preload 有 codegenTargets', /codegenTargets:/.test(preloadSrc), 'no targets');

@@ -245,58 +245,110 @@ const DEMO_PROJECT = {
       <version>5.3.0</version>
       <scope>test</scope>
     </dependency>
+    <!-- 测试框架：TestNG + REST Assured，和「代码生成」里导出的接口测试类同一套技术栈 -->
     <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter</artifactId>
-      <version>5.9.0</version>
+      <groupId>org.testng</groupId>
+      <artifactId>testng</artifactId>
+      <version>7.9.0</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
+  <build>
+    <plugins>
+      <!-- TestNG 用例由 surefire 执行；指定 suite 文件（testng.xml）才会按套件顺序跑。
+           要用套件就把下面 configuration 的注释去掉，并在 src/test/resources 里放 testng.xml。 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.1.2</version>
+        <!--
+        <configuration>
+          <suiteXmlFiles>
+            <suiteXmlFile>src/test/resources/testng.xml</suiteXmlFile>
+          </suiteXmlFiles>
+        </configuration>
+        -->
+      </plugin>
+    </plugins>
+  </build>
 </project>
 `,
   'src/test/java/com/example/demo/LoginApiTest.java': `package com.example.demo;
 
-import org.junit.jupiter.api.Test;
+import io.restassured.response.Response;
+import org.testng.annotations.DataProvider;
+import org.testng.annotations.Test;
+
 import static io.restassured.RestAssured.given;
+import static org.testng.Assert.assertEquals;
 
 /**
  * 示例测试类 —— 代码体检会在这里抓到几个问题：
  *   1. 硬编码密码
- *   2. 硬编码 URL
+ *   2. 硬编码地址
  *   3. Thread.sleep
- *   4. 断言过弱（只有状态码）
+ *   4. 断言过弱（只断言状态码）
+ *
+ * 框架是 TestNG：@DataProvider 数据驱动是它相比 JUnit4 的优势 ——
+ * 同一段用例逻辑喂 2 组数据，不用为每组数据再写一个包装类。
  */
 public class LoginApiTest {
+
+    private static final String USERNAME = "admin";
 
     // 【代码体检会报】硬编码密码
     private static final String PASSWORD = "admin123";
 
-    // 【代码体检会报】硬编码 URL
+    // 【代码体检会报】硬编码地址（example.com 是占位域名，规则会跳过，下面那条才是真正会被报的）
     private static final String BASE_URL = "https://demo-shop.example.com";
+
+    // 【代码体检会报】硬编码地址：预发环境地址写死在代码里，换环境只能改代码
+    private static final String STAGING_URL = "https://demo-shop-staging.testhub.cn";
+
+    /**
+     * TestNG 相比 JUnit4 的优势：@DataProvider 把 2 组数据直接喂给同一个测试方法，
+     * 不用继承 TestCase，也不用 @RunWith 包装。
+     */
+    @DataProvider(name = "loginData")
+    public Object[][] loginData() {
+        return new Object[][] {
+            { USERNAME, PASSWORD },
+            { USERNAME, "wrong-password" }
+        };
+    }
+
+    @Test(dataProvider = "loginData")
+    public void testLoginWithDataProvider(String username, String password) {
+        given()
+            .contentType("application/json")
+            .body("{\\"username\\":\\"" + username + "\\",\\"password\\":\\"" + password + "\\"}")
+        .when()
+            .post(STAGING_URL + "/api/login")
+        .then()
+            .statusCode(200)
+            // 有具体字段断言，不会被报「断言过弱」
+            .body("code", org.hamcrest.Matchers.equalTo(0));
+    }
 
     @Test
     public void testLoginOk() {
-        given()
+        Response response = given()
             .contentType("application/json")
             .body("{\\"username\\":\\"admin\\",\\"password\\":\\"" + PASSWORD + "\\"}")
         .when()
             .post(BASE_URL + "/api/login")
         .then()
-            // 【代码体检会报】断言过弱：只校验状态码
-            .statusCode(200);
+            .statusCode(200)
+            .extract().response();
+
+        // 这条用 TestNG 的断言校验业务字段，不会被报「断言过弱」
+        assertEquals(response.jsonPath().getInt("code"), 0);
     }
 
     @Test
-    public void testLoginWithBodyCheck() {
-        given()
-            .contentType("application/json")
-            .body("{\\"username\\":\\"admin\\",\\"password\\":\\"admin123\\"}")
-        .when()
-            .post(BASE_URL + "/api/login")
-        .then()
-            .statusCode(200)
-            // 这条有 body 校验，不会被报
-            .body("code", org.hamcrest.Matchers.equalTo(0));
+    public void testUserInfoWeakAssertion() {
+        // 【代码体检会报】断言过弱：只校验状态码，响应体对不对完全不知道
+        given().when().get(BASE_URL + "/api/user").then().statusCode(200);
     }
 
     @Test
@@ -356,7 +408,7 @@ function buildDemoAllure() {
         ['testMethod', 'testLoginOk'],
         ['feature', '用户认证'],
         ['severity', 'critical'],
-        ['framework', 'junit5']
+        ['framework', 'testng']
       ]
     ),
     'a1b2c3d4-0002-4000-8000-000000000002-result.json': mk(
@@ -371,7 +423,7 @@ function buildDemoAllure() {
         ['testMethod', 'testLoginWithEmptyUsername'],
         ['feature', '用户认证'],
         ['severity', 'normal'],
-        ['framework', 'junit5']
+        ['framework', 'testng']
       ]
     ),
     'a1b2c3d4-0003-4000-8000-000000000003-result.json': mk(
@@ -386,7 +438,7 @@ function buildDemoAllure() {
         ['testMethod', 'testLoginWithEmptyPassword'],
         ['feature', '用户认证'],
         ['severity', 'normal'],
-        ['framework', 'junit5']
+        ['framework', 'testng']
       ]
     )
   };

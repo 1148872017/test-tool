@@ -8,12 +8,12 @@
 const jtlReport = require('../jtl');
 
 function register(deps) {
-  const { ipcMain, dialog, getWindow, getSettings, saveSettings, assertUnlocked } = deps;
+  const { handle, dialog, getWindow, getSettings, saveSettings, assertUnlocked, assertPathIn } = deps;
 
   // ---- 压测报告导入（jtl / statistics.json）----
 
   /** 扫描报告根目录，列出所有可导入的跑批 */
-  ipcMain.handle('report:scan', async (e, { root } = {}) => {
+  handle('report:scan', async (e, { root } = {}) => {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.reportDir;
@@ -21,7 +21,7 @@ function register(deps) {
   });
 
   /** 选一个跑批目录，解析并返回预览（不写库） */
-  ipcMain.handle('report:pick', async () => {
+  handle('report:pick', async () => {
     assertUnlocked();
     const settings = getSettings();
     const result = await dialog.showOpenDialog(getWindow(), {
@@ -40,9 +40,12 @@ function register(deps) {
   });
 
   /** 解析指定目录（扫描列表里点某一条时用） */
-  ipcMain.handle('report:parse', async (e, { dir } = {}) => {
+  handle('report:parse', async (e, { dir } = {}) => {
     assertUnlocked();
     if (!dir) return { ok: false, message: '缺少目录' };
+    // 入参守卫：只解析白名单目录（report:scan 扫过的根会自动进白名单）
+    const bad = assertPathIn(String(dir));
+    if (bad) return bad;
     try {
       return { ok: true, report: jtlReport.parseReportDir(String(dir)) };
     } catch (err) {
@@ -50,7 +53,7 @@ function register(deps) {
     }
   });
 
-  ipcMain.handle('report:pickDir', async () => {
+  handle('report:pickDir', async () => {
     assertUnlocked();
     const settings = getSettings();
     const result = await dialog.showOpenDialog(getWindow(), {

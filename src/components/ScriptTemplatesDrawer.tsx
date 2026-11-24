@@ -71,7 +71,7 @@ export default function ScriptTemplatesDrawer({ open, onClose }: Props) {
           <Input
             allowClear
             size="small"
-            prefix={<SearchOutlined style={{ color: '#9aa1b4' }} />}
+            prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />}
             placeholder="搜模板"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
@@ -182,7 +182,7 @@ export default function ScriptTemplatesDrawer({ open, onClose }: Props) {
 
               <div className="tpl-code-head">
                 <span>Groovy 代码</span>
-                <span className="muted" style={{ fontSize: 11.5 }}>
+                <span className="muted" style={{ fontSize: 12 }}>
                   注释里标了「↓ 改成你的…」的地方就是要改的
                 </span>
               </div>

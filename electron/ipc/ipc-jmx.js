@@ -10,7 +10,7 @@ const jmxgen = require('../../shared/jmxgen');
 
 function register(deps) {
   const {
-    ipcMain,
+    handle,
     dialog,
     shell,
     store,
@@ -20,6 +20,8 @@ function register(deps) {
     getSettings,
     saveSettings,
     assertUnlocked,
+    assertPathIn,
+    rememberPicked,
     detectJmeter,
     jmeterVersionOf,
     launchJmeter
@@ -39,7 +41,7 @@ function register(deps) {
    *   domain / port  默认域名端口（空 = 从第一个接口取）
    *   onError  出错策略
    */
-  ipcMain.handle('jmxgen:preview', async (e, payload = {}) => {
+  handle('jmxgen:preview', async (e, payload = {}) => {
     assertUnlocked();
     const settings = getSettings();
     const ids = Array.isArray(payload.apiIds) ? payload.apiIds : [];
@@ -73,7 +75,7 @@ function register(deps) {
   });
 
   /** 生成 jmx 并保存 */
-  ipcMain.handle('jmxgen:save', async (e, payload = {}) => {
+  handle('jmxgen:save', async (e, payload = {}) => {
     assertUnlocked();
     const settings = getSettings();
     const ids = Array.isArray(payload.apiIds) ? payload.apiIds : [];
@@ -126,7 +128,7 @@ function register(deps) {
   });
 
   // ---- JMeter jmx 索引（只读，文件为准） ----
-  ipcMain.handle('jmx:scan', async (e, { root } = {}) => {
+  handle('jmx:scan', async (e, { root } = {}) => {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.jmxDir;
@@ -137,19 +139,23 @@ function register(deps) {
     return res;
   });
 
-  ipcMain.handle('jmx:openFile', async (e, { file }) => {
+  handle('jmx:openFile', async (e, { file }) => {
     assertUnlocked();
     if (!file) return { ok: false, message: '缺少文件路径' };
+    const bad = assertPathIn(String(file));
+    if (bad) return bad;
     const err = await shell.openPath(String(file));
     return { ok: !err, message: err || '' };
   });
 
-  ipcMain.handle('jmx:reveal', async (e, { file }) => {
+  handle('jmx:reveal', async (e, { file }) => {
     assertUnlocked();
     if (!file) return { ok: false };
     // showItemInFolder 要的是「文件」，传目录会打开它的父目录。
     // 这里传进来的可能是目录（打开目录按钮）也可能是文件（定位脚本），分开处理。
     const target = String(file);
+    const bad = assertPathIn(target);
+    if (bad) return bad;
     if (!fs.existsSync(target)) return { ok: false, message: '路径不存在：' + target };
     const isDir = fs.statSync(target).isDirectory();
     if (isDir) {
@@ -161,19 +167,22 @@ function register(deps) {
   });
 
   /** 不带 jmx 直接启动 JMeter GUI（空工作台，用户自己 Open） */
-  ipcMain.handle('jmx:launch', async () => {
+  handle('jmx:launch', async () => {
     assertUnlocked();
     return launchJmeter('');
   });
 
   /** 用 JMeter GUI 打开某个 jmx（想法 1：一键启动并加载） */
-  ipcMain.handle('jmx:openGui', async (e, { file }) => {
+  handle('jmx:openGui', async (e, { file }) => {
     assertUnlocked();
     if (!file) return { ok: false, code: 'NO_FILE', message: '缺少脚本路径' };
+    // 入参守卫：脚本必须在白名单目录内（launchJmeter 内部还会再校验一次路径字符）
+    const bad = assertPathIn(String(file));
+    if (bad) return bad;
     return launchJmeter(String(file));
   });
 
-  ipcMain.handle('jmx:pickDir', async () => {
+  handle('jmx:pickDir', async () => {
     assertUnlocked();
     const settings = getSettings();
     const result = await dialog.showOpenDialog(getWindow(), {
@@ -183,10 +192,11 @@ function register(deps) {
     if (result.canceled || !result.filePaths.length) return { ok: false };
     settings.jmxDir = result.filePaths[0];
     saveSettings();
+    rememberPicked(settings.jmxDir);
     return { ok: true, dir: settings.jmxDir };
   });
 
-  ipcMain.handle('jmx:pickJmeter', async () => {
+  handle('jmx:pickJmeter', async () => {
     assertUnlocked();
     const settings = getSettings();
     const result = await dialog.showOpenDialog(getWindow(), {
@@ -197,6 +207,8 @@ function register(deps) {
     if (result.canceled || !result.filePaths.length) return { ok: false };
     settings.jmeterPath = result.filePaths[0];
     saveSettings();
+    // jmeter.bat 可能在任意安装目录（不在白名单里），记一下会话根备查
+    rememberPicked(settings.jmeterPath);
     return { ok: true, path: settings.jmeterPath, version: jmeterVersionOf(settings.jmeterPath) };
   });
 }

@@ -20,15 +20,42 @@
  * 其他设计：
  *   - 多连接分段下载（4 并发，绕过 CDN 单连接限速）
  *   - 可取消 / 断点续传 / 速度显示
+ *
+ * ============================================================
+ * 安全（v0.43.0 修补，原实现是 Critical）
+ * ============================================================
+ * 老实现把渲染进程给的 asset 直接当命令用：
+ *   path.join(dir, asset.name) → 传 `..\..\..\Windows\System32\x.exe` 就写到任意路径；
+ *   shell.openPath(exePath)    → 传什么就执行什么；
+ *   没有 host 白名单、没有 sha512 校验、update:* 也没有解锁校验。
+ *
+ * 现在四处收紧：
+ *   1. 文件名只认 `test-tool-Setup-*.exe` 的 basename（path.basename + 白名单）；
+ *   2. url 必须以本仓库的 Release 下载前缀开头，别的一律拒绝；
+ *   3. 下载完用官方 latest.yml 里的 sha512 校验，install 前再校验一次；
+ *   4. install 只接受下载目录内的路径（见 ipc-misc 的 update:install 还带解锁守卫）。
  */
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const yaml = require('js-yaml');
 const { shell, app, net } = require('electron');
 
 const REPO = '1148872017/test-tool';
 const API_LATEST = `https://api.github.com/repos/${REPO}/releases/latest`;
 const REDIRECT_LATEST = `https://github.com/${REPO}/releases/latest`;
 const DOWNLOAD_BASE = `https://github.com/${REPO}/releases/download`;
+/** 允许下载的唯一前缀（含末尾斜杠，避免 `.../download-evil/` 这种同前缀绕过） */
+const DOWNLOAD_PREFIX = DOWNLOAD_BASE + '/';
+
+/**
+ * 安装包文件名白名单。
+ * electron-builder 的 nsis 产物固定叫 `test-tool-Setup-<version>-x64.exe`。
+ */
+const ASSET_NAME_RE = /^test-tool-Setup-[\w.\-]+\.exe$/i;
+
+/** 最近一次「下载 + 校验通过」的安装包（install 只认它） */
+let pendingInstall = null;
 
 /** 并发连接数 */
 const CONCURRENCY = 4;
@@ -37,6 +64,135 @@ const MIN_SEGMENT_SIZE = 2 * 1024 * 1024;
 
 let activeReqs = [];
 let cancelled = false;
+
+/* ============================================================
+ * 安全校验小工具（导出给 scripts/test-security.cjs 单测）
+ * ============================================================ */
+
+/**
+ * 下载地址白名单。
+ *
+ * 用**完整前缀**（含末尾 `/`）比较，防止
+ * `https://github.com/1148872017/test-tool/releases/download-evil/x.exe`
+ * 这类同前缀绕过。
+ *
+ * @param {string} url
+ * @returns {boolean}
+ */
+function isAllowedUpdateUrl(url) {
+  const u = String(url === undefined || url === null ? '' : url).trim();
+  if (!u) return false;
+  if (!u.startsWith(DOWNLOAD_PREFIX)) return false;
+  // 前缀之后还必须有内容，且不许空白/引号（GitHub 的 URL 里不会出现）
+  const rest = u.slice(DOWNLOAD_PREFIX.length);
+  if (!rest || /[\s<>"]/.test(rest)) return false;
+  return true;
+}
+
+/**
+ * 安装包文件名白名单：只留 basename，且必须匹配 test-tool-Setup-*.exe。
+ *
+ * 这一条挡的是路径穿越（`..\..\evil.exe`）和「任意可执行文件」（`calc.exe`）。
+ *
+ * @param {string} name
+ * @returns {string} 合法文件名，或空串（= 不合法）
+ */
+function safeAssetName(name) {
+  const raw = String(name === undefined || name === null ? '' : name).trim();
+  if (!raw) return '';
+  // 先把任何分隔符挡掉（path.basename 在不同平台行为不同，不能只靠它）
+  if (raw.indexOf('/') >= 0 || raw.indexOf('\\') >= 0) return '';
+  if (raw === '.' || raw === '..') return '';
+  if (path.basename(raw) !== raw) return '';
+  if (!ASSET_NAME_RE.test(raw)) return '';
+  return raw;
+}
+
+/** base64 形式的 sha512 归一化（兼容 electron-builder 的 `sha512-xxx` 写法） */
+function normalizeSha512(value) {
+  let s = String(value === undefined || value === null ? '' : value).trim();
+  if (!s) return '';
+  if (/^sha512-/i.test(s)) s = s.slice(7);
+  // base64 的 sha512 固定 88 字符（含结尾 =）
+  if (!/^[A-Za-z0-9+/=]{40,120}$/.test(s)) return '';
+  return s;
+}
+
+/** 算文件的 sha512（base64，和 latest.yml 一致） */
+function sha512OfFile(file) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha512');
+    const rs = fs.createReadStream(file);
+    rs.on('data', (chunk) => hash.update(chunk));
+    rs.on('end', () => resolve(hash.digest('base64')));
+    rs.on('error', reject);
+  });
+}
+
+/**
+ * 校验文件 sha512 是否等于期望值。
+ * @param {string} file
+ * @param {string} expected base64 的 sha512
+ * @returns {Promise<boolean>}
+ */
+async function verifyFileSha512(file, expected) {
+  const want = normalizeSha512(expected);
+  if (!want) return false;
+  try {
+    const got = await sha512OfFile(file);
+    return got === want;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * 拉取某个 tag 的 latest.yml，取出安装包的 sha512。
+ *
+ * 为什么必须校验：安装包下载完是直接交给 shell.openPath 执行的。
+ * 没有完整性校验，中间人/镜像劫持就能让「更新」变成任意代码执行。
+ *
+ * @param {string} tag 例如 v0.43.0
+ * @returns {Promise<{ok: boolean, sha512?: string, name?: string, size?: number, message?: string}>}
+ */
+async function fetchLatestManifest(tag) {
+  const t = String(tag || '').trim();
+  if (!/^v?[\d.]+$/.test(t)) return { ok: false, message: '版本号不合法：' + t };
+  const url = `${DOWNLOAD_PREFIX}${t}/latest.yml`;
+  let res;
+  try {
+    res = await netGet(url);
+  } catch (e) {
+    return { ok: false, message: '取 latest.yml 失败：' + String((e && e.message) || e) };
+  }
+  if (res.status !== 200) return { ok: false, message: '取 latest.yml 失败（HTTP ' + res.status + '）' };
+
+  let doc;
+  try {
+    doc = yaml.load(res.body.toString('utf8'));
+  } catch (e) {
+    return { ok: false, message: 'latest.yml 解析失败' };
+  }
+  if (!doc || typeof doc !== 'object') return { ok: false, message: 'latest.yml 内容为空' };
+
+  const files = Array.isArray(doc.files) ? doc.files : [];
+  let hit = null;
+  for (const f of files) {
+    if (!f || typeof f !== 'object') continue;
+    const n = safeAssetName(f.url);
+    if (n) {
+      hit = { name: n, sha512: normalizeSha512(f.sha512), size: Number(f.size) || 0 };
+      break;
+    }
+  }
+  if (!hit && doc.path) {
+    const n = safeAssetName(doc.path);
+    if (n) hit = { name: n, sha512: normalizeSha512(doc.sha512), size: 0 };
+  }
+  if (!hit) return { ok: false, message: 'latest.yml 里没有合法的安装包条目' };
+  if (!hit.sha512) return { ok: false, message: 'latest.yml 里没有 sha512，无法校验完整性' };
+  return { ok: true, name: hit.name, sha512: hit.sha512, size: hit.size };
+}
 
 /** 语义化版本比较 */
 function compareVersion(a, b) {
@@ -169,7 +325,7 @@ async function checkUpdate(force) {
     const tag = info.tag || 'v' + latest;
 
     // 附件名是固定格式：test-tool-Setup-{version}-x64.exe
-    const asset =
+    const rawAsset =
       info.asset ||
       {
         name: `test-tool-Setup-${latest}-x64.exe`,
@@ -177,12 +333,40 @@ async function checkUpdate(force) {
         url: `${DOWNLOAD_BASE}/${tag}/test-tool-Setup-${latest}-x64.exe`
       };
 
+    /**
+     * 把 asset 收敛成「我们可以安全下载 + 校验」的形态：
+     *   - name 必须过白名单；不合法就回落到固定命名，
+     *     绝不把渲染进程/api 给的怪名字带到文件系统上；
+     *   - url 必须落在本仓库的 Release 下载前缀内；
+     *   - sha512 从官方 latest.yml 取（取不到就标记 integrity.ok=false，
+     *     download() 会拒绝下载）。
+     */
+    const wantedName = safeAssetName(rawAsset.name) || `test-tool-Setup-${latest}-x64.exe`;
+    const wantedUrl = isAllowedUpdateUrl(rawAsset.url) ? String(rawAsset.url).trim() : `${DOWNLOAD_BASE}/${tag}/${wantedName}`;
+
+    let manifest = { ok: false, message: '没有取到 latest.yml' };
+    try {
+      manifest = await fetchLatestManifest(tag);
+    } catch (e) {
+      manifest = { ok: false, message: String((e && e.message) || e) };
+    }
+
     const result = {
       ok: true,
       hasNew: compareVersion(latest, current) > 0,
       current,
       latest,
-      asset,
+      asset: {
+        name: wantedName,
+        size: Number(rawAsset.size) || manifest.size || 0,
+        url: wantedUrl,
+        sha512: manifest.ok ? manifest.sha512 : ''
+      },
+      // 界面可以据此提示「这次更新有完整性校验 / 没有」；没有时下载会被拒绝
+      integrity: {
+        ok: !!manifest.ok,
+        message: manifest.ok ? '' : manifest.message || '没有拿到官方 sha512'
+      },
       notes: info.notes || '',
       publishedAt: info.publishedAt || ''
     };
@@ -320,10 +504,45 @@ function download(asset, onProgress) {
   return new Promise(async (resolve) => {
     if (!asset || !asset.url) return resolve({ ok: false, message: '没有可下载的安装包' });
 
+    /**
+     * 三道闸（都在碰磁盘/网络之前）：
+     *   1. 文件名白名单 → 挡住 `..\..\evil.exe` 和 `calc.exe`；
+     *   2. URL 前缀白名单 → 挡住任意主机的下载；
+     *   3. sha512 必须存在 → 没有校验值就不下载（下载完是要执行的）。
+     */
+    const safeName = safeAssetName(asset.name);
+    if (!safeName) {
+      return resolve({
+        ok: false,
+        code: 'BAD_ASSET_NAME',
+        message: '安装包名不合法（只接受 test-tool-Setup-*.exe）：' + String(asset.name || '')
+      });
+    }
+    if (!isAllowedUpdateUrl(asset.url)) {
+      return resolve({
+        ok: false,
+        code: 'BAD_ASSET_URL',
+        message: '下载地址不在允许的更新通道内：' + String(asset.url || '')
+      });
+    }
+    const expectedSha = normalizeSha512(asset.sha512);
+    if (!expectedSha) {
+      return resolve({
+        ok: false,
+        code: 'NO_SHA512',
+        message: '没有拿到官方 latest.yml 的 sha512，无法校验安装包完整性，已拒绝下载'
+      });
+    }
+
     cancelled = false;
     activeReqs = [];
     const dir = downloadDir();
-    const file = path.join(dir, asset.name);
+    const file = path.join(dir, safeName);
+    // 双保险：即使白名单被绕过，落点也必须在下载目录内
+    if (!isInsideDownloadDir(file)) {
+      return resolve({ ok: false, code: 'BAD_ASSET_NAME', message: '安装包落点不在下载目录内，已拒绝' });
+    }
+    pendingInstall = null;
 
     const info = await probe(asset.url);
     if (!info.ok) return resolve({ ok: false, message: '探测文件失败：' + (info.message || '') });
@@ -403,7 +622,27 @@ function download(asset, onProgress) {
       return resolve({ ok: false, message: `文件大小不符（期望 ${total}，实际 ${actual}）` });
     }
 
-    resolve({ ok: true, file });
+    /**
+     * 完整性：拿 latest.yml 的 sha512 比一次。
+     * 不一致说明文件被替换（镜像/CDN/中间人），删掉并拒绝。
+     */
+    const gotSha = await sha512OfFile(file).catch(() => '');
+    if (gotSha !== expectedSha) {
+      try {
+        fs.unlinkSync(file);
+      } catch (e) {
+        /* ignore */
+      }
+      return resolve({
+        ok: false,
+        code: 'SHA512_MISMATCH',
+        message: '安装包校验失败（sha512 不一致），已删除，请重试'
+      });
+    }
+
+    // 记下来：install() 只认这一次校验通过的文件
+    pendingInstall = { file, sha512: expectedSha };
+    resolve({ ok: true, file, sha512: gotSha });
   });
 }
 
@@ -424,14 +663,78 @@ function cleanup() {
   return { ok: true };
 }
 
-/** 启动安装器 */
-async function install(exePath) {
-  if (!exePath || !fs.existsSync(exePath)) {
-    return { ok: false, message: '安装包不存在：' + exePath };
-  }
-  const err = await shell.openPath(exePath);
-  if (err) return { ok: false, message: err };
-  return { ok: true };
+/** 路径是否落在下载目录内（用 resolved 路径按分隔符比较，兄弟目录不算） */
+function isInsideDownloadDir(p) {
+  const dir = downloadDir();
+  const root = path.resolve(dir);
+  const target = path.resolve(String(p || ''));
+  if (target === root) return true;
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+  return target.toLowerCase().startsWith(prefix.toLowerCase());
 }
 
-module.exports = { compareVersion, checkUpdate, download, cancel, cleanup, install };
+/**
+ * 启动安装器。
+ *
+ * 老实现只要文件存在就 `shell.openPath` —— 等于「传什么执行什么」。
+ * 现在：只接受下载目录内、文件名过白名单、且刚刚通过 sha512 校验的那个文件。
+ *
+ * @param {string} exePath
+ */
+async function install(exePath) {
+  const target = String(exePath === undefined || exePath === null ? '' : exePath).trim();
+  if (!target) return { ok: false, code: 'BAD_PATH', message: '缺少安装包路径' };
+  if (!fs.existsSync(target)) {
+    return { ok: false, code: 'NOT_FOUND', message: '安装包不存在：' + target };
+  }
+
+  // 1. 落点必须在下载目录内（挡住「传 C:\Windows\System32\cmd.exe」）
+  if (!isInsideDownloadDir(target)) {
+    return { ok: false, code: 'OUTSIDE_DOWNLOAD_DIR', message: '只允许启动下载目录内的安装包：' + target };
+  }
+  // 2. 文件名必须是本产品的安装包
+  const name = safeAssetName(path.basename(target));
+  if (!name) {
+    return { ok: false, code: 'BAD_ASSET_NAME', message: '安装包名不合法，已拒绝启动：' + path.basename(target) };
+  }
+  // 3. 必须就是本次下载并校验通过的那个文件
+  const expected =
+    pendingInstall && pendingInstall.file && path.resolve(pendingInstall.file) === path.resolve(target)
+      ? pendingInstall.sha512
+      : '';
+  if (!expected) {
+    return {
+      ok: false,
+      code: 'UNVERIFIED',
+      message: '这个安装包没有完成完整性校验（请重新下载），已拒绝启动安装器'
+    };
+  }
+  // 4. 再校验一次：防止下载完到点安装之间文件被替换
+  const okSha = await verifyFileSha512(target, expected);
+  if (!okSha) {
+    return { ok: false, code: 'SHA512_MISMATCH', message: '安装包在下载后被改动过（sha512 不一致），已拒绝启动' };
+  }
+
+  const err = await shell.openPath(target);
+  if (err) return { ok: false, message: err };
+  return { ok: true, file: target };
+}
+
+module.exports = {
+  compareVersion,
+  checkUpdate,
+  download,
+  cancel,
+  cleanup,
+  install,
+  // 安全相关的纯函数（单测用，不参与业务）
+  isAllowedUpdateUrl,
+  safeAssetName,
+  normalizeSha512,
+  verifyFileSha512,
+  fetchLatestManifest,
+  isInsideDownloadDir,
+  downloadDir,
+  DOWNLOAD_PREFIX,
+  ASSET_NAME_RE
+};

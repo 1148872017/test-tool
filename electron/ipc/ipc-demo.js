@@ -9,14 +9,14 @@
 const demo = require('../demo');
 
 function register(deps) {
-  const { ipcMain, store, path, dataDir, assertUnlocked } = deps;
+  const { handle, store, path, dataDir, assertUnlocked } = deps;
 
   /* ==================== 示例数据 ==================== *
    * 首次启动写入 11 条示例（可一键清除）。
    * ------------------------------------------------ */
 
   /** 示例记录条数（0 = 已经清掉了） */
-  ipcMain.handle('demo:count', async () => {
+  handle('demo:count', async () => {
     assertUnlocked();
     try {
       return { ok: true, count: demo.countDemo(store) };
@@ -26,7 +26,7 @@ function register(deps) {
   });
 
   /** 清除所有示例数据（记录 + 配套文件） */
-  ipcMain.handle('demo:clear', async () => {
+  handle('demo:clear', async () => {
     assertUnlocked();
     try {
       const demoRoot = path.join(dataDir, 'demo');
@@ -39,7 +39,7 @@ function register(deps) {
   });
 
   /** 示例配套文件的路径（代码体检 / 报告分析可以直接用） */
-  ipcMain.handle('demo:paths', async () => {
+  handle('demo:paths', async () => {
     assertUnlocked();
     const demoRoot = path.join(dataDir, 'demo');
     return {

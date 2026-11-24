@@ -274,7 +274,7 @@ const javaStatusOnly = [
  * ============================================================ */
 {
   const src = require('./_electron-src.cjs').readElectronSource();
-  check('有 codescan:rules 通道', /ipcMain\.handle\('codescan:rules'/.test(src), 'no rules ipc');
+  check('有 codescan:rules 通道', /handle\('codescan:rules'/.test(src), 'no rules ipc');
   check('codescan:hardcoded 透传 ruleIds', /codescan\.scanHardcoded\(dir, \{ ruleIds \}\)/.test(src), 'no ruleIds');
   check('codescan:coverage 透传 ruleIds', /buildCoverage\(items, dir, k, \{ ruleIds \}\)/.test(src), 'no ruleIds');
 }

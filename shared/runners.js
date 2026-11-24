@@ -8,6 +8,7 @@
  */
 
 const path = require('path');
+const { assertTestClass, assertCommandPath } = require('./shell-safety');
 
 /**
  * @typedef {object} RunContext
@@ -40,10 +41,15 @@ const RUNNERS = {
       // Windows 的 classpath 分隔符是 ;
       const cp = path.join(libDir, '*');
       if (!ctx.file) return { error: '没有脚本文件' };
+      // 脚本路径也会进命令行：和 maven 一样先过白名单
+      const fileCheck = assertCommandPath(ctx.file, '脚本文件');
+      if (!fileCheck.ok) return { error: fileCheck.message };
+      const dirCheck = assertCommandPath(ctx.projectDir, '项目目录');
+      if (!dirCheck.ok) return { error: dirCheck.message };
       return {
         cmd: ctx.java,
-        args: ['-Dfile.encoding=UTF-8', '-cp', cp, 'groovy.ui.GroovyMain', ctx.file],
-        cwd: ctx.projectDir || path.dirname(ctx.file)
+        args: ['-Dfile.encoding=UTF-8', '-cp', cp, 'groovy.ui.GroovyMain', fileCheck.value],
+        cwd: dirCheck.value || path.dirname(fileCheck.value)
       };
     }
   },
@@ -57,10 +63,14 @@ const RUNNERS = {
     build(ctx) {
       if (!ctx.python) return { error: '找不到 python，请先装 Python' };
       if (!ctx.file) return { error: '没有脚本文件' };
+      const fileCheck = assertCommandPath(ctx.file, '脚本文件');
+      if (!fileCheck.ok) return { error: fileCheck.message };
+      const dirCheck = assertCommandPath(ctx.projectDir, '项目目录');
+      if (!dirCheck.ok) return { error: dirCheck.message };
       return {
         cmd: ctx.python,
-        args: ['-X', 'utf8', ctx.file],
-        cwd: ctx.projectDir || path.dirname(ctx.file)
+        args: ['-X', 'utf8', fileCheck.value],
+        cwd: dirCheck.value || path.dirname(fileCheck.value)
       };
     }
   },
@@ -74,10 +84,14 @@ const RUNNERS = {
     build(ctx) {
       if (!ctx.python) return { error: '找不到 python，请先装 Python' };
       if (!ctx.file) return { error: '没有脚本文件' };
+      const fileCheck = assertCommandPath(ctx.file, '脚本文件');
+      if (!fileCheck.ok) return { error: fileCheck.message };
+      const dirCheck = assertCommandPath(ctx.projectDir, '项目目录');
+      if (!dirCheck.ok) return { error: dirCheck.message };
       return {
         cmd: ctx.python,
-        args: ['-X', 'utf8', '-m', 'pytest', ctx.file, '-v', '--tb=short'],
-        cwd: ctx.projectDir || path.dirname(ctx.file)
+        args: ['-X', 'utf8', '-m', 'pytest', fileCheck.value, '-v', '--tb=short'],
+        cwd: dirCheck.value || path.dirname(fileCheck.value)
       };
     }
   },
@@ -91,14 +105,29 @@ const RUNNERS = {
     build(ctx) {
       if (!ctx.mvn) return { error: '找不到 mvn，请先装 Maven' };
       if (!ctx.projectDir) return { error: '请选择项目' };
+
+      /**
+       * 注入防线（Critical）：testClass / projectDir 是要拼进命令行的字段。
+       *
+       * 老实现直接 `'-Dtest=' + ctx.testClass`，配上 runner.js 的 shell:true，
+       * 传 `Foo & calc` 就能执行任意命令（已实测）。
+       * 这里先按白名单卡死，不合法直接返回错误、不 spawn。
+       */
+      const dirCheck = assertCommandPath(ctx.projectDir, '项目目录');
+      if (!dirCheck.ok) return { error: dirCheck.message };
+
       const args = ['-q', 'test'];
-      if (ctx.testClass) args.push(`-Dtest=${ctx.testClass}`);
+      if (ctx.testClass) {
+        const classCheck = assertTestClass(ctx.testClass);
+        if (!classCheck.ok) return { error: classCheck.message };
+        args.push(`-Dtest=${classCheck.value}`);
+      }
       // 跳过 javadoc/checkstyle 等，只跑测试
       args.push('-DfailIfNoTests=false');
       return {
         cmd: ctx.mvn,
         args,
-        cwd: ctx.projectDir
+        cwd: dirCheck.value
       };
     }
   }

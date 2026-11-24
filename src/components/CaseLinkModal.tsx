@@ -141,7 +141,7 @@ export default function CaseLinkModal({ open, record, onClose, onSaved }: Props)
           allowClear
           size="small"
           style={{ width: 280 }}
-          prefix={<SearchOutlined style={{ color: '#9aa1b4' }} />}
+          prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />}
           placeholder="搜用例标题、模块、文件名"
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
@@ -258,7 +258,7 @@ export default function CaseLinkModal({ open, record, onClose, onSaved }: Props)
               width: 190,
               ellipsis: true,
               render: (_: any, r: any) => (
-                <span className="muted" style={{ fontSize: 11.5 }} title={r.relPath}>
+                <span className="muted" style={{ fontSize: 12 }} title={r.relPath}>
                   <FileTextOutlined /> {r.fileName}
                 </span>
               )

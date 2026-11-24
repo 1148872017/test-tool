@@ -13,6 +13,10 @@ import {
 import api from '../api';
 import { toast } from '../msg';
 import { CODE_LANGS, DEFAULT_TIMEOUT_MS, clampTimeout } from '../../shared/codelab';
+import { createLineBuffer, DEFAULT_LINE_CAP } from '../features/runner/lineBuffer';
+import type { RunnerLine } from '../features/runner/lineBuffer';
+import OutputConsole from '../features/runner/OutputConsole';
+import { useHotkeys } from '../hooks/useHotkeys';
 
 type Runner = {
   key: string;
@@ -32,7 +36,8 @@ type Project = {
   isTest: boolean;
 };
 
-type OutputLine = { stream: 'stdout' | 'stderr'; text: string };
+/** 输出批量刷进 state 的间隔（毫秒）：每来一行 setState 会把界面拖死 */
+const FLUSH_INTERVAL = 100;
 
 /** 单文件调试的运行环境（runner:detect 的返回） */
 type Detect = {
@@ -164,7 +169,13 @@ export default function CodeRunnerPage() {
   const [timeoutPreset, setTimeoutPreset] = useState(String(DEFAULT_TIMEOUT_MS));
   const [customSeconds, setCustomSeconds] = useState(DEFAULT_TIMEOUT_MS / 1000);
 
-  const [lines, setLines] = useState<OutputLine[]>([]);
+  /**
+   * 控制台里**显示**的行（来自环形缓冲的快照，最多 DEFAULT_LINE_CAP 行）。
+   * 真正的数据在环形缓冲里，state 只是 100ms 一次的快照。
+   */
+  const [output, setOutput] = useState<RunnerLine[]>([]);
+  /** 环形缓冲丢掉的行数（累计），> 0 时控制台置顶提示 */
+  const [droppedLines, setDroppedLines] = useState(0);
   const [running, setRunning] = useState(false);
   const [runId, setRunId] = useState('');
   const [result, setResult] = useState<any>(null);
@@ -179,6 +190,34 @@ export default function CodeRunnerPage() {
   const tipTimer = useRef<any>(null);
 
   const outputRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * 输出先进这里（无上限会吃光内存），页面只按 100ms 的节奏取快照。
+   * 用 useState 的惰性初始化拿到一个跨渲染稳定的实例（比 useRef(createLineBuffer())
+   * 好：后者每次渲染都会白建一个 2000 槽的空数组）。
+   */
+  const [buffer] = useState(() => createLineBuffer(DEFAULT_LINE_CAP));
+  const flushTimer = useRef<any>(null);
+
+  /** 把缓冲当前内容刷进 state（同时把「丢了多少行」带出去，保证不假装完整） */
+  const flushOutput = React.useCallback(() => {
+    if (flushTimer.current) {
+      clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+    }
+    setOutput(buffer.lines());
+    setDroppedLines(buffer.dropped());
+  }, [buffer]);
+
+  /** 清空输出：缓冲、待刷计时器、界面状态一起归零 */
+  const resetOutput = React.useCallback(() => {
+    if (flushTimer.current) {
+      clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+    }
+    buffer.clear();
+    setOutput([]);
+    setDroppedLines(0);
+  }, [buffer]);
 
   /** 下拉里的全部选项：单文件调试语言 + 项目/框架运行器 */
   const allRunners = useMemo<Runner[]>(() => {
@@ -267,10 +306,24 @@ export default function CodeRunnerPage() {
 
   /* ---------- 订阅输出 ---------- */
   useEffect(() => {
+    /**
+     * 输出回调**只往环形缓冲里塞**，不直接 setState。
+     *
+     * 计数器场景：Maven 构建一次能吐几万行，原来每行一次 setState，
+     * 每行都要全列表 reconcile + 强制 scrollTop 重排，界面直接卡死。
+     * 现在 100ms 合并一批，渲染次数从「行数」降到「10 次/秒」。
+     */
     const offOut = api.onRunnerOutput((d: any) => {
-      setLines((prev) => prev.concat([{ stream: d.stream, text: d.text }]));
+      buffer.push(d && d.stream === 'stderr' ? 'stderr' : 'stdout', d && d.text != null ? d.text : '');
+      if (flushTimer.current) return; // 这一批已经有计时器了
+      flushTimer.current = setTimeout(() => {
+        flushTimer.current = null;
+        flushOutput();
+      }, FLUSH_INTERVAL);
     });
     const offExit = api.onRunnerExit((d: any) => {
+      // 退出前把最后一批刷出来，否则最后几行输出会丢
+      flushOutput();
       setRunning(false);
       setResult(d);
 
@@ -293,14 +346,18 @@ export default function CodeRunnerPage() {
     return () => {
       offOut && offOut();
       offExit && offExit();
+      if (flushTimer.current) {
+        clearTimeout(flushTimer.current);
+        flushTimer.current = null;
+      }
     };
-  }, []);
+  }, [flushOutput]);
 
   /* ---------- 输出自动滚到底 ---------- */
   useEffect(() => {
     const el = outputRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [lines]);
+  }, [output]);
 
   /* ---------- 环境缺失 → 显示提示条 + 30s 倒计时 ---------- */
   const missingEnv = useMemo(() => {
@@ -340,7 +397,7 @@ export default function CodeRunnerPage() {
   const changeRunner = (key: string) => {
     setRunnerKey(key);
     setCode(TEMPLATES[key] !== undefined ? TEMPLATES[key] : LANG_TEMPLATES[key] || '');
-    setLines([]);
+    resetOutput();
     setResult(null);
     setRunFile('');
     /**
@@ -374,7 +431,7 @@ export default function CodeRunnerPage() {
       toast(`缺少运行时：${what} —— ${how}`, 'error');
       return;
     }
-    setLines([]);
+    resetOutput();
     setResult(null);
     setRunFile('');
     setRunning(true);
@@ -412,14 +469,17 @@ export default function CodeRunnerPage() {
   };
 
   const doClear = () => {
-    setLines([]);
+    resetOutput();
     setResult(null);
   };
 
   const doCopy = async () => {
-    const text = lines.map((l) => l.text).join('');
-    await api.copy(text, false);
-    toast('输出已复制');
+    // 直接取缓冲快照：还没到 100ms 刷新的那几行也要复制到
+    const snapshot = buffer.lines();
+    const dropped = buffer.dropped();
+    await api.copy(snapshot.map((l) => l.text).join(''), false);
+    // 丢过行就明说，别让用户以为复制到的是完整输出
+    toast(dropped ? `输出已复制（共 ${snapshot.length} 行，前面 ${dropped} 行已丢弃）` : '输出已复制');
   };
 
   const closeGuide = () => {
@@ -430,6 +490,21 @@ export default function CodeRunnerPage() {
       /* ignore */
     }
   };
+
+  /* ---------- 快捷键 ---------- */
+  /**
+   * 快捷键统一走 useHotkeys（挂着 window 上，焦点在页面任何位置都生效）：
+   * Ctrl+Enter 运行、Esc 取消。原来 textarea 自己的 onKeyDown 已经去掉，
+   * 否则在编辑器里按 Ctrl+Enter 会被「局部 + 全局」各触发一次。
+   */
+  useHotkeys({
+    'Ctrl+Enter': () => {
+      void doRun();
+    },
+    Escape: () => {
+      if (running) void doCancel();
+    }
+  });
 
   /** 下拉分组：单文件调试 / 项目·框架运行器（缺运行时的选项直接灰掉） */
   const runnerOptions = useMemo(() => {
@@ -541,6 +616,7 @@ export default function CodeRunnerPage() {
               icon={<CloseOutlined />}
               onClick={closeTip}
               className="env-tip-close"
+              aria-label="关闭环境提示"
             />
           </div>
           {/* 底部自动缩减的绿色粗线 */}
@@ -581,7 +657,7 @@ export default function CodeRunnerPage() {
             />
           ) : null}
           {timeoutPreset === 'custom' && timeoutMs !== Number(customSeconds) * 1000 ? (
-            <span className="muted" style={{ fontSize: 11.5 }}>
+            <span className="muted" style={{ fontSize: 12 }}>
               已按 {Math.round(timeoutMs / 1000)} 秒执行（允许 1~60 秒）
             </span>
           ) : null}
@@ -640,7 +716,7 @@ export default function CodeRunnerPage() {
           <Button size="small" icon={<ClearOutlined />} onClick={doClear}>
             清空
           </Button>
-          <Button size="small" icon={<CopyOutlined />} onClick={doCopy} disabled={!lines.length}>
+          <Button size="small" icon={<CopyOutlined />} onClick={doCopy} disabled={!output.length}>
             复制输出
           </Button>
         </Space>
@@ -656,12 +732,8 @@ export default function CodeRunnerPage() {
           onChange={(e) => setCode(e.target.value)}
           spellCheck={false}
           placeholder="在这里写代码，Ctrl+Enter 运行"
-          onKeyDown={(e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-              e.preventDefault();
-              doRun();
-            }
-          }}
+          aria-label="代码编辑器，Ctrl+Enter 运行"
+          aria-keyshortcuts="Control+Enter"
         />
       ) : (
         <div className="runner-maven-hint">
@@ -684,7 +756,7 @@ export default function CodeRunnerPage() {
         <span>
           输出
           {runFile ? (
-            <span className="muted" style={{ fontSize: 11.5, fontWeight: 400, marginLeft: 8 }}>
+            <span className="muted" style={{ fontSize: 12, fontWeight: 400, marginLeft: 8 }}>
               {runFile}
             </span>
           ) : null}
@@ -698,16 +770,22 @@ export default function CodeRunnerPage() {
           </span>
         ) : null}
       </div>
-      <div className="runner-output mono" ref={outputRef}>
-        {lines.length ? (
-          lines.map((l, i) => (
-            <span key={i} className={l.stream === 'stderr' ? 'runner-line-err' : ''}>
-              {l.text}
-            </span>
-          ))
-        ) : (
-          <span className="muted">{running ? '运行中…' : '点「运行」看输出'}</span>
-        )}
+      {/*
+        输出交给 OutputConsole 渲染（React.memo；行按自增 id 做 key，
+        环形缓冲从头部丢行也不会让整列表错位）。
+      */}
+      {/*
+        控制台：role=log 让读屏软件知道这是追加型日志；aria-live=off 是刻意的 ——
+        一次构建几千行，逐行播报会把读屏软件淹掉，需要时可自己去读。
+      */}
+      <div
+        className="runner-output mono"
+        ref={outputRef}
+        role="log"
+        aria-label="运行输出"
+        aria-live="off"
+      >
+        <OutputConsole lines={output} running={running} dropped={droppedLines} />
       </div>
     </div>
   );

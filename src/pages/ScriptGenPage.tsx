@@ -12,6 +12,7 @@ import {
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
+import StateEmpty from '../components/states/StateEmpty';
 
 type Tab = 'jmx' | 'sql';
 
@@ -364,7 +365,7 @@ export default function ScriptGenPage() {
                     </Checkbox>
                   </Space>
                 </div>
-                <div className="muted" style={{ fontSize: 11.5 }}>
+                <div className="muted" style={{ fontSize: 12 }}>
                   {/* 用 {'...'} 包起来，否则 esbuild 会把这里当插值 */}
                   {'CSV 里每行一条数据，请求里用 ${变量名} 引用（如 ${userName}）'}
                 </div>
@@ -409,7 +410,16 @@ export default function ScriptGenPage() {
                 </span>
               ) : null}
             </div>
-            <pre className="scriptgen-code mono">{jmxCode || '选好接口和参数，点「生成预览」'}</pre>
+            {jmxCode ? (
+              <pre className="scriptgen-code mono">{jmxCode}</pre>
+            ) : (
+              <StateEmpty
+                kind="no-data"
+                object="JMX 脚本"
+                desc="选好接口和参数，点「生成预览」；生成的脚本可直接用 JMeter 打开"
+                action={{ label: '生成预览', onClick: doGenJmx }}
+              />
+            )}
           </div>
         </div>
       ) : null}
@@ -639,7 +649,16 @@ export default function ScriptGenPage() {
                 </span>
               ) : null}
             </div>
-            <pre className="scriptgen-code mono">{sqlCode || '填好参数，点「生成 SQL」'}</pre>
+            {sqlCode ? (
+              <pre className="scriptgen-code mono">{sqlCode}</pre>
+            ) : (
+              <StateEmpty
+                kind="no-data"
+                object="SQL 脚本"
+                desc="填好库名、表和参数，点「生成 SQL」；只是生成语句，不会连库执行"
+                action={{ label: '生成 SQL', onClick: doGenSql }}
+              />
+            )}
           </div>
         </div>
       ) : null}

@@ -14,6 +14,9 @@ const {
 const ROOT = process.env.REPORT_ROOT || path.join(os.homedir(), 'Documents', '测试工作台', 'jmx', '压测结果');
 const results = [];
 const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });
+/* 大文件性能样本是可选增强：没有就显式跳过，不能让「静默跳过」混进全绿 */
+const skipped = [];
+const skip = (name) => skipped.push(name);
 
 /* ---------- 1. 真实目录 ---------- */
 const files = findReportFiles(ROOT);
@@ -106,10 +109,13 @@ if (fs.existsSync(BIG)) {
   check('20 万行能在 3 秒内解析完', ms < 3000, ms);
   check('大文件样本数正确', big.samples === 200000, big.samples);
   check('大文件 P95 合理', big.p95 > 0 && big.p95 < 1000, big.p95);
+} else {
+  skip('大文件性能（没有 ' + BIG + '，可用 BIG_JTL 指定）');
 }
 
 const failed = results.filter((r) => !r.ok);
 console.log('\n===== jtl 解析测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));
-console.log('\n' + (results.length - failed.length) + '/' + results.length + ' passed');
+for (const name of skipped) console.log('  SKIP  ' + name);
+console.log(`\n${results.length - failed.length} passed, ${failed.length} failed, ${skipped.length} skipped`);
 process.exit(failed.length ? 1 : 0);

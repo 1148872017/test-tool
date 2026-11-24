@@ -37,25 +37,35 @@ check('mock 默认也是 tray', /closeAction: 'tray'/.test(
 ), 'mock not synced');
 
 /* ============================================================
- * #2 透明度滑块：松手才保存
+ * #2 透明度滑块：v0.43 皮肤收口时整块下线
+ *
+ * 当时的修法（草稿态 + 松手才保存）本身没问题，但滑块存在的唯一理由是
+ * 「配合背景图压暗/提亮」，背景图下线后滑块没人用了，跟着删。
+ * 所以这里从「验证有」翻成「验证没有」——语义比原来更严：
+ * 谁把滑块加回来，这组断言立刻红。
  * ============================================================ */
-check('SkinCard 有 draft 状态', /opacityDraft/.test(skinSrc), 'no draft');
-check('Slider 用 onChangeComplete', /onChangeComplete/.test(skinSrc), 'no onChangeComplete');
-check('onChange 只做预览（不保存）', /previewOpacity/.test(skinSrc), 'no preview fn');
-check('提交时才 saveSettings', /commitOpacity/.test(skinSrc), 'no commit fn');
-check('显示值用 draft 优先', /shownOpacity/.test(skinSrc), 'no shownOpacity');
+check('SkinCard 没有透明度草稿态', !/opacityDraft/.test(skinSrc), 'draft is back');
+check('SkinCard 没有 Slider / onChangeComplete', !/<Slider/.test(skinSrc) && !/onChangeComplete/.test(skinSrc), 'slider is back');
+check('没有拖动预览函数', !/previewOpacity/.test(skinSrc), 'preview fn is back');
+check('没有松手保存函数', !/commitOpacity/.test(skinSrc), 'commit fn is back');
+check('没有滑块显示值', !/shownOpacity/.test(skinSrc), 'shownOpacity is back');
 
 /* ============================================================
- * #3 低透明度文字清晰度
+ * #3 低透明度文字清晰度：补丁随背景图一起下线
+ *
+ * 当年这一组是「给半透明面板打补丁」：算 alpha、按透明度加白阴影、
+ * 自动把 --text / --muted 加深。面板改回不透明纯白之后，这些运行时
+ * 补救手段全部失去意义，而且它们本身就是在绕开对比度问题。
+ * 现在对比度由 token 保证（见 test-skin.cjs 的真算断言）。
  * ============================================================ */
-check('alpha 下限提高到 0.62', /0\.62 \+/.test(appSrc), 'alpha min not raised');
+check('不再有面板 alpha 计算', !/0\.62 \+/.test(appSrc), 'alpha calc is back');
 check('不再用 0.35 下限', !/0\.35 \+/.test(appSrc), 'still 0.35');
-check('注入文字阴影变量', /--skin-text-shadow/.test(appSrc), 'no shadow var');
-check('有文字加深逻辑', /needDeep/.test(appSrc), 'no deep logic');
-check('CSS 用了 text-shadow 变量', /--skin-text-shadow/.test(cssSrc), 'css no shadow');
-check('侧栏标题单独加强', /nav-group-label/.test(cssSrc), 'no nav label css');
-check('有 bgTextMode 设置项', /bgTextMode/.test(mainSrc), 'no bgTextMode');
-check('SkinCard 有文字颜色选择', /文字颜色/.test(skinSrc), 'no text color ui');
+check('不再注入文字阴影变量', !/--skin-text-shadow/.test(appSrc), 'shadow var is back');
+check('不再有文字加深逻辑', !/needDeep/.test(appSrc), 'needDeep is back');
+check('CSS 不再引用文字阴影变量', !/--skin-text-shadow/.test(cssSrc), 'css still uses shadow var');
+check('侧栏标题仍单独加强', /\.nav-group-label/.test(cssSrc), 'no nav label css');
+check('前端不再读 bgTextMode', !/bgTextMode/.test(appSrc) && !/bgTextMode/.test(skinSrc), 'still reads bgTextMode');
+check('SkinCard 不再有文字颜色选择', !/文字颜色/.test(skinSrc), 'text color ui is back');
 
 /* ============================================================
  * #4 jmx 版本跟设置走

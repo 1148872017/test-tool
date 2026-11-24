@@ -10,7 +10,7 @@ const codegen = require('../../shared/codegen');
 const sqlgen = require('../../shared/sqlgen');
 
 function register(deps) {
-  const { ipcMain, dialog, store, fs, path, getWindow, assertUnlocked } = deps;
+  const { handle, dialog, store, fs, path, getWindow, assertUnlocked } = deps;
 
   /* ==================== 代码骨架生成 ==================== *
    * 从接口记录 / JSON / 页面元素生成 Java/Python 代码骨架。
@@ -18,7 +18,7 @@ function register(deps) {
    * ---------------------------------------------------- */
 
   /** 可用的生成目标 */
-  ipcMain.handle('codegen:targets', async () => {
+  handle('codegen:targets', async () => {
     assertUnlocked();
     return { ok: true, targets: codegen.listTargets() };
   });
@@ -33,7 +33,7 @@ function register(deps) {
    *   json       JSON 文本（kind=model 用）
    *   className  类名（可选）
    */
-  ipcMain.handle('codegen:preview', async (e, payload = {}) => {
+  handle('codegen:preview', async (e, payload = {}) => {
     assertUnlocked();
     const targetKey = String(payload.targetKey || '').trim();
     if (!targetKey) return { ok: false, message: '缺少生成目标' };
@@ -63,7 +63,7 @@ function register(deps) {
    * payload: 同 codegen:preview，另加
    *   dir  保存目录（空 = 弹选择框）
    */
-  ipcMain.handle('codegen:save', async (e, payload = {}) => {
+  handle('codegen:save', async (e, payload = {}) => {
     assertUnlocked();
     const targetKey = String(payload.targetKey || '').trim();
     if (!targetKey) return { ok: false, message: '缺少生成目标' };
@@ -110,22 +110,22 @@ function register(deps) {
    * 只生成 SQL，不连数据库、不执行。
    * ---------------------------------------------------------- */
 
-  ipcMain.handle('sqlgen:snapshot', async (e, payload = {}) => {
+  handle('sqlgen:snapshot', async (e, payload = {}) => {
     assertUnlocked();
     return sqlgen.genSnapshot(payload);
   });
 
-  ipcMain.handle('sqlgen:cleanup', async (e, payload = {}) => {
+  handle('sqlgen:cleanup', async (e, payload = {}) => {
     assertUnlocked();
     return sqlgen.genCleanup(payload);
   });
 
-  ipcMain.handle('sqlgen:restore', async (e, payload = {}) => {
+  handle('sqlgen:restore', async (e, payload = {}) => {
     assertUnlocked();
     return sqlgen.genRestore(payload);
   });
 
-  ipcMain.handle('sqlgen:listBackups', async (e, { tables } = {}) => {
+  handle('sqlgen:listBackups', async (e, { tables } = {}) => {
     assertUnlocked();
     return { ok: true, list: sqlgen.listBackupTables(tables) };
   });

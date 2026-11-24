@@ -9,8 +9,11 @@
  *    不等跑完再返回，边跑边推（IPC event）。用户能实时看到进度。
  *
  * 2. **Windows 的 .cmd 坑**
- *    Node 不能直接 spawn `.bat` / `.cmd`（CVE-2024-27980），
- *    必须 `shell: true` 或 `cmd /c`。mvn.cmd 就是这种情况。
+ *    Node 不能直接 spawn `.bat` / `.cmd`（CVE-2024-27980），必须经 cmd.exe。
+ *    老实现开了 shell 模式 —— 那等于把 argv 拼成一个字符串交给 cmd，
+ *    **参数不转义**，`-Dtest=Foo & calc` 会执行任意命令（Critical，已实测）。
+ *    现在改成 `cmd.exe /d /s /c ""mvn.cmd" "-q" "test"'`，参数逐个加引号，
+ *    argv 由我们控制（见 shared/shell-safety.js 的 buildCmdExeInvocation）。
  *
  * 3. **中文乱码**
  *    Windows 控制台默认 GBK，Node 按 UTF-8 解会乱码。
@@ -29,6 +32,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { buildTaskkillArgs } = require('../shared/codelab');
+const { buildCmdExeInvocation } = require('../shared/shell-safety');
 
 /** 默认超时：5 分钟 */
 const DEFAULT_TIMEOUT = 5 * 60 * 1000;
@@ -388,18 +392,29 @@ function run(opts) {
   const started = Date.now();
   const timeout = opts.timeout || DEFAULT_TIMEOUT;
 
-  // Windows 的 .cmd / .bat 必须 shell: true
+  // Windows 的 .cmd / .bat 必须经 cmd.exe（Node 不允许直接执行批处理），
+  // 但**不能**开 shell 模式 —— 那条路上 argv 会被拼成一串、参数不转义，
+  // 等于把调用方传进来的值当命令执行。这里改成显式 cmd.exe + 逐项加引号。
   const isWin = process.platform === 'win32';
-  const needsShell = isWin && /\.(cmd|bat)$/i.test(opts.cmd);
+  const isBatch = isWin && /\.(cmd|bat)$/i.test(opts.cmd);
 
   let proc;
   try {
-    proc = spawn(opts.cmd, opts.args || [], {
-      cwd: opts.cwd || process.cwd(),
-      env: Object.assign({}, process.env, opts.env || {}),
-      shell: needsShell,
-      windowsHide: true
-    });
+    if (isBatch) {
+      const inv = buildCmdExeInvocation(opts.cmd, opts.args || []);
+      proc = spawn(inv.file, inv.args, {
+        cwd: opts.cwd || process.cwd(),
+        env: Object.assign({}, process.env, opts.env || {}),
+        windowsVerbatimArguments: true,
+        windowsHide: true
+      });
+    } else {
+      proc = spawn(opts.cmd, opts.args || [], {
+        cwd: opts.cwd || process.cwd(),
+        env: Object.assign({}, process.env, opts.env || {}),
+        windowsHide: true
+      });
+    }
   } catch (e) {
     opts.onExit({ code: -1, signal: null, duration: 0, timedOut: false, error: String(e && e.message) });
     return id;
@@ -436,10 +451,24 @@ function run(opts) {
     opts.onData({ stream: 'stderr', text: decode(buf) });
   });
 
-  proc.on('error', (err) => {
+  /**
+   * 收尾只允许发生一次。
+   *
+   * 真实 bug：spawn 失败时 `error` 会先触发、随后 `close` 也可能触发，
+   * 两个监听各自调一次 onExit → 前端收到两条 `runner:exit`，
+   * 完成 toast 弹两次、状态被写两遍。这里用 settled 标志把收尾收口成一条路。
+   */
+  let settled = false;
+  const finish = (result) => {
+    if (settled) return;
+    settled = true;
     clearTimeout(timer);
     running.delete(id);
-    opts.onExit({
+    opts.onExit(result);
+  };
+
+  proc.on('error', (err) => {
+    finish({
       code: -1,
       signal: null,
       duration: Date.now() - started,
@@ -449,9 +478,7 @@ function run(opts) {
   });
 
   proc.on('close', (code, signal) => {
-    clearTimeout(timer);
-    running.delete(id);
-    opts.onExit({
+    finish({
       code,
       signal,
       duration: Date.now() - started,

@@ -34,7 +34,7 @@ const planRuns = new Map();
 let planSeq = 0;
 
 function register(deps) {
-  const { ipcMain, dialog, shell, app, fs, path, getWindow, getSettings, assertUnlocked } = deps;
+  const { handle, dialog, shell, app, fs, path, getWindow, getSettings, assertUnlocked, rememberPicked } = deps;
 
   /**
    * 探测单文件调试需要的运行时。
@@ -250,7 +250,7 @@ function register(deps) {
   }
 
   /** 运行器列表 + 完整环境状态（给前端下拉和状态面板） */
-  ipcMain.handle('runner:list', async () => {
+  handle('runner:list', async () => {
     assertUnlocked();
     const settings = getSettings();
     const env = runner.detectAll();
@@ -277,13 +277,13 @@ function register(deps) {
    *
    * 每次调用都重新探测（不缓存）：用户可能刚装完 JDK 就回来点「重新检测」。
    */
-  ipcMain.handle('runner:detect', async () => {
+  handle('runner:detect', async () => {
     assertUnlocked();
     return detectRuntimes();
   });
 
   /** 打开 Playwright 浏览器缓存目录 */
-  ipcMain.handle('runner:openBrowserDir', async () => {
+  handle('runner:openBrowserDir', async () => {
     assertUnlocked();
     const pw = runner.detectPlaywrightBrowsers();
     if (!pw.dir) return { ok: false, message: '找不到缓存目录' };
@@ -297,7 +297,7 @@ function register(deps) {
   });
 
   /** 扫描代码项目目录 */
-  ipcMain.handle('projects:scan', async (e, { root } = {}) => {
+  handle('projects:scan', async (e, { root } = {}) => {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.projectDir || '';
@@ -305,7 +305,7 @@ function register(deps) {
   });
 
   /** 列出某个 Maven 项目的测试类 */
-  ipcMain.handle('projects:testClasses', async (e, { dir } = {}) => {
+  handle('projects:testClasses', async (e, { dir } = {}) => {
     assertUnlocked();
     const d = String(dir || '').trim();
     if (!d) return { ok: false, classes: [], message: '缺少项目目录' };
@@ -313,13 +313,15 @@ function register(deps) {
   });
 
   /** 选项目目录 */
-  ipcMain.handle('projects:pickDir', async () => {
+  handle('projects:pickDir', async () => {
     assertUnlocked();
     const picked = await dialog.showOpenDialog(getWindow(), {
       title: '选择代码项目目录',
       properties: ['openDirectory']
     });
     if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+    // 这个目录不一定写进 settings，记进会话白名单（随后 projects:scan/testClasses 用它）
+    rememberPicked(picked.filePaths[0]);
     return { ok: true, dir: picked.filePaths[0] };
   });
 
@@ -343,7 +345,7 @@ function register(deps) {
    *
    * 输出通过 runner:output 事件流式推送，结束时推 runner:exit。
    */
-  ipcMain.handle('runner:run', async (e, payload = {}) => {
+  handle('runner:run', async (e, payload = {}) => {
     assertUnlocked();
 
     // 前端传什么都别信：0 / -1 / "abc" / 999999 都要落在 [1000, 60000]
@@ -435,7 +437,7 @@ function register(deps) {
   });
 
   /** 取消正在跑的任务 */
-  ipcMain.handle('runner:cancel', async (e, { runId } = {}) => {
+  handle('runner:cancel', async (e, { runId } = {}) => {
     assertUnlocked();
     const id = String(runId || '');
     if (!id) return { ok: false };

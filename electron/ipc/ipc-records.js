@@ -14,7 +14,7 @@ const { buildTemplate, templateFileName } = require('../../shared/importTemplate
 
 function register(deps) {
   const {
-    ipcMain,
+    handle,
     dialog,
     shell,
     app,
@@ -26,31 +26,33 @@ function register(deps) {
     loadSettings,
     publicSettings,
     assertUnlocked,
+    assertPathIn,
+    rememberPicked,
     isLocked
   } = deps;
 
-  ipcMain.handle('records:list', async (e, payload) => {
+  handle('records:list', async (e, payload) => {
     assertUnlocked();
     const { collection, keyword, tag, favorite } = payload || {};
     return store.list(collection, { keyword, tag, favorite });
   });
 
-  ipcMain.handle('records:get', async (e, { id }) => {
+  handle('records:get', async (e, { id }) => {
     assertUnlocked();
     return store.get(id);
   });
 
-  ipcMain.handle('records:save', async (e, record) => {
+  handle('records:save', async (e, record) => {
     assertUnlocked();
     return store.save(record);
   });
 
-  ipcMain.handle('records:remove', async (e, { id }) => {
+  handle('records:remove', async (e, { id }) => {
     assertUnlocked();
     return store.remove(id);
   });
 
-  ipcMain.handle('records:counts', async () => {
+  handle('records:counts', async () => {
     assertUnlocked();
     return store.counts();
   });
@@ -63,50 +65,50 @@ function register(deps) {
    * 保留天数是 store.TRASH_RETENTION_DAYS（30 天），界面文案也从那取。
    * ------------------------------------------------------------------ */
 
-  ipcMain.handle('records:trash-list', async () => {
+  handle('records:trash-list', async () => {
     assertUnlocked();
     return store.listTrash();
   });
 
-  ipcMain.handle('records:trash-count', async () => {
+  handle('records:trash-count', async () => {
     assertUnlocked();
     return store.countTrash();
   });
 
-  ipcMain.handle('records:trash-restore', async (e, { id } = {}) => {
+  handle('records:trash-restore', async (e, { id } = {}) => {
     assertUnlocked();
     return store.restore(String(id || ''));
   });
 
-  ipcMain.handle('records:trash-purge', async (e, { id } = {}) => {
+  handle('records:trash-purge', async (e, { id } = {}) => {
     assertUnlocked();
     return store.purge(String(id || ''));
   });
 
-  ipcMain.handle('records:trash-clear', async () => {
+  handle('records:trash-clear', async () => {
     assertUnlocked();
     return store.clearTrash();
   });
 
-  ipcMain.handle('backup:now', async () => {
+  handle('backup:now', async () => {
     const file = store.backup();
     return { file };
   });
 
-  ipcMain.handle('backup:list', async () => store.listBackups());
+  handle('backup:list', async () => store.listBackups());
 
   // ---- 可配置选项（环境 / 角色·权限 / 标签）----
-  ipcMain.handle('options:get', async () => {
+  handle('options:get', async () => {
     assertUnlocked();
     return store.getOptions();
   });
 
-  ipcMain.handle('options:save', async (e, { key, items } = {}) => {
+  handle('options:save', async (e, { key, items } = {}) => {
     assertUnlocked();
     return store.saveOptions(String(key || ''), items);
   });
 
-  ipcMain.handle('data:openDir', async () => {
+  handle('data:openDir', async () => {
     const dir = path.dirname(store.dbPath);
     await shell.openPath(dir);
     return dir;
@@ -116,7 +118,7 @@ function register(deps) {
    * 清除数据。target: 'backups' 只清备份文件；'local' 重置本地数据文件。
    * 破坏性操作，界面侧有 3 秒倒计时兜一层手滑。
    */
-  ipcMain.handle('data:clear', async (e, { target } = {}) => {
+  handle('data:clear', async (e, { target } = {}) => {
     assertUnlocked();
     const what = String(target || '');
     if (what === 'backups') {
@@ -131,7 +133,7 @@ function register(deps) {
     return { ok: false, target: what, message: '未知的清除目标' };
   });
 
-  ipcMain.handle('data:export', async (e, { includeSecrets, collection } = {}) => {
+  handle('data:export', async (e, { includeSecrets, collection } = {}) => {
     const stamp = new Date().toISOString().slice(0, 10);
     const conf = collection ? COLLECTION_MAP[collection] : null;
     const base = conf ? `测试工作台-${conf.name}-${stamp}.json` : `测试工作台-备份-${stamp}.json`;
@@ -156,7 +158,7 @@ function register(deps) {
    * 模板由 shared/importTemplate.js 生成（纯函数，字段取自 shared/collections.js），
    * 所以集合加字段后模板自动跟着变，不用手工维护一份样例。
    */
-  ipcMain.handle('data:importTemplate', async (e, { collection } = {}) => {
+  handle('data:importTemplate', async (e, { collection } = {}) => {
     assertUnlocked();
     const key = String(collection || '').trim();
     const conf = key ? COLLECTION_MAP[key] : null;
@@ -191,7 +193,7 @@ function register(deps) {
    * 导入：.json = 合并（留原 id，关联和选项一起带过来）
    *      .db   = 整库覆盖，破坏性操作，先回给界面确认，不在这里直接恢复
    */
-  ipcMain.handle('data:import', async (e, { collection } = {}) => {
+  handle('data:import', async (e, { collection } = {}) => {
     const conf = collection ? COLLECTION_MAP[collection] : null;
     // 按集合导入只认 JSON：.db 是整库覆盖，不能只导一个集合，
     // 所以过滤器里也不该出现它（否则用户选了才被告知不行）
@@ -209,6 +211,8 @@ function register(deps) {
     });
     if (result.canceled || !result.filePaths.length) return { ok: false };
     const file = result.filePaths[0];
+    // 用户明确选过的文件 → 本会话可信根（后面 backup:restore 可能用它覆盖整库）
+    rememberPicked(file);
 
     // 选了 .db：这是整库覆盖，不能悄悄执行，回给界面弹确认
     if (/\.db$/i.test(file)) {
@@ -249,12 +253,19 @@ function register(deps) {
   });
 
   /** 用备份（或任意 .db）覆盖当前库；恢复前自动给当前库留安全备份 */
-  ipcMain.handle('backup:restore', async (e, { file } = {}) => {
+  handle('backup:restore', async (e, { file } = {}) => {
     assertUnlocked();
     const name = String(file || '').trim();
     if (!name) return { ok: false, message: '缺少备份文件' };
     // 只给文件名时按备份目录解析；给绝对路径则原样用（从别处拷来的 .db）
     const target = path.isAbsolute(name) ? name : path.join(store.backupDir, name);
+    /**
+     * 入参守卫（v0.43.0）：
+     * 恢复 = 用外来 .db 覆盖当前库，等于「把库内容交给这个文件」。
+     * 只允许备份目录（+ 本会话选过的路径），不允许任意 .db。
+     */
+    const bad = assertPathIn(target);
+    if (bad) return bad;
     try {
       const res = store.restoreFrom(target);
       loadSettings();
@@ -266,7 +277,7 @@ function register(deps) {
   });
 
   /** 导出整库 .db（备份到指定位置，可拿去别的机器覆盖用） */
-  ipcMain.handle('data:exportDb', async () => {
+  handle('data:exportDb', async () => {
     assertUnlocked();
     const stamp = new Date().toISOString().replace(/[:T]/g, '-').replace(/\..+/, '');
     const result = await dialog.showSaveDialog(getWindow(), {
@@ -291,7 +302,7 @@ function register(deps) {
    *   from/to 日期范围（date 类型用）
    *   dir     输出目录（空 = 工作区根目录）
    */
-  ipcMain.handle('data:genFile', async (e, payload = {}) => {
+  handle('data:genFile', async (e, payload = {}) => {
     assertUnlocked();
     const settings = getSettings();
 
@@ -307,6 +318,13 @@ function register(deps) {
     if (!dir) {
       return { ok: false, needWorkspace: true, message: '没有工作区目录，请先去设置里配' };
     }
+    /**
+     * 入参守卫（v0.43.0）：
+     * 这条通道是**写文件**（在 dir 下生成 csv/json），
+     * 不校验的话渲染进程可以往任意目录写以指定名字结尾的文件。
+     */
+    const bad = assertPathIn(dir);
+    if (bad) return bad;
 
     // 生成数据
     let headers = [];
@@ -352,7 +370,7 @@ function register(deps) {
    * data:openDir 已经被「打开数据目录」占了，
    * 两个都用同一个名字会注册两次 → 启动直接崩（踩坑 #103）。
    */
-  ipcMain.handle('data:openWorkspace', async (e, { dir } = {}) => {
+  handle('data:openWorkspace', async (e, { dir } = {}) => {
     assertUnlocked();
     const settings = getSettings();
     const target = String(dir || '').trim() || String(settings.workspaceDir || '').trim();

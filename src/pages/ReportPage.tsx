@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Select, Tag, Alert, Space, Empty, Tooltip, Segmented } from 'antd';
+import { Button, Select, Tag, Alert, Space, Tooltip, Segmented } from 'antd';
 import {
   FolderOpenOutlined,
   ReloadOutlined,
@@ -12,6 +12,7 @@ import {
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
+import StateEmpty from '../components/states/StateEmpty';
 
 type Test = {
   id: string;
@@ -214,16 +215,13 @@ export default function ReportPage() {
 
       {!tests.length ? (
         <div className="report-empty">
-          <Empty
-            description={
-              <span>
-                还没有解析结果
-                <br />
-                <span className="muted" style={{ fontSize: 12 }}>
-                  点「扫描」找项目里的 allure-results，或「选目录」手动指定
-                </span>
-              </span>
-            }
+          <StateEmpty
+            size="page"
+            kind="no-data"
+            object="解析结果"
+            desc="点「扫描」找项目里的 allure-results，或「选目录」手动指定"
+            action={{ label: '扫描项目', onClick: doScan }}
+            secondary={{ label: '选目录', onClick: doPick }}
           />
         </div>
       ) : (

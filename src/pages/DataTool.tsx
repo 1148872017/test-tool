@@ -9,6 +9,8 @@ import {
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
+import StateEmpty from '../components/states/StateEmpty';
+import { useHotkeys } from '../hooks/useHotkeys';
 
 // 生成逻辑抽到 shared/faker.js，前后端共用（大数量在 Node 侧生成写文件）
 import { TYPES, TYPE_MAP, genOne, genDate, toCsv, toJson } from '../../shared/faker';
@@ -16,19 +18,41 @@ import { TYPES, TYPE_MAP, genOne, genDate, toCsv, toJson } from '../../shared/fa
 
 /** 多字段组合里的一个字段 */
 type Field = {
+  /** 行键：删中间一行时不能让后面整排错位（不能用数组下标当 key） */
+  id: number;
   name: string;
   type: string;
   /** 固定值（填了就不用随机生成） */
   fixed: string;
 };
 
+/** 字段行自增 id（只在前端用于 React key，不发给主进程） */
+let fieldSeq = 0;
+const makeField = (patch?: Partial<Omit<Field, 'id'>>): Field =>
+  Object.assign({ id: ++fieldSeq, name: '', type: 'name', fixed: '' }, patch || {});
+
 /** 默认字段组合（开箱即用的「用户表」样例） */
 const DEFAULT_FIELDS: Field[] = [
-  { name: 'userName', type: 'name', fixed: '' },
-  { name: 'mobile', type: 'phone', fixed: '' },
-  { name: 'email', type: 'email', fixed: '' },
-  { name: 'idCard', type: 'idcard', fixed: '' }
+  makeField({ name: 'userName', type: 'name' }),
+  makeField({ name: 'mobile', type: 'phone' }),
+  makeField({ name: 'email', type: 'email' }),
+  makeField({ name: 'idCard', type: 'idcard' })
 ];
+
+/**
+ * 只把协议需要的三列送给主进程：id 是前端行键，别塞进 IPC 载荷。
+ * （shared/faker 只读 name / type / fixed，多传也不会坏，但没必要）
+ */
+const toPayloadFields = (list: Field[]) =>
+  list.filter((f) => f.name.trim()).map((f) => ({ name: f.name, type: f.type, fixed: f.fixed }));
+
+/**
+ * 造数预览行的 key。
+ *
+ * 生成结果没有业务主键，纯下标当 key 在「重新生成 / 行内容变了」时会让
+ * React 复用旧节点；这里用「内容 + 位置」：内容变了就换 key，重复内容靠位置去重。
+ */
+const previewKey = (content: string, index: number) => index + ':' + content;
 
 /**
  * 「大数量」分界线 + 预览条数。
@@ -74,7 +98,7 @@ export default function DataTool() {
     const payload: any = {
       mode,
       type,
-      fields: fields.filter((f) => f.name.trim()),
+      fields: toPayloadFields(fields),
       count: n,
       format: 'csv',
       from: dateFrom,
@@ -135,7 +159,7 @@ export default function DataTool() {
         const gen = (index: number) => (def.value === 'date' ? genDate(dateFrom, dateTo) : def.fn(index));
         setRows(Array.from({ length: previewCount }, (_, i) => gen(i)));
       } else {
-        const valid = fields.filter((f) => f.name.trim());
+        const valid = toPayloadFields(fields);
         const resolved = valid.map((f) => {
           const t = TYPES.find((x) => x.value === f.type) || TYPES[0];
           return { fixed: f.fixed, fn: t.value === 'date' ? () => genDate(dateFrom, dateTo) : t.fn };
@@ -163,7 +187,7 @@ export default function DataTool() {
     }
 
     // 多字段：每行按字段列表逐个生成
-    const valid = fields.filter((f) => f.name.trim());
+    const valid = toPayloadFields(fields);
     if (!valid.length) {
       toast('至少填一个字段名', 'warning');
       return;
@@ -182,14 +206,11 @@ export default function DataTool() {
   };
 
   /* ---------- 字段增删改 ---------- */
-  const addField = () => setFields((prev) => prev.concat([{ name: '', type: 'name', fixed: '' }]));
-  const removeField = (i: number) => setFields((prev) => prev.filter((_, idx) => idx !== i));
-  const setField = (i: number, key: keyof Field, v: string) => {
-    setFields((prev) => {
-      const next = prev.slice();
-      next[i] = Object.assign({}, next[i], { [key]: v });
-      return next;
-    });
+  // 增删都按 id 走：删中间一行后，剩下每行的 id 不变，React 不会错位复用输入框
+  const addField = () => setFields((prev) => prev.concat([makeField()]));
+  const removeField = (id: number) => setFields((prev) => prev.filter((f) => f.id !== id));
+  const setField = (id: number, key: 'name' | 'type' | 'fixed', v: string) => {
+    setFields((prev) => prev.map((f) => (f.id === id ? Object.assign({}, f, { [key]: v }) : f)));
   };
 
   /** 当前模式下的有效字段名（导出用） */
@@ -291,6 +312,18 @@ export default function DataTool() {
 
   const hasData = mode === 'multi' ? multiRows.length > 0 : rows.length > 0;
 
+  /* ---------- 快捷键 ---------- */
+  /**
+   * Ctrl+Enter 生成（和代码调试页一致）。挂在 window 上，
+   * 焦点在数量框 / 字段输入框里也能直接按，不用先去点按钮。
+   */
+  useHotkeys({
+    'Ctrl+Enter': () => {
+      if (busyFile) return;
+      void generate();
+    }
+  });
+
   return (
     <div>
       <div className="page-head">
@@ -311,7 +344,19 @@ export default function DataTool() {
             ]}
           />
           {mode === 'single' ? (
-            <Select value={type} onChange={setType} options={TYPES} style={{ width: 140 }} />
+            /*
+             * 14 个类型必须一次全给出来：rc-select 默认虚拟滚动
+             * （listHeight 200 / listItemHeight 20 = 刚好 10 行），
+             * 第 11~14 项要滚才能看到，用户会怀疑「是不是缺功能」。
+             * 14 项虚拟化没有任何性能收益，直接关掉。
+             */
+            <Select
+              value={type}
+              onChange={setType}
+              options={TYPES}
+              virtual={false}
+              style={{ width: 140 }}
+            />
           ) : null}
 
           {/* 日期类型：可以指定范围（规划要求「指定范围的时间戳」） */}
@@ -391,24 +436,26 @@ export default function DataTool() {
                 </tr>
               </thead>
               <tbody>
-                {fields.map((f, i) => (
-                  <tr key={i}>
+                {fields.map((f) => (
+                  // key 用行 id：删中间一行时后面的输入框不会被错位复用
+                  <tr key={f.id}>
                     <td>
                       <Input
                         size="small"
                         className="mono"
                         value={f.name}
                         placeholder="userName"
-                        onChange={(e) => setField(i, 'name', e.target.value)}
+                        onChange={(e) => setField(f.id, 'name', e.target.value)}
                       />
                     </td>
                     <td>
                       <Select
                         size="small"
                         value={f.type}
-                        onChange={(v) => setField(i, 'type', v)}
+                        onChange={(v) => setField(f.id, 'type', v)}
                         style={{ width: '100%' }}
                         options={TYPES}
+                        virtual={false}
                       />
                     </td>
                     <td>
@@ -416,11 +463,18 @@ export default function DataTool() {
                         size="small"
                         value={f.fixed}
                         placeholder="（留空 = 随机生成）"
-                        onChange={(e) => setField(i, 'fixed', e.target.value)}
+                        onChange={(e) => setField(f.id, 'fixed', e.target.value)}
                       />
                     </td>
                     <td>
-                      <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => removeField(i)} />
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => removeField(f.id)}
+                        aria-label={'删除字段 ' + (f.name.trim() || '未命名字段')}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -429,7 +483,7 @@ export default function DataTool() {
             <Button size="small" type="link" icon={<PlusOutlined />} onClick={addField}>
               添加字段
             </Button>
-            <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
               一行 = 一条完整记录（比如「姓名 + 手机号 + 邮箱 + 身份证」），导出的 CSV 可直接喂给 pytest / JMeter 的 CSV Data Set。
             </div>
           </>
@@ -501,7 +555,12 @@ export default function DataTool() {
         {/* 多字段预览：表格 */}
         {mode === 'multi' ? (
           multiRows.length === 0 ? (
-            <div className="empty-tip">还没有数据</div>
+            <StateEmpty
+              kind="no-data"
+              object="数据"
+              desc="填好字段和数量，点「生成」；多字段一行 = 一条完整记录"
+              action={{ label: '生成数据', onClick: generate }}
+            />
           ) : (
             <div style={{ maxHeight: 460, overflow: 'auto' }}>
               <table className="jmx-table data-multi-table">
@@ -515,12 +574,14 @@ export default function DataTool() {
                 </thead>
                 <tbody>
                   {multiRows.slice(0, 500).map((row, i) => (
-                    <tr key={i}>
-                      <td className="muted mono" style={{ fontSize: 11.5 }}>
+                    // 预览行没有主键：用「行内容 + 位置」，重新生成时内容变了就换 key
+                    <tr key={previewKey(row.join('\u0001'), i)}>
+                      <td className="muted mono" style={{ fontSize: 12 }}>
                         {i + 1}
                       </td>
                       {row.map((v, j) => (
-                        <td key={j} className="mono" style={{ fontSize: 12 }}>
+                        // 列 key 用字段名（字段顺序会随编辑变化），没有名字时退回下标
+                        <td key={activeFieldNames[j] || j} className="mono" style={{ fontSize: 12 }}>
                           {v}
                         </td>
                       ))}
@@ -529,19 +590,24 @@ export default function DataTool() {
                 </tbody>
               </table>
               {multiRows.length > 500 ? (
-                <div className="muted" style={{ padding: '8px 12px', fontSize: 11.5 }}>
+                <div className="muted" style={{ padding: '8px 12px', fontSize: 12 }}>
                   只显示前 500 行（共 {multiRows.length} 行，导出时是全部）
                 </div>
               ) : null}
             </div>
           )
         ) : rows.length === 0 ? (
-          <div className="empty-tip">还没有数据</div>
+          <StateEmpty
+            kind="no-data"
+            object="数据"
+            desc="选好类型和数量，点「生成」；生成的记录只在本机计算，不上传"
+            action={{ label: '生成数据', onClick: generate }}
+          />
         ) : (
           <div style={{ maxHeight: 460, overflow: 'auto' }}>
             {rows.map((v, i) => (
               <div
-                key={i}
+                key={previewKey(v, i)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -550,14 +616,20 @@ export default function DataTool() {
                   borderBottom: '1px solid #f5f6fb'
                 }}
               >
-                <span className="muted mono" style={{ width: 34, fontSize: 11.5 }}>
+                <span className="muted mono" style={{ width: 34, fontSize: 12 }}>
                   {i + 1}
                 </span>
                 <span className="mono" style={{ flex: 1 }}>
                   {v}
                 </span>
                 <Tooltip title="复制">
-                  <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copyOne(v)} />
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CopyOutlined />}
+                    onClick={() => copyOne(v)}
+                    aria-label={'复制第 ' + (i + 1) + ' 条'}
+                  />
                 </Tooltip>
               </div>
             ))}

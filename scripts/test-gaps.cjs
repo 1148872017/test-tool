@@ -5,6 +5,9 @@ const os = require('os');
 
 const results = [];
 const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });
+/* 真实样例文件不存在时显式跳过：跳过要进汇总，不能静默变全绿 */
+const skipped = [];
+const skip = (name) => skipped.push(name);
 
 /* ============================================================
  * 一、OpenAPI 文件解析（JSON / YAML）
@@ -12,8 +15,8 @@ const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: con
 
 const openapifile = require('../electron/openapifile.js');
 
-// 真实 JSON 文件
-const realJson = 'C:/Users/EDY/Downloads/默认模块.openapi.json';
+// 真实 JSON 文件：不写死作者机器路径，按「当前用户的下载目录」找；找不到就显式跳过
+const realJson = path.join(os.homedir(), 'Downloads', '默认模块.openapi.json');
 if (fs.existsSync(realJson)) {
   const r = openapifile.parseFile(realJson);
   check('JSON 文件解析成功', r.ok === true, r.message);
@@ -21,7 +24,7 @@ if (fs.existsSync(realJson)) {
   check('每个 item 有 tmpId', r.items && r.items.every((it) => it.tmpId), 'no tmpId');
   check('返回 doc 信息', !!r.doc && !!r.doc.title, r.doc);
 } else {
-  console.log('（跳过真实 JSON 测试）');
+  skip('真实 OpenAPI JSON 样例（不存在：' + realJson + '，4 项断言整体跳过）');
 }
 
 // 造 YAML 文件
@@ -197,8 +200,8 @@ check('pages 有 elements 字段', pagesConf && pagesConf.fields.some((f) => f.k
  * ============================================================ */
 
 const mainSrc = require('./_electron-src.cjs').readElectronSource();
-check('有 openapi:pickFile', /ipcMain\.handle\('openapi:pickFile'/.test(mainSrc), 'no pickFile');
-check('有 openapi:parseFile', /ipcMain\.handle\('openapi:parseFile'/.test(mainSrc), 'no parseFile');
+check('有 openapi:pickFile', /handle\('openapi:pickFile'/.test(mainSrc), 'no pickFile');
+check('有 openapi:parseFile', /handle\('openapi:parseFile'/.test(mainSrc), 'no parseFile');
 check('codegen:preview 支持 apiData', /payload\.apiData/.test(mainSrc), 'no apiData');
 
 const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
@@ -235,5 +238,6 @@ check('DataTool 导出多列 CSV', /activeFieldNames/.test(dataSrc), 'no fields 
 const failed = results.filter((r) => !r.ok);
 console.log('===== 补齐差异测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));
-console.log('\n' + (results.length - failed.length) + '/' + results.length + ' passed');
+for (const name of skipped) console.log('  SKIP  ' + name);
+console.log(`\n${results.length - failed.length} passed, ${failed.length} failed, ${skipped.length} skipped`);
 process.exit(failed.length ? 1 : 0);

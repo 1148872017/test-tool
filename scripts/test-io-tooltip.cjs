@@ -7,12 +7,28 @@ const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: con
 
 const collSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'CollectionPage.tsx'), 'utf8');
 const setSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'SettingsPage.tsx'), 'utf8');
+const { COLLECTIONS } = require(path.join(__dirname, '..', 'shared', 'collections.js'));
 
 /* ============================================================
- * 1. 集合页：导入 / 导出都有 Tooltip
+ * 1. 集合页：导入 / 导出都在页头「⋯」菜单里（数据级断言）
+ *
+ * 原来按钮平铺在页头，测试用「<Tooltip 包 <Button>」的源码顺序断言。
+ * 改造后 5 个按钮收进 Dropdown，位置/包裹关系不再有 UI 意义；
+ * 改为断言 capabilities.headerActions（唯一事实源）的内容与顺序，
+ * 这样加第 6 个集合也只改 collections.js，测试不用跟着改。
  * ============================================================ */
-check('集合页用 Tooltip 包了导入按钮', /<Tooltip[\s\S]{0,600}?导入备份[\s\S]{0,60}?<\/Button>[\s\S]{0,20}?<\/Tooltip>/.test(collSrc), 'no tooltip');
-check('集合页用 Tooltip 包了导出按钮', /<Tooltip[\s\S]{0,600}?导出[\s\S]{0,60}?<\/Button>[\s\S]{0,20}?<\/Tooltip>/.test(collSrc), 'no tooltip');
+const headerActionsOf = (key) => COLLECTIONS.map((c) => (c.capabilities && c.capabilities.headerActions) || []);
+check(
+  '集合页工具栏（数据）包含导入备份',
+  headerActionsOf().every((actions) => actions.indexOf('importData') >= 0),
+  headerActionsOf()
+);
+check(
+  '集合页工具栏（数据）包含导出',
+  headerActionsOf().every((actions) => actions.indexOf('exportData') >= 0),
+  headerActionsOf()
+);
+check('集合页工具栏由 capabilities.headerActions 生成', /caps\.headerActions[\s\S]{0,160}?\.map\(/.test(collSrc), 'not data-driven');
 
 // 文案要说明「导入什么 / 导出什么」
 check('导入提示说明是 JSON 备份', /从 JSON 备份文件/.test(collSrc), 'no desc');

@@ -66,7 +66,7 @@ function ParamTable({ raw }: { raw: string }) {
             <div className="json-table-value">
               {r.desc || <span className="muted">—</span>}
               {r.example ? (
-                <span className="muted" style={{ marginLeft: 6, fontSize: 11.5 }}>
+                <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>
                   例：{r.example}
                 </span>
               ) : null}

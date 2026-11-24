@@ -4,6 +4,7 @@ import api from './api';
 import { bindMessage } from './msg';
 import Sidebar from './components/Sidebar';
 import LockScreen from './components/LockScreen';
+import ErrorBoundary from './components/feedback/ErrorBoundary';
 import CollectionPage from './components/CollectionPage';
 import JsonTool from './pages/JsonTool';
 import DataTool from './pages/DataTool';
@@ -23,127 +24,31 @@ import TrashPage from './pages/TrashPage';
 import { COLLECTIONS } from '../shared/collections';
 
 /**
- * 应用皮肤：主题色 + 背景图 + 透明度。
+ * 应用皮肤：只注入主题色。
  *
- * 全部通过 CSS 变量 + 内联样式注入，不改 CSS 文件。
- *   --primary / --primary-deep / --primary-soft  → 主题色
- *   body 的 background-image                     → 背景图
- *   --panel-alpha                                → 面板透明度
+ * 全部走 CSS 变量，不改 CSS 文件：
+ *   --primary       填充色（按钮底、色块，固定配白字）
+ *   --primary-text  文字色（链接、选中的导航项、强调文字）
+ *   --primary-soft  浅底色（选中项背景、标签底）
+ *
+ * 背景图 / 背景蒙版 / 面板透明度 / 文字深浅三档已经下线：
+ * 页面回到纯色底，文字对比度靠 token 保证，不再需要在运行时
+ * 打阴影、改 --text、改 --muted 去补救。
  */
 function useSkin(settings: any) {
-  const [bgUrl, setBgUrl] = React.useState('');
-
-  // 主题色
   React.useEffect(() => {
     const t = getTheme(settings && settings.themeColor);
     const root = document.documentElement;
     root.style.setProperty('--primary', t.primary);
-    root.style.setProperty('--primary-deep', t.primaryDeep);
-    root.style.setProperty('--primary-soft', t.primarySoft);
+    root.style.setProperty('--primary-text', t.primaryText);
+    root.style.setProperty('--primary-soft', t.soft);
   }, [settings && settings.themeColor]);
-
-  // 背景图
-  React.useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const res = await (window as any).api.skinGetImage();
-        if (alive) setBgUrl((res && res.url) || '');
-      } catch (e) {
-        if (alive) setBgUrl('');
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [settings && settings.bgImage]);
-
-  // 背景 + 透明度
-  React.useEffect(() => {
-    const opacity = settings && settings.bgOpacity !== undefined ? Number(settings.bgOpacity) : 85;
-    const v = Math.max(0, Math.min(100, opacity));
-
-    /**
-     * 面板 alpha：0% → 0.62，100% → 1。
-     *
-     * 为什么下限是 0.62 而不是 0.35：
-     *   0.35 太透，背景图的明暗会透到文字下面，侧栏标题之类的
-     *   小字号、细字重直接糊成一团（用户实测反馈）。
-     *   0.62 能保证白底占主导，文字仍然清晰。
-     */
-    const alpha = 0.62 + (v / 100) * 0.38;
-
-    /**
-     * 文字阴影：透明度越低，阴影越强。
-     * 目的：即使背景图很花，文字边缘也能和背景分开。
-     */
-    const shadowStrength = v >= 80 ? 0 : Math.round(((80 - v) / 80) * 6) / 10;
-
-    /**
-     * 文字加深档位：
-     *   auto（默认）→ 透明度 < 70% 时自动加深
-     *   deep        → 强制加深（背景图特别花时手动选）
-     *   normal      → 保持原色
-     */
-    const textMode = String((settings && settings.bgTextMode) || 'auto');
-    const needDeep = textMode === 'deep' || (textMode === 'auto' && v < 70);
-
-    const root = document.documentElement;
-    root.style.setProperty('--panel-alpha', String(alpha));
-    root.style.setProperty('--panel-rgb', '255, 255, 255');
-    root.style.setProperty(
-      '--skin-text-shadow',
-      shadowStrength > 0 ? `0 1px 2px rgba(255,255,255,${shadowStrength})` : 'none'
-    );
-
-    if (needDeep) {
-      root.style.setProperty('--text', '#10141f');
-      root.style.setProperty('--muted', '#5a6173');
-    } else {
-      root.style.removeProperty('--text');
-      root.style.removeProperty('--muted');
-    }
-
-    /**
-     * 背景蒙版：压在背景图上面的一层纯色，把背景压暗/提亮。
-     *
-     * 为什么需要：
-     *   只有「背景图 + 半透明面板」时，内容少的地方大片露出背景图，
-     *   视觉刺眼、面板和背景糊在一起没有层次。
-     *
-     * 强度 0 → 蒙版全透明（等于没有）
-     * 强度 100 → 蒙版完全盖住背景图（只剩纯色）
-     * 建议 25-45：背景隐约可见，面板清晰浮起。
-     */
-    const overlayPct = settings && settings.bgOverlay !== undefined ? Number(settings.bgOverlay) : 35;
-    const overlayAlpha = Math.max(0, Math.min(100, overlayPct)) / 100;
-    root.style.setProperty('--bg-overlay', String(overlayAlpha));
-
-    if (settings && settings.bgOverlayColor === 'light') {
-      document.body.classList.add('bg-overlay-light');
-    } else {
-      document.body.classList.remove('bg-overlay-light');
-    }
-
-    if (bgUrl) {
-      document.body.classList.add('has-bg');
-      document.body.style.backgroundImage = `url(${bgUrl})`;
-    } else {
-      document.body.classList.remove('has-bg');
-      document.body.style.backgroundImage = '';
-      // 没背景图时蒙版也没意义，重置
-      root.style.setProperty('--bg-overlay', '0');
-      document.body.classList.remove('bg-overlay-light');
-    }
-  }, [bgUrl, settings && settings.bgOpacity, settings && settings.bgTextMode, settings && settings.bgOverlay, settings && settings.bgOverlayColor]);
-
-  return bgUrl;
 }
 
 export default function App() {
   const { message } = AntApp.useApp();
   const [boot, setBoot] = useState<any>(null);
-  // 应用皮肤（主题色 / 背景图 / 透明度）
+  // 应用皮肤（只主题色）
   useSkin(boot && boot.settings);
   const [locked, setLocked] = useState(true);
   const [route, setRoute] = useState<any>({ type: 'collection', key: 'sites' });
@@ -288,10 +193,32 @@ export default function App() {
 
   const conf = route.type === 'collection' ? COLLECTIONS.find((c: any) => c.key === route.key) : null;
 
+  /**
+   * 路由标识，给 ErrorBoundary 当 key 用。
+   * collection / tool 必须带上具体 key：否则在「接口记录」崩了之后切到「SQL 片段」，
+   * key 没变化，兜底状态不会重置，用户会以为整个工具都坏了。
+   */
+  const routeKey =
+    route.type === 'collection'
+      ? 'collection:' + route.key
+      : route.type === 'tool'
+        ? 'tool:' + route.key
+        : String(route.type);
+
   return (
     <div className="app">
       <Sidebar route={route} onNavigate={setRoute} counts={counts} onLock={doLock} trashCount={trashCount} />
-      <main className="main">
+      {/*
+        shell 接线：只有集合页走 PageShell（.main 不再滚动，.pg-body 是唯一滚动区）。
+        其他页面继续用 .main 自身滚动，CSS 里按 .main--collection 作用域区分。
+      */}
+      <main className={'main' + (conf ? ' main--collection' : '')}>
+        {/*
+          路由级兜底：只包主内容区，侧栏留在外面 —— 一个页面 render 抛错只换掉这一块，
+          导航还能用。key 用 routeKey，切换路由时边界整体重建、兜底状态清空，
+          用户切走再切回来自动恢复，不必重启。
+        */}
+        <ErrorBoundary key={routeKey} scope={routeKey}>
         {conf ? (
           <CollectionPage
             key={conf.key}
@@ -337,6 +264,7 @@ export default function App() {
             }
           />
         ) : null}
+        </ErrorBoundary>
       </main>
     </div>
   );

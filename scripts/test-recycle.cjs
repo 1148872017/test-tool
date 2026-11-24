@@ -292,6 +292,9 @@ const store = require(path.join(proj, 'electron', 'store'));
     }
   };
   require(path.join(proj, 'electron', 'ipc', 'ipc-records')).register({
+    // v0.43.0 起各域统一用 deps.handle 注册通道（默认带解锁守卫），
+    // 这里给一个直通版本，测的仍是回收站业务本身。
+    handle: (channel, fn) => fakeIpc.handle(channel, fn),
     ipcMain: fakeIpc,
     dialog: {},
     shell: {},
@@ -304,6 +307,8 @@ const store = require(path.join(proj, 'electron', 'store'));
     loadSettings: () => {},
     publicSettings: () => ({}),
     assertUnlocked: () => {},
+    assertPathIn: () => null,
+    rememberPicked: () => '',
     isLocked: () => false
   });
 

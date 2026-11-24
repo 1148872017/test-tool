@@ -78,6 +78,19 @@ export default function Sidebar({ route, onNavigate, counts, onLock, trashCount 
     return Number(counts[item.key]) || 0;
   };
 
+  /**
+   * 导航项键盘处理：Enter / Space 等同点击。
+   *
+   * 侧栏原来全是 `<div onClick>`，纯键盘用户完全够不到（全 src 0 个 tabIndex）。
+   * 这里补最小集：可聚焦 + 语义角色 + 键盘激活，不引入整套 roving tabindex。
+   */
+  const onItemKeyDown = (e: React.KeyboardEvent<HTMLDivElement>, item: any) => {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      go(item);
+    }
+  };
+
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -91,7 +104,7 @@ export default function Sidebar({ route, onNavigate, counts, onLock, trashCount 
         </div>
       </div>
 
-      <nav className="nav">
+      <nav className="nav" aria-label="主导航">
         {groups.map((group) => (
           <div className="nav-group" key={group.label}>
             <div className="nav-group-label">{group.label}</div>
@@ -99,7 +112,11 @@ export default function Sidebar({ route, onNavigate, counts, onLock, trashCount 
               <div
                 key={item.key}
                 className={'nav-item' + (isActive(item) ? ' active' : '')}
+                role="link"
+                tabIndex={0}
+                aria-current={isActive(item) ? 'page' : undefined}
                 onClick={() => go(item)}
+                onKeyDown={(e) => onItemKeyDown(e, item)}
               >
                 <span className="nav-icon">
                   <Icon name={item.icon} />

@@ -9,7 +9,7 @@
 const crypto = require('crypto');
 
 function register(deps) {
-  const { ipcMain, dialog, shell, getWindow, assertUnlocked } = deps;
+  const { handle, dialog, shell, getWindow, assertUnlocked, rememberPicked } = deps;
 
   /**
    * 通用文件选择器（给「手动指定环境路径」用）。
@@ -24,7 +24,7 @@ function register(deps) {
    *
    * payload: { title, defaultPath }
    */
-  ipcMain.handle('util:pickDir', async (e, payload = {}) => {
+  handle('util:pickDir', async (e, payload = {}) => {
     assertUnlocked();
     const picked = await dialog.showOpenDialog(getWindow(), {
       title: String(payload.title || '选择目录'),
@@ -32,10 +32,12 @@ function register(deps) {
       properties: ['openDirectory', 'createDirectory']
     });
     if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+    // 用户明确选过的目录 → 本会话可信根（后面可能有 openFile/parse 用它）
+    rememberPicked(picked.filePaths[0]);
     return { ok: true, dir: picked.filePaths[0] };
   });
 
-  ipcMain.handle('util:pickFile', async (e, payload = {}) => {
+  handle('util:pickFile', async (e, payload = {}) => {
     assertUnlocked();
     const picked = await dialog.showOpenDialog(getWindow(), {
       title: String(payload.title || '选择文件'),
@@ -44,17 +46,19 @@ function register(deps) {
       properties: ['openFile']
     });
     if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+    // 例如「手动指定 jmeter.bat / Maven / python」—— 选完就在白名单里
+    rememberPicked(picked.filePaths[0]);
     return { ok: true, path: picked.filePaths[0] };
   });
 
-  ipcMain.handle('util:hash', async (e, { algo, text }) => {
+  handle('util:hash', async (e, { algo, text }) => {
     const allowed = ['md5', 'sha1', 'sha256', 'sha512'];
     const name = String(algo || 'sha256').toLowerCase();
     const use = allowed.includes(name) ? name : 'sha256';
     return crypto.createHash(use).update(String(text === undefined ? '' : text), 'utf8').digest('hex');
   });
 
-  ipcMain.handle('shell:open', async (e, { url }) => {
+  handle('shell:open', async (e, { url }) => {
     let u = String(url || '').trim();
     if (!u) return false;
     // 用户常填 www.xxx.com 或 xxx.com（没写协议），自动补 https://

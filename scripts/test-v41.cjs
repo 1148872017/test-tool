@@ -29,9 +29,38 @@ for (const fn of ['doCoverage', 'doHardcoded', 'doDeps']) {
     ret: returnIdx
   });
 }
-check('失败时清空旧结果（coverage）', /setCov\(null\)/.test(scanSrc), 'no clear');
-check('失败时清空旧结果（hardcoded）', /setScan\(null\)/.test(scanSrc), 'no clear');
-check('失败时清空旧结果（deps）', /setDeps\(null\)/.test(scanSrc), 'no clear');
+
+/**
+ * v0.42.0：这里的语义**故意反转**了。
+ *
+ * v0.41.2 为了修「结果乱串」，做法是「失败就 setCov(null) / setScan(null) / setDeps(null)」——
+ * 串扰是修好了，代价是一次失败就把上一次的上下文全丢（P5：失败不要清屏）。
+ *
+ * 新做法：四类结果各占一个槽位，失败时**只写该槽位的 error**，data / at 原样保留；
+ * 因为槽位按类型分开，「点哪个看哪个」的语义照样不丢（串扰不会再出现）。
+ * 所以下面断言三件事：失败走 failSlot、数据来自 okSlot、且再没有任何清空写法。
+ */
+for (const [label, setter] of [
+  ['hardcoded', 'setAuditSlot'],
+  ['deps', 'setDepsSlot']
+]) {
+  check(`失败只记错误（${label}）`, new RegExp('failSlot\\(' + setter).test(scanSrc), 'no failSlot');
+  check(
+    `失败不清空旧结果（${label}）`,
+    !new RegExp(setter + '\\(\\s*(null|emptySlot\\(\\))').test(scanSrc),
+    'still cleared'
+  );
+}
+/* 覆盖矩阵按 covKind 选槽位：接口 / 页面各一份，所以断言「选槽 + 用同一个别名写」 */
+check(
+  'coverage 按 kind 选槽位',
+  /const setSlot = k === 'page' \? setCovPageSlot : setCovApiSlot;/.test(scanSrc),
+  'no slot pick'
+);
+check('失败只记错误（coverage）', /failSlot\(setSlot,/.test(scanSrc), 'no failSlot');
+check('成功才写数据（coverage）', /okSlot\(setSlot,/.test(scanSrc), 'no okSlot');
+check('成功才写数据（hardcoded/deps）', /okSlot\(setAuditSlot/.test(scanSrc) && /okSlot\(setDepsSlot/.test(scanSrc), 'no okSlot');
+check('失败保留时间戳/数据（failSlot 只展开 prev）', /set\(\(prev\) => \(\{ \.\.\.prev, error: message/.test(scanSrc), 'prev dropped');
 
 /* ============================================================
  * Bug 3：目录设置切页面不丢
@@ -87,7 +116,7 @@ check('大数量走文件', /n > LARGE_THRESHOLD[\s\S]{0,1500}?generateToFile/.t
 check('没工作区时弹窗拦截', /needWorkspace/.test(dataSrc) && /Modal\.warning/.test(dataSrc), 'no modal');
 check('有导出结果提示', /lastExport/.test(dataSrc), 'no result');
 check('用了 shared/faker', /from '\.\.\/\.\.\/shared\/faker'/.test(dataSrc), 'not shared');
-check('IPC 有 data:genFile', /ipcMain\.handle\('data:genFile'/.test(mainSrc), 'no ipc');
+check('IPC 有 data:genFile', /handle\('data:genFile'/.test(mainSrc), 'no ipc');
 check('IPC 没工作区会提示', /needWorkspace: true/.test(mainSrc), 'no flag');
 check('preload 有 dataGenFile', /dataGenFile:/.test(preloadSrc), 'no preload');
 
@@ -112,7 +141,7 @@ check('DEFAULT_SETTINGS 有 workspaceDir', /workspaceDir: ''/.test(mainSrc), 'no
 check('publicSettings 暴露 workspaceDir', /workspaceDir: settings\.workspaceDir/.test(mainSrc), 'not exposed');
 check('allowed 含 workspaceDir', /'workspaceDir'/.test(mainSrc), 'not allowed');
 check('工作区能推导子目录', /derive\('casesDir'/.test(mainSrc), 'no derive');
-check('有 util:pickDir', /ipcMain\.handle\('util:pickDir'/.test(mainSrc), 'no ipc');
+check('有 util:pickDir', /handle\('util:pickDir'/.test(mainSrc), 'no ipc');
 check('preload 有 pickDir', /pickDir:/.test(preloadSrc), 'no preload');
 
 /* ============================================================

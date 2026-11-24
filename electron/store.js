@@ -292,7 +292,20 @@ function makeMigrationApi() {
     sql: (stmt, params) => run(stmt, params),
     query: (stmt, params = []) => all(stmt, params),
     getMeta,
-    setMeta
+    setMeta,
+    /**
+     * 序列化（= 按 SECRET_KEYS 加密密码字段）。
+     *
+     * 为什么迁移脚本需要它：
+     *   api.write() 只能 UPDATE（要有 id），而迁移里有时候要**新建**记录
+     *   （比如 v5 的「未归类账号」站点），只能手写 INSERT。
+     *   手写 INSERT 时最容易犯的错就是直接 JSON.stringify(data) ——
+     *   那会把密码明文写进 data.db（v5 当初就是这么漏的）。
+     *   把 store 自己的 serialize 暴露出去，迁移里不可能再漏。
+     */
+    serialize: (collection, data) => serialize(collection, data),
+    /** 解密（迁移里要判断「磁盘上这条到底是不是明文」时用） */
+    deserialize: (collection, data) => deserialize(collection, data)
   };
 }
 

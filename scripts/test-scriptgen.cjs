@@ -156,11 +156,11 @@ check('解析出时间', list[0].stamp === '2026-11-24 11:30:00', list[0].stamp)
 
 /* ---------- 12. IPC 已注册 ---------- */
 const mainSrc = require('./_electron-src.cjs').readElectronSource();
-check('有 jmxgen:preview', /ipcMain\.handle\('jmxgen:preview'/.test(mainSrc), 'no preview');
-check('有 jmxgen:save', /ipcMain\.handle\('jmxgen:save'/.test(mainSrc), 'no save');
-check('有 sqlgen:snapshot', /ipcMain\.handle\('sqlgen:snapshot'/.test(mainSrc), 'no snapshot');
-check('有 sqlgen:cleanup', /ipcMain\.handle\('sqlgen:cleanup'/.test(mainSrc), 'no cleanup');
-check('有 sqlgen:restore', /ipcMain\.handle\('sqlgen:restore'/.test(mainSrc), 'no restore');
+check('有 jmxgen:preview', /handle\('jmxgen:preview'/.test(mainSrc), 'no preview');
+check('有 jmxgen:save', /handle\('jmxgen:save'/.test(mainSrc), 'no save');
+check('有 sqlgen:snapshot', /handle\('sqlgen:snapshot'/.test(mainSrc), 'no snapshot');
+check('有 sqlgen:cleanup', /handle\('sqlgen:cleanup'/.test(mainSrc), 'no cleanup');
+check('有 sqlgen:restore', /handle\('sqlgen:restore'/.test(mainSrc), 'no restore');
 
 const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
 check('preload 有 jmxgenPreview', /jmxgenPreview:/.test(preloadSrc), 'no preview');

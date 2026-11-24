@@ -16,6 +16,7 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import api from '../api';
 import { toast } from '../msg';
+import StateEmpty from '../components/states/StateEmpty';
 
 const fmtTime = (ms: number) => {
   const d = new Date(ms);
@@ -217,7 +218,7 @@ export default function KnowledgePage() {
               <Input
                 allowClear
                 style={{ width: 300 }}
-                prefix={<SearchOutlined style={{ color: '#9aa1b4' }} />}
+                prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />}
                 placeholder="搜标题、正文、标签"
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
@@ -247,22 +248,35 @@ export default function KnowledgePage() {
               loading={loading}
               pagination={{ pageSize: 50, hideOnSinglePage: true, showSizeChanger: false, size: 'small' }}
               locale={{
-                emptyText: (
-                  <div className="empty-state">
-                    <div className="empty-icon">
-                      <BookOutlined />
-                    </div>
-                    <div className="empty-title">
-                      {data && data.error ? data.error : keyword || dirFilter ? '没有匹配的文档' : '目录里还没有 markdown'}
-                    </div>
-                    <div className="empty-desc">
-                      {data && data.error
-                        ? '到「设置 → 知识库」里改成你的目录，再点重新扫描'
-                        : keyword || dirFilter
-                        ? '换个关键词，或点左侧「全部」清空筛选'
-                        : '把业务规则文档放到这个目录下，点右上角「重新扫描」'}
-                    </div>
-                  </div>
+                emptyText: data && data.error ? (
+                  <StateEmpty
+                    kind="failed"
+                    object="知识库文档"
+                    desc="到「设置 → 知识库」里改成你的目录，改完点「重新扫描」"
+                    detail={data.error}
+                    action={{ label: '重新扫描', onClick: load }}
+                  />
+                ) : keyword || dirFilter ? (
+                  <StateEmpty
+                    kind="no-match"
+                    keyword={keyword || dirFilter}
+                    desc="换个关键词，或点左侧「全部」清空筛选"
+                    action={{
+                      label: '清空筛选',
+                      onClick: () => {
+                        setKeyword('');
+                        setDirFilter('');
+                      }
+                    }}
+                  />
+                ) : (
+                  <StateEmpty
+                    kind="no-data"
+                    object="markdown 文档"
+                    desc="把业务规则文档放到这个目录下，或点右上角「重新扫描」"
+                    action={{ label: '重新扫描', onClick: load }}
+                    secondary={{ label: '打开目录', onClick: () => api.kbReveal(data && data.root) }}
+                  />
                 )
               }}
               onRow={(d: any) => ({ onClick: () => openDoc(d), style: { cursor: 'pointer' } })}

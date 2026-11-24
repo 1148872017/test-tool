@@ -10,31 +10,36 @@ const caseIndex = require('../cases');
 const openapifile = require('../openapifile');
 
 function register(deps) {
-  const { ipcMain, dialog, shell, getWindow, getSettings, saveSettings, assertUnlocked } = deps;
+  const { handle, dialog, shell, getWindow, getSettings, saveSettings, assertUnlocked, assertPathIn, rememberPicked } = deps;
 
   // ---- 用例索引（只读，文件为准） ----
-  ipcMain.handle('cases:scan', async (e, { root } = {}) => {
+  handle('cases:scan', async (e, { root } = {}) => {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.casesDir;
     return caseIndex.scanCases(dir, {});
   });
 
-  ipcMain.handle('cases:openFile', async (e, { file }) => {
+  handle('cases:openFile', async (e, { file }) => {
     assertUnlocked();
     if (!file) return { ok: false, message: '缺少文件路径' };
+    // 入参守卫：只打开白名单目录内的文件（v0.43.0）
+    const bad = assertPathIn(String(file));
+    if (bad) return bad;
     const err = await shell.openPath(String(file));
     return { ok: !err, message: err || '' };
   });
 
-  ipcMain.handle('cases:reveal', async (e, { file }) => {
+  handle('cases:reveal', async (e, { file }) => {
     assertUnlocked();
     if (!file) return { ok: false };
+    const bad = assertPathIn(String(file));
+    if (bad) return bad;
     shell.showItemInFolder(String(file));
     return { ok: true };
   });
 
-  ipcMain.handle('cases:pickDir', async () => {
+  handle('cases:pickDir', async () => {
     assertUnlocked();
     const settings = getSettings();
     const result = await dialog.showOpenDialog(getWindow(), {
@@ -44,6 +49,7 @@ function register(deps) {
     if (result.canceled || !result.filePaths.length) return { ok: false };
     settings.casesDir = result.filePaths[0];
     saveSettings();
+    rememberPicked(settings.casesDir);
     return { ok: true, dir: settings.casesDir };
   });
 
@@ -52,7 +58,7 @@ function register(deps) {
    * --------------------------------------------------------- */
 
   /** 选 OpenAPI 文件（json / yaml / yml） */
-  ipcMain.handle('openapi:pickFile', async () => {
+  handle('openapi:pickFile', async () => {
     assertUnlocked();
     const picked = await dialog.showOpenDialog(getWindow(), {
       title: '选择 OpenAPI 文件',
@@ -60,11 +66,13 @@ function register(deps) {
       properties: ['openFile']
     });
     if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+    // 用户明确选过的文件 → 本会话可信根（openapi:parseFile 要读它）
+    rememberPicked(picked.filePaths[0]);
     return { ok: true, file: picked.filePaths[0] };
   });
 
   /** 解析 OpenAPI 文件，返回接口列表（不写库） */
-  ipcMain.handle('openapi:parseFile', async (e, { file } = {}) => {
+  handle('openapi:parseFile', async (e, { file } = {}) => {
     assertUnlocked();
     return openapifile.parseFile(String(file || ''));
   });

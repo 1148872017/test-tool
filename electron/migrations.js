@@ -19,9 +19,14 @@
  * data-before-v{旧版本}-{时间}.db 备份，再按 to 从小到大依次执行。
  */
 
-const { OPTION_SETS } = require('../shared/collections');
+const { OPTION_SETS, SECRET_KEYS } = require('../shared/collections');
 
-const SCHEMA_VERSION = 6;
+/**
+ * 当前数据结构版本。
+ *
+ * v7：修复 v5 遗留的明文密码（见下面 migrateV7）。
+ */
+const SCHEMA_VERSION = 7;
 
 /**
  * 用例 ↔ 接口关联表（唯一事实源，DDL 只写这一份）
@@ -61,6 +66,7 @@ CREATE INDEX IF NOT EXISTS idx_records_deleted ON records(deleted_at);
  *   api.records(collection)   读某个集合的记录（data 已解密，可改）
  *   api.allRecords()          读全部记录
  *   api.write(rec)            写回一条（按当前 SECRET_KEYS 重新加密，title 自动重算）
+ *   api.serialize(coll, data) 按 SECRET_KEYS 加密（**新建记录手写 INSERT 时必须用**）
  *   api.renameCollection(a,b) 集合改名
  *   api.sql(stmt, params)     直接执行 SQL（不传 params 时支持多条语句）
  *   api.query(stmt, params)   查 SQL
@@ -264,9 +270,19 @@ const MIGRATIONS = [
           accounts: orphans,
           note: '从「测试账号」迁移过来，原来没有关联站点'
         };
+        /**
+         * 加密（v0.43.0 修补）：
+         *   这里原先是 `JSON.stringify(data)` —— 直接写明文，
+         *   于是「未归类账号」这个站点的 accounts[].password 在 data.db 里是明文，
+         *   而其它站点都是 enc:/raw:。同一份数据两套存法，安全和搜索都失效。
+         *
+         *   现在统一走 api.serialize（= store.serialize，按 SECRET_KEYS 加密）。
+         *   幂等性不受影响：下面的 DELETE 会把 accounts 集合清空，重跑时没有
+         *   orphans，不会再插一条。
+         */
         api.sql(
           'INSERT INTO records (id, collection, title, data, tags, favorite, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-          [newId, 'sites', '未归类账号', JSON.stringify(data), '', 0, now, now]
+          [newId, 'sites', '未归类账号', JSON.stringify(api.serialize('sites', data)), '', 0, now, now]
         );
       }
 
@@ -291,7 +307,87 @@ const MIGRATIONS = [
       api.sql('UPDATE records SET deleted_at = 0 WHERE deleted_at IS NULL');
       api.sql(TRASH_DDL);
     }
+  },
+  {
+    to: 7,
+    /**
+     * 回扫明文密码（v0.43.0 修补，High）。
+     *
+     * 起因：v5 建「未归类账号」站点时绕过 serialize 直接 INSERT，
+     * 那批 accounts[].password 在 data.db 里是**明文**（没有 enc:/raw: 前缀）。
+     * 已经升到 v6 的用户不会重跑 v5，所以必须有一条独立迁移把它们补加密。
+     *
+     * 做法：
+     *   - 看**磁盘上的原文**（rec.raw.data），不是解密后的 data ——
+     *     security.decrypt 对没有前缀的值是原样返回，光看 data 分不出明文还是密文；
+     *   - 有任何一个 secret 字段缺前缀就整条走 api.write()，
+     *     它内部会按 SECRET_KEYS 重新加密所有密码字段；
+     *   - 幂等：写过之后磁盘上都有前缀了，第二次跑一条都不会动。
+     *
+     * 注意：空字符串不算明文（security.encrypt('') === ''，本来就不落密文）。
+     */
+    note: '回扫没有 enc:/raw: 前缀的密码字段并重新加密（v5 迁移遗留的明文）',
+    run(api) {
+      let fixed = 0;
+      for (const rec of api.allRecords()) {
+        const secrets = SECRET_KEYS[rec.collection] || [];
+        if (!secrets.length) continue;
+
+        let raw = {};
+        try {
+          raw = JSON.parse((rec.raw && rec.raw.data) || '{}');
+        } catch (e) {
+          continue; // 坏数据不碰，交给上层处理
+        }
+        const plain = plainSecretPaths(raw, secrets);
+        if (!plain.length) continue;
+
+        // hydrate 出来的 data 里这些字段是明文，serialize 会把它们重新加密
+        api.write(rec);
+        fixed += 1;
+      }
+      if (fixed) console.log('[迁移 v7] 重新加密了 ' + fixed + ' 条记录里的明文密码');
+    }
   }
 ];
 
-module.exports = { SCHEMA_VERSION, MIGRATIONS, LINK_DDL, TRASH_DDL };
+/**
+ * 找出这条记录里「磁盘上是明文」的密码字段路径。
+ *
+ * 支持两种路径写法（和 store.applySecretPath 一致）：
+ *   'password'            顶层字段
+ *   'accounts[].password' 数组元素里的字段
+ *
+ * @param {object} raw 磁盘上 data 列的 JSON 解析结果
+ * @param {string[]} secretPaths SECRET_KEYS[collection]
+ * @returns {string[]} 明文路径（空数组 = 这条没问题）
+ */
+function plainSecretPaths(raw, secretPaths) {
+  const out = [];
+  if (!raw || typeof raw !== 'object') return out;
+  for (const p of secretPaths) {
+    const arrMatch = /^(\w+)\[\]\.(\w+)$/.exec(p);
+    if (arrMatch) {
+      const arr = raw[arrMatch[1]];
+      if (!Array.isArray(arr)) continue;
+      arr.forEach((item, i) => {
+        if (item && typeof item === 'object' && isPlainSecretValue(item[arrMatch[2]])) {
+          out.push(p + '#' + i);
+        }
+      });
+      continue;
+    }
+    if (isPlainSecretValue(raw[p])) out.push(p);
+  }
+  return out;
+}
+
+/** 值存在、非空、且没有 enc:/raw: 前缀 → 认为是明文 */
+function isPlainSecretValue(v) {
+  if (v === undefined || v === null) return false;
+  const s = String(v);
+  if (!s) return false;
+  return !(s.startsWith('enc:') || s.startsWith('raw:'));
+}
+
+module.exports = { SCHEMA_VERSION, MIGRATIONS, LINK_DDL, TRASH_DDL, plainSecretPaths, isPlainSecretValue };

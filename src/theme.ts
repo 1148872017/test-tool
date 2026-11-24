@@ -1,3 +1,12 @@
+/**
+ * antd 主题 token。
+ *
+ * 文字色和 styles.css 的 CSS 变量必须对齐，否则同一段文字在
+ * 「自己写的 div」和「antd 组件」里颜色不一样（踩过：表格头比正文浅一档）。
+ *   --text    → colorText
+ *   --muted   → colorTextSecondary / 表格头
+ *   --text-3  → colorTextTertiary（时间、计数、占位、状态栏）
+ */
 export const themeConfig = {
   token: {
     colorPrimary: '#6c5ce7',
@@ -9,18 +18,18 @@ export const themeConfig = {
     borderRadius: 8,
     fontFamily: "'Segoe UI', 'Microsoft YaHei', -apple-system, system-ui, sans-serif",
     colorText: '#1f2430',
-    colorTextSecondary: '#6b7284',
-    colorTextTertiary: '#9aa1b4',
+    colorTextSecondary: '#5a6275',
+    colorTextTertiary: '#666e80',
     colorBorder: '#e3e6f0',
     colorBorderSecondary: '#eef0f7',
     colorBgLayout: '#f4f5fa',
     controlHeight: 32,
-    fontSize: 13.5
+    fontSize: 13
   },
   components: {
     Table: {
       headerBg: '#fafbfe',
-      headerColor: '#7b8296',
+      headerColor: '#5a6275',
       headerSplitColor: 'transparent',
       rowHoverBg: '#f8f7ff',
       cellPaddingBlock: 9,

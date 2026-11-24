@@ -77,6 +77,25 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
       Date.now() - 86400000
     ]
   );
+  /**
+   * 没有归属站点的账号（带密码）：
+   *   v5 会为它新建一个「未归类账号」站点 —— 那条 INSERT 当初直接
+   *   JSON.stringify(data)，把密码明文写进了 data.db（v0.43.0 修的 High）。
+   *   这条记录专门用来验证「迁移新建站点也必须加密」。
+   */
+  legacy.run(
+    'INSERT INTO records (id, collection, title, data, tags, favorite, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [
+      'r_legacy_orphan',
+      'accounts',
+      '无站点账号',
+      JSON.stringify({ name: '无站点账号', role: '读写', account: 'orphan_user', password: 'PlainOrphan123' }),
+      '',
+      0,
+      Date.now() - 86400000,
+      Date.now() - 86400000
+    ]
+  );
   legacy.run('INSERT INTO meta (k, v) VALUES (?, ?)', ['schemaVersion', '1']);
   fs.writeFileSync(path.join(tmp, 'data.db'), Buffer.from(legacy.export()));
   legacy.close();
@@ -86,6 +105,8 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
   const REAL_VERSION = migrations.SCHEMA_VERSION;
   check('真实迁移里有 v2（环境回填）', migrations.MIGRATIONS.some((m) => m.to === 2), migrations.MIGRATIONS.map((m) => m.to));
   check('真实迁移里有 v6（回收站字段）', migrations.MIGRATIONS.some((m) => m.to === 6), migrations.MIGRATIONS.map((m) => m.to));
+  check('真实迁移里有 v7（回扫明文密码）', migrations.MIGRATIONS.some((m) => m.to === 7), migrations.MIGRATIONS.map((m) => m.to));
+  check('SCHEMA_VERSION 已经是 7', migrations.SCHEMA_VERSION === 7, migrations.SCHEMA_VERSION);
   migrations.MIGRATIONS.push({
     to: REAL_VERSION + 1,
     note: 'account → username（测试注入）',
@@ -142,6 +163,18 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
   );
   check('v5 保证有默认账号', siteAccounts.some((a) => a.isDefault === true), siteAccounts.map((a) => a.isDefault));
 
+  /* ---------- v5 新建「未归类账号」站点时也必须加密（v0.43.0）---------- */
+  const orphanSite = store.list('sites').find((s) => s.title === '未归类账号');
+  check('v5 为无站点账号建了「未归类账号」站点', !!orphanSite, store.list('sites').map((s) => s.title));
+  const orphanAcc = ((orphanSite && orphanSite.data && orphanSite.data.accounts) || [])[0] || {};
+  check('未归类账号的密码能正常解密出来', orphanAcc.password === 'PlainOrphan123', orphanAcc.password);
+  {
+    // 直接看磁盘上的字节：明文密码绝不能出现在 data.db 里
+    const rawDb = fs.readFileSync(path.join(tmp, 'data.db'));
+    check('未归类账号的密码在库里不是明文', rawDb.indexOf(Buffer.from('PlainOrphan123')) === -1, 'found plaintext');
+    check('未归类账号的密码在库里有密文前缀', rawDb.indexOf(Buffer.from('enc:')) >= 0);
+  }
+
   check('v4 把 env 从字符串变成数组', Array.isArray(rec.data.env) && rec.data.env[0] === 'test', rec.data.env);
   const optsAfter = store.getOptions();
   check('v4 把历史环境值收进选项配置', optsAfter.env.some((o) => o.value === 'test'), optsAfter.env);
@@ -170,6 +203,86 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
   const freshRec = store2.save({ collection: 'sites', data: { name: '新库站点' }, tags: [] });
   check('新库直接带回收站字段（deleted_at=0）', freshRec && freshRec.deleted_at === 0, freshRec && freshRec.deleted_at);
   check('新库不产生迁移备份', !fs.existsSync(path.join(freshDir, 'backups')) || fs.readdirSync(path.join(freshDir, 'backups')).every((f) => !/data-before-/.test(f)));
+
+  /* ============================================================
+   * v7：老库里的明文密码要被重新加密（且幂等）
+   *
+   * 造一个 v6 的库，里面有一条 sites 记录，accounts[].password 是明文
+   * （模拟 v5 当年绕过 serialize 写进去的那批数据）。
+   * ============================================================ */
+  {
+    const v6dir = path.join(tmp, 'v6');
+    fs.mkdirSync(v6dir, { recursive: true });
+    const legacy2 = new SQL.Database();
+    legacy2.run(SCHEMA);
+    legacy2.run('ALTER TABLE records ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0');
+    legacy2.run(
+      'INSERT INTO records (id, collection, title, data, tags, favorite, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        'r_v6_plain',
+        'sites',
+        '老明文站',
+        JSON.stringify({
+          name: '老明文站',
+          accounts: [{ label: '默认账号', account: 'u1', password: 'OldPlainPwd', role: [], isDefault: true }]
+        }),
+        '',
+        0,
+        Date.now(),
+        Date.now(),
+        0
+      ]
+    );
+    legacy2.run('INSERT INTO meta (k, v) VALUES (?, ?)', ['schemaVersion', '6']);
+    fs.writeFileSync(path.join(v6dir, 'data.db'), Buffer.from(legacy2.export()));
+    legacy2.close();
+
+    const storeV7 = require(path.join(proj, 'electron', 'store'));
+    const infoV7 = await storeV7.init(v6dir);
+    // 注意：本测试前面把 SCHEMA_VERSION 顶到了 REAL_VERSION+1（并注入了一条改名迁移），
+    // 所以这里期望的是「升到注入后的版本」，不是字面的 7。
+    check('v6 库升到最新版本（含注入的那条）', storeV7.schemaVersion() === REAL_VERSION + 1, storeV7.schemaVersion());
+    check('v7 真的执行了', !!(infoV7.migration && infoV7.migration.ran.indexOf(7) >= 0), infoV7.migration);
+
+    const recV7 = storeV7.get('r_v6_plain');
+    check('v7 之后密码仍能正常解密', recV7.data.accounts[0].password === 'OldPlainPwd', recV7.data.accounts[0].password);
+    {
+      const rawA = fs.readFileSync(path.join(v6dir, 'data.db'));
+      check('v7 之后库里没有明文密码', rawA.indexOf(Buffer.from('OldPlainPwd')) === -1, 'plaintext remains');
+      check('v7 之后密码带上了密文前缀', rawA.indexOf(Buffer.from('enc:')) >= 0);
+    }
+
+    // 幂等：把版本号退回 6，再打开一次 → v7 会重跑，但不该改坏数据/报错
+    storeV7.setMeta('schemaVersion', 6);
+    storeV7.persist();
+    storeV7.close();
+    const infoAgain = await storeV7.init(v6dir);
+    check('v7 可以重跑（幂等不报错）', !!(infoAgain.migration && infoAgain.migration.ran.indexOf(7) >= 0), infoAgain.migration);
+    const recAgain = storeV7.get('r_v6_plain');
+    check('重跑 v7 后密码还是原值', recAgain.data.accounts[0].password === 'OldPlainPwd', recAgain.data.accounts[0].password);
+    {
+      const rawB = fs.readFileSync(path.join(v6dir, 'data.db'));
+      check('重跑 v7 后仍然没有明文', rawB.indexOf(Buffer.from('OldPlainPwd')) === -1, 'plaintext remains');
+    }
+
+    // 纯函数自检：什么样的值算「明文」
+    check(
+      'v7 判定：无前缀=明文，enc:/raw: 不算',
+      migrations.isPlainSecretValue('abc') === true &&
+        migrations.isPlainSecretValue('enc:xxx') === false &&
+        migrations.isPlainSecretValue('raw:eHl6') === false &&
+        migrations.isPlainSecretValue('') === false &&
+        migrations.isPlainSecretValue(undefined) === false,
+      'plain judge wrong'
+    );
+    check(
+      'v7 能定位 accounts[].password 里的明文',
+      migrations.plainSecretPaths({ accounts: [{ password: 'p' }, { password: 'enc:x' }] }, ['accounts[].password']).length === 1,
+      migrations.plainSecretPaths({ accounts: [{ password: 'p' }] }, ['accounts[].password'])
+    );
+
+    storeV7.close();
+  }
 
   store.close();
   store2.close();

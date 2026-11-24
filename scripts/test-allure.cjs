@@ -5,31 +5,38 @@ const os = require('os');
 
 const results = [];
 const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });
+/* 真实目录不存在时显式跳过：跳过要进汇总，不能静默变全绿 */
+const skipped = [];
+const skip = (name) => skipped.push(name);
 
 const allure = require('../electron/allure.js');
 
-/* ---------- 1. 解析真实 allure-results ---------- */
-const realDir = 'D:/AI_Workspace/Project/example/allure-results';
+/* ---------- 1. 解析真实 allure-results ----------
+ * 用「相对本仓库」的示例项目路径，不写死 D:/AI_Workspace/...；
+ * 目录不在就显式跳过，换台机器不影响 unit 档全绿。 */
+const realDir = path.resolve(__dirname, '..', '..', 'example', 'allure-results');
 if (fs.existsSync(realDir)) {
   const res = allure.parseAllureDir(realDir);
   check('解析真实目录成功', res.ok === true, res.message);
-  check('解析出 12 个用例', res.tests.length === 12, res.tests.length);
-  check('汇总 total 正确', res.summary.total === 12, res.summary.total);
-  check('汇总 broken 正确', res.summary.broken === 12, res.summary.broken);
+  check('解析出用例', res.tests.length >= 1, res.tests.length);
+  // 汇总不写死 12：要求它和 tests 的实际状态对得上
+  check('汇总 total = 用例数', res.summary.total === res.tests.length, { total: res.summary.total, tests: res.tests.length });
+  check('汇总 broken = 实际 broken 数', res.summary.broken === res.tests.filter((t) => t.status === 'broken').length, { broken: res.summary.broken });
   check('用例有 name', !!res.tests[0].name, res.tests[0]);
   check('用例有 status', !!res.tests[0].status, res.tests[0]);
   check('用例有 testClass', !!res.tests[0].testClass, res.tests[0]);
   check('用例有 duration', res.tests[0].duration > 0, res.tests[0].duration);
 
   // 聚类
+  const failedCount = res.tests.filter((t) => t.status === 'failed' || t.status === 'broken').length;
   const clusters = allure.clusterFailures(res.tests);
   check('聚类有结果', clusters.length > 0, clusters.length);
-  check('12 个用例聚成 1 组', clusters.length === 1, clusters.length);
-  check('聚类 count 是 12', clusters[0].count === 12, clusters[0].count);
-  check('聚类 pattern 已归一化', /<STR>/.test(clusters[0].pattern), clusters[0].pattern);
+  check('聚类组数不超过失败用例数', clusters.length <= failedCount, { clusters: clusters.length, failedCount });
+  check('聚类 count 合计 = 失败用例数', clusters.reduce((s, c) => s + c.count, 0) === failedCount, clusters.map((c) => c.count));
+  check('聚类 pattern 已归一化（再归一化不变）', clusters.every((c) => allure.normalizeMessage(c.pattern) === c.pattern), clusters.map((c) => c.pattern));
   check('聚类没有具体数字', !/\b\d{3,}\b/.test(clusters[0].pattern), clusters[0].pattern);
 } else {
-  console.log('（跳过真实目录测试，目录不存在）');
+  skip('真实 allure 目录（不存在：' + realDir + '，13 项解析/聚类断言整体跳过）');
 }
 
 /* ---------- 2. 归一化 ---------- */
@@ -109,10 +116,10 @@ fs.rmSync(tmp, { recursive: true, force: true });
 
 /* ---------- 6. IPC 已注册 ---------- */
 const mainSrc = require('./_electron-src.cjs').readElectronSource();
-check('有 allure:scan', /ipcMain\.handle\('allure:scan'/.test(mainSrc), 'no scan');
-check('有 allure:parse', /ipcMain\.handle\('allure:parse'/.test(mainSrc), 'no parse');
-check('有 allure:flaky', /ipcMain\.handle\('allure:flaky'/.test(mainSrc), 'no flaky');
-check('有 allure:pickDir', /ipcMain\.handle\('allure:pickDir'/.test(mainSrc), 'no pickDir');
+check('有 allure:scan', /handle\('allure:scan'/.test(mainSrc), 'no scan');
+check('有 allure:parse', /handle\('allure:parse'/.test(mainSrc), 'no parse');
+check('有 allure:flaky', /handle\('allure:flaky'/.test(mainSrc), 'no flaky');
+check('有 allure:pickDir', /handle\('allure:pickDir'/.test(mainSrc), 'no pickDir');
 
 const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
 check('preload 有 allureScan', /allureScan:/.test(preloadSrc), 'no scan');
@@ -138,5 +145,6 @@ check('App 有 report 路由', /route\.key === 'report'/.test(appSrc), 'no route
 const failed = results.filter((r) => !r.ok);
 console.log('===== 报告分析测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));
-console.log('\n' + (results.length - failed.length) + '/' + results.length + ' passed');
+for (const name of skipped) console.log('  SKIP  ' + name);
+console.log(`\n${results.length - failed.length} passed, ${failed.length} failed, ${skipped.length} skipped`);
 process.exit(failed.length ? 1 : 0);

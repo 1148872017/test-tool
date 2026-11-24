@@ -5,6 +5,9 @@ const os = require('os');
 
 const results = [];
 const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: cond ? '' : JSON.stringify(extra) });
+/* 真实项目不存在时显式跳过：跳过要进汇总，不能静默变全绿 */
+const skipped = [];
+const skip = (name) => skipped.push(name);
 
 /* ============================================================
  * 1. 造数：时间范围
@@ -186,11 +189,13 @@ CREATE TABLE \`t_order\` (
   fs.rmSync(empty, { recursive: true, force: true });
   fs.rmSync(tmp, { recursive: true, force: true });
 
-  // 真实项目
-  const real = 'D:/AI_Workspace/Project/example';
+  // 真实项目（可选增强）：路径相对本仓库，不写死 D:/AI_Workspace/...
+  const real = path.resolve(__dirname, '..', '..', 'example');
   if (fs.existsSync(real)) {
     const rr = checkDeps(real);
     check('真实项目能检查', rr.ok === true && rr.poms >= 1, { poms: rr.poms });
+  } else {
+    skip('真实项目依赖检查（不存在：' + real + '，1 项断言跳过）');
   }
 }
 
@@ -225,7 +230,7 @@ CREATE TABLE \`t_order\` (
   const mainSrc = require('./_electron-src.cjs').readElectronSource();
   const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
 
-  check('有 codescan:deps', /ipcMain\.handle\('codescan:deps'/.test(mainSrc), 'no deps ipc');
+  check('有 codescan:deps', /handle\('codescan:deps'/.test(mainSrc), 'no deps ipc');
   check('preload 有 codescanDeps', /codescanDeps:/.test(preloadSrc), 'no preload');
   check('codegen IPC 透传 sql', /sql: payload\.sql/.test(mainSrc), 'no sql');
   check('jmxgen IPC 透传 csv', /csv: payload\.csv/.test(mainSrc), 'no csv');
@@ -244,5 +249,6 @@ CREATE TABLE \`t_order\` (
 const failed = results.filter((r) => !r.ok);
 console.log('===== v0.38.0 补齐 6 项测试 =====');
 for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));
-console.log('\n' + (results.length - failed.length) + '/' + results.length + ' passed');
+for (const name of skipped) console.log('  SKIP  ' + name);
+console.log(`\n${results.length - failed.length} passed, ${failed.length} failed, ${skipped.length} skipped`);
 process.exit(failed.length ? 1 : 0);

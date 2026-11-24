@@ -5,13 +5,13 @@ import {
   ReloadOutlined,
   UndoOutlined,
   ClearOutlined,
-  SearchOutlined,
-  InboxOutlined
+  SearchOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
 import { fmtTime, trashDaysLeft, TRASH_RETENTION_DAYS } from '../utils';
 import { COLLECTION_MAP } from '../../shared/collections';
+import StateEmpty from '../components/states/StateEmpty';
 
 type Props = {
   /** 恢复 / 清理之后通知外层刷新侧栏角标 */
@@ -255,7 +255,7 @@ export default function TrashPage({ onChanged }: Props) {
         <div>
           <div className="page-title">
             回收站
-            <span style={{ fontSize: 12, color: '#9aa1b4', fontWeight: 400, marginLeft: 2 }}>{rows.length} 条</span>
+            <span style={{ fontSize: 12, color: 'var(--text-3)', fontWeight: 400, marginLeft: 2 }}>{rows.length} 条</span>
           </div>
           <div className="page-desc">
             删除的记录在这里保留 {TRASH_RETENTION_DAYS} 天，到期自动清除；期间随时可以恢复
@@ -311,7 +311,7 @@ export default function TrashPage({ onChanged }: Props) {
           <Input
             allowClear
             style={{ width: 280 }}
-            prefix={<SearchOutlined style={{ color: '#9aa1b4' }} />}
+            prefix={<SearchOutlined style={{ color: 'var(--text-3)' }} />}
             placeholder="搜名称、集合、标签"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
@@ -335,19 +335,27 @@ export default function TrashPage({ onChanged }: Props) {
           pagination={{ pageSize: 50, hideOnSinglePage: true, showSizeChanger: false, size: 'small' }}
           locale={{
             emptyText: (
-              <div className="empty-state">
-                <div className="empty-icon">
-                  <InboxOutlined />
-                </div>
-                <div className="empty-title">{missing ? '回收站还没接上' : keyword ? '没有匹配的记录' : '回收站为空'}</div>
-                <div className="empty-desc">
-                  {missing
-                    ? '主进程还没注册回收站通道（records:trash-list），先更新一下程序'
+              <StateEmpty
+                kind={missing ? 'failed' : keyword ? 'no-match' : 'no-data'}
+                object="已删除的记录"
+                keyword={keyword}
+                title={missing ? '回收站还没接上' : keyword ? undefined : '回收站为空'}
+                desc={
+                  missing
+                    ? '主进程还没注册回收站通道（records:trash-list），先更新一下程序，再点「重新加载」'
                     : keyword
-                    ? '换个关键词试试'
-                    : '删除的记录会出现在这里，30 天内都能恢复'}
-                </div>
-              </div>
+                      ? '换个关键词试试，或清掉搜索看全部'
+                      : '删除的记录会出现在这里，30 天内都能恢复：先去记录列表删一条试试'
+                }
+                detail={missing ? '缺少 IPC 通道：records:trash-list（更新到最新版本即可）' : undefined}
+                action={
+                  missing
+                    ? { label: '重新加载', onClick: load }
+                    : keyword
+                      ? { label: '清空筛选', onClick: () => setKeyword('') }
+                      : { label: '刷新列表', onClick: load }
+                }
+              />
             )
           }}
         />

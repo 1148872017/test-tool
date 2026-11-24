@@ -1,13 +1,54 @@
+/* ============================================================================
+ * styles.css 分区目录（按文件顺序编号，找样式先看这里）
+ *
+ *   01 设计变量与基础重置 ......... :root / 滚动条 / html,body
+ *   02 应用外壳 ................... .app / .sidebar / .nav / .main
+ *   03 列表页五区骨架（PageShell） . .pg / .pg-head / .pg-surface / .pg-body
+ *   04 集合页 ..................... .collection-* / 工具条 chip / 菜单说明
+ *   05 通用页面 ................... .page-head / .panel / .empty-state
+ *   06 详情抽屉与表单 ............. .field-row / .markdown-body / .account-*
+ *   07 工具页 ..................... 代码调试 / 代码生成 / 代码体检 / 报告
+ *   08 设置页 ..................... 目录层级 / 选项配置 / 外观
+ *   09 状态组件 ................... .state-* / .loading-*
+ *   10 antd 局部覆盖 .............. 只在 .panel / .pg-surface 内生效
+ *
+ * 约定：
+ *   - 颜色一律走 :root 变量，不在组件里写死十六进制；
+ *   - 布局类不写 !important，只有覆盖 antd 默认值时例外；
+ *   - 组件内不 import 独立 css：build.mjs 只 copy 本文件，
+ *     另出的 css 不会被 index.html 引用（等于样式静默丢失）。
+ *
+ * 维护提示：
+ *   - 新增页面样式先归到对应分区，别在文件末尾继续追加；
+ *   - 同一个类只定义一次，重复块直接合并（.account-cell 曾经有两份）；
+ *   - 只在列表页生效的 antd 覆盖必须带 .panel / .pg-surface 前缀；
+ *   - 对比度由 --text / --muted / --text-3 三档保证，不靠临时加深颜色；
+ *   - 状态组件（空 / 错误 / 骨架）只挂类，不再写内联布局。
+ * ========================================================================== */
+
+/* ================= 01 设计变量与基础重置 ================= */
 :root {
   --bg: #f4f5fa;
   --panel: #ffffff;
   --line: #e9ebf3;
   --line-soft: #f0f2f8;
+  /* 状态栏 / 浅底块（PageShell Z5） */
+  --bg-subtle: #f7f8fc;
   --text: #1f2430;
-  --muted: #7b8296;
+  /* 次级文字（说明、辅助信息）：白底 6.11:1、--bg 上 5.61:1 */
+  --muted: #5a6275;
+  /**
+   * 第三级文字（时间、计数、状态栏、占位）：
+   * 白底 5.11:1、--bg(#f4f5fa) 4.70:1、--line-soft(#f0f2f8) 4.57:1。
+   * 上一版这一档只有 2.58:1，等于没打算让人看清。
+   */
+  --text-3: #666e80;
+  /* 填充色（按钮底、色块），固定配白字 ≥4.5:1 */
   --primary: #6c5ce7;
+  /* 浅底色（选中项背景、标签底） */
   --primary-soft: #efecff;
-  --primary-deep: #5443d6;
+  /* 文字色（链接、选中的导航项、强调文字），压白底 6.66:1 */
+  --primary-text: #5443d6;
   --sidebar-w: 226px;
 }
 
@@ -29,7 +70,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: 'Segoe UI', 'Microsoft YaHei', -apple-system, system-ui, sans-serif;
-  font-size: 13.5px;
+  font-size: 13px;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
@@ -52,7 +93,7 @@ body {
   background: transparent;
 }
 
-/* ---------- 外壳 ---------- */
+/* ================= 02 应用外壳 ================= */
 .app {
   display: flex;
   height: 100%;
@@ -120,8 +161,10 @@ body {
 }
 
 .nav-group-label {
-  font-size: 11px;
-  color: #9aa1b4;
+  /* 侧栏分组标题：11px + 淡灰是最容易糊的一处，字号提到 12px 并加粗 */
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-3);
   padding: 0 10px 6px;
   letter-spacing: 0.6px;
 }
@@ -146,7 +189,7 @@ body {
 
 .nav-item.active {
   background: var(--primary-soft);
-  color: var(--primary-deep);
+  color: var(--primary-text);
   font-weight: 600;
 }
 
@@ -163,9 +206,11 @@ body {
 }
 
 .nav-count {
-  font-size: 11px;
-  color: #9aa1b4;
-  background: #eef0f7;
+  /* 计数徽标：12px 起步；底色从 #eef0f7 提亮到 --line-soft，
+     让 --text-3 压在上面仍有 4.57:1（#eef0f7 只有 4.49:1，差一点点） */
+  font-size: 12px;
+  color: var(--text-3);
+  background: var(--line-soft);
   border-radius: 20px;
   padding: 0 7px;
   min-width: 20px;
@@ -175,7 +220,7 @@ body {
 
 .nav-item.active .nav-count {
   background: #fff;
-  color: var(--primary-deep);
+  color: var(--primary-text);
 }
 
 .sidebar-foot {
@@ -206,13 +251,371 @@ body {
   color: #2b3143;
 }
 
-/* ---------- 主区 ---------- */
+/* ================= 03 列表页五区骨架（PageShell） ================= */
+/**
+ * .main 改成 overflow:hidden —— 滚动权全部交给 .pg-body。
+ * 其他没有接 PageShell 的页面继续用 .main 自己滚（:not(.main--collection)），
+ * 这样改集合页不会把设置页 / 用例页的长内容裁掉。
+ */
 .main {
   flex: 1;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
+  padding: 12px 16px 8px;
+}
+
+.main:not(.main--collection) {
   overflow-y: auto;
   padding: 18px 24px 20px;
+}
+
+/**
+ * 五区骨架。
+ *
+ * Z1 .pg-head    44px 页头，无底色
+ * Z2 .pg-bar     40px 工具条（白底 + 下边线，在 .pg-surface 内）
+ * Z3 .pg-body    1fr，唯一滚动区
+ * Z4 .pg-dock    可选 40%，独立滚动
+ * Z5 .pg-status  26px 状态栏
+ *
+ * 关键点：每一层都写 min-height:0，否则 flex 子项的最小内容高度会把
+ * 容器撑破，滚动的就变成 .main 了（这正是改造前表头消失的原因）。
+ */
+.pg {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.pg-head {
+  flex: 0 0 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 2px;
+}
+
+.pg-head-main {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  gap: 1px;
+}
+
+.pg-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.2px;
+  line-height: 22px;
+}
+
+.pg-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pg-count {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.pg-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.pg-actions {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pg-surface {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.pg-bar {
+  flex: 0 0 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--panel);
+}
+
+.pg-bar-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+.pg-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-anchor: auto;
+  scrollbar-gutter: stable;
+}
+
+.pg-dock {
+  flex: 0 0 40%;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+
+.pg-status {
+  flex: 0 0 26px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 0 12px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--bg-subtle);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-3);
+}
+
+.pg-status-spacer {
+  flex: 1;
+}
+
+.pg-status-sep {
+  margin: 0 -8px;
+  color: #c2c8db;
+}
+
+.pg-status-keys {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 工具条控件：统一成 40px 内的紧凑尺寸 */
+.pg-bar .ant-segmented {
+  flex: 0 0 auto;
+}
+
+.pg-bar .ant-input-affix-wrapper {
+  height: 28px;
+}
+
+.pg-search {
+  flex: 0 1 260px;
+  width: 260px;
+  min-width: 140px;
+}
+
+.pg-sort {
+  width: 118px;
+  flex: 0 0 118px;
+}
+
+.pg-tag-filter {
+  width: 128px;
+  flex: 0 0 128px;
+}
+
+.pg-aside-toggle {
+  flex: 0 0 auto;
+  width: 26px;
+  padding-inline: 0;
+}
+
+/* 工具条 chip：原「全部 / 收藏」统计卡降级成一行小胶囊 */
+.pg-chip {
+  flex: 0 0 auto;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: #fff;
+  color: #4a5165;
+  font-size: 12px;
+  line-height: 22px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.pg-chip b {
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+.pg-chip:hover {
+  border-color: #d7d2fb;
+  color: var(--primary-text);
+}
+
+.pg-chip.active {
+  background: var(--primary-soft);
+  border-color: #ddd5fb;
+  color: var(--primary-text);
+}
+
+.pg-chip.active b {
+  color: var(--primary-text);
+}
+
+/* 页头「⋯」菜单：一条动作 + 一行灰字说明 */
+.pg-menu-item {
+  padding: 2px 0;
+  max-width: 330px;
+}
+
+.pg-menu-title {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text);
+}
+
+.pg-menu-help,
+.pg-menu-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-3);
+  white-space: normal;
+}
+
+/* 集合页：左标签栏 + 表格，都在唯一滚动区 .pg-body 里 */
+.collection-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 100%;
+  padding: 12px;
+}
+
+.collection-body--folded {
+  padding-left: 12px;
+}
+
+.collection-aside {
+  width: 176px;
+  flex: 0 0 176px;
+  margin: 0;
+  border-radius: 10px;
+}
+
+.collection-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.collection-table {
+  flex: 1;
+  min-height: 0;
+  /* 窄窗口下别把「更新时间 / 操作列」压成竖排：给表格保底宽度，
+     横向滚动交给唯一的 .pg-body，不另造滚动容器。 */
+  min-width: 760px;
+}
+
+/* antd sticky 表头：sticky 属性负责定位，这里补背景和层级，
+   否则滚动时表头会透出下面的行。 */
+.pg-body .ant-table-thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--panel);
+}
+
+.pg-body .ant-table-thead > tr > th::before {
+  display: none;
+}
+
+.collection-table .ant-table-pagination.ant-pagination {
+  margin: 12px;
+}
+
+@media (max-height: 800px) {
+  .pg-head {
+    flex-basis: 40px;
+  }
+  .pg-bar {
+    flex-basis: 36px;
+  }
+  .pg-status {
+    flex-basis: 24px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .pg-search {
+    flex-basis: 190px;
+    width: 190px;
+  }
+  .pg-tag-filter {
+    width: 108px;
+    flex-basis: 108px;
+  }
+}
+
+@media (max-width: 1020px) {
+  .pg-search {
+    flex-basis: 150px;
+    width: 150px;
+  }
+  .pg-sort {
+    width: 104px;
+    flex-basis: 104px;
+  }
+}
+
+/* 更窄时优先保住筛选和搜索：标签下拉让位（左侧标签栏仍可筛选） */
+@media (max-width: 980px) {
+  /* 选择器带 .pg-bar 才压得住 antd 后注入的 .ant-select { display:flex } */
+  .pg-bar .pg-tag-filter {
+    display: none;
+  }
+  .pg-bar .ant-segmented-item-label {
+    padding: 0 7px;
+  }
+}
+
+@media (max-width: 860px) {
+  .pg-search {
+    flex-basis: 120px;
+    width: 120px;
+    min-width: 110px;
+  }
+  .pg-sort {
+    width: 96px;
+    flex-basis: 96px;
+  }
 }
 
 /**
@@ -257,57 +660,8 @@ body {
   gap: 8px;
 }
 
-/* 统计卡 */
-.stats {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 10px;
-  flex-wrap: wrap;
-  flex: 0 0 auto;
-}
-
-.stat {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 7px 14px;
-  min-width: 92px;
-  cursor: default;
-  line-height: 1.25;
-}
-
-.stat-label {
-  font-size: 11.5px;
-  color: var(--muted);
-  margin-bottom: 3px;
-}
-
-.stat-value {
-  font-size: 17px;
-  font-weight: 650;
-  line-height: 1.2;
-}
-
-.stat-value small {
-  font-size: 11.5px;
-  color: var(--muted);
-  font-weight: 400;
-  margin-left: 3px;
-}
-
-.stat.clickable {
-  cursor: pointer;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
-}
-
-.stat.clickable:hover {
-  border-color: #d7d2fb;
-}
-
-.stat.active {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(108, 92, 231, 0.1);
-}
+/* ================= 04 通用页面（非集合页） ================= */
+/* 统计卡已下线：全部/收藏进工具条 chip，本周新增进 .pg-status。 */
 
 /* 表格容器 */
 .panel {
@@ -405,7 +759,7 @@ body {
 }
 
 .markdown-body {
-  font-size: 13.5px;
+  font-size: 13px;
   line-height: 1.72;
   word-break: break-word;
 }
@@ -521,7 +875,7 @@ body {
 .calc-big {
   font-size: 15px;
   font-weight: 600;
-  color: var(--primary-deep);
+  color: var(--primary-text);
   font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Microsoft YaHei', monospace;
 }
 
@@ -669,7 +1023,7 @@ body {
 
 .tag-item.active {
   background: var(--primary-soft);
-  color: var(--primary-deep);
+  color: var(--primary-text);
   font-weight: 600;
 }
 
@@ -711,7 +1065,7 @@ body {
 }
 
 .tag-caret:hover {
-  color: var(--primary-deep);
+  color: var(--primary-text);
 }
 
 .tag-item.sub {
@@ -725,7 +1079,7 @@ body {
 /* 用例文件名都挺长，给两行 + 等宽字体，比截成「TC_商家…」有用 */
 .tag-item.sub .sub-name {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.35;
   letter-spacing: -0.2px;
   white-space: normal;
@@ -748,7 +1102,7 @@ body {
 
 .tag-item.sub.active {
   background: var(--primary-soft);
-  color: var(--primary-deep);
+  color: var(--primary-text);
   font-weight: 600;
 }
 
@@ -977,7 +1331,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .api-link-stale {
   font-size: 12px;
@@ -1028,7 +1382,7 @@ body {
   font-size: 13px;
 }
 .link-modal-note {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 8px;
 }
@@ -1056,7 +1410,7 @@ body {
   white-space: pre-wrap;
 }
 .form-hint {
-  font-size: 11.5px;
+  font-size: 12px;
   margin-top: 4px;
   line-height: 1.5;
 }
@@ -1075,7 +1429,7 @@ body {
   white-space: nowrap;
 }
 .sync-doc {
-  font-size: 11.5px;
+  font-size: 12px;
   margin-top: 2px;
 }
 .sync-grid {
@@ -1101,12 +1455,12 @@ body {
   color: var(--muted);
 }
 .sync-label {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 2px;
 }
 .sync-note {
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.6;
   margin-top: 8px;
 }
@@ -1120,7 +1474,7 @@ body {
   margin: 8px 0 6px;
 }
 .link-suggest-label {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 .link-suggest-item {
@@ -1197,7 +1551,7 @@ body {
   gap: 4px;
 }
 .change-tag {
-  font-size: 11.5px;
+  font-size: 12px;
   background: #f2efff;
   color: #5b4bb8;
   margin-inline-end: 0;
@@ -1209,7 +1563,7 @@ body {
   flex-wrap: wrap;
 }
 .change-at {
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .impact-entry {
   padding-inline: 4px;
@@ -1240,7 +1594,7 @@ body {
   font-size: 13px;
 }
 .impact-url {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
   max-width: 340px;
   overflow: hidden;
@@ -1281,11 +1635,11 @@ body {
 }
 .impact-empty {
   margin-top: 8px;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .impact-note {
   margin-top: 10px;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.6;
 }
 
@@ -1324,13 +1678,13 @@ body {
 .jmx-issue-title { font-weight: 600; color: #3c4256; }
 .jmx-issue-detail { color: #6b7280; margin-top: 2px; word-break: break-all; }
 .jmx-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.jmx-table th { text-align: left; color: #9aa1b4; font-weight: 500; padding: 6px 8px; border-bottom: 1px solid #eef0f6; }
+.jmx-table th { text-align: left; color: var(--text-3); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid #eef0f6; }
 .jmx-table td { padding: 6px 8px; border-bottom: 1px solid #f4f5fa; }
 .jmx-samplers { display: flex; flex-direction: column; gap: 4px; }
 .jmx-sampler { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 3px 0; }
 .jmx-sampler-off { opacity: 0.45; }
 .jmx-sampler-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.jmx-sampler-name { flex: 0 0 auto; font-size: 11.5px; }
+.jmx-sampler-name { flex: 0 0 auto; font-size: 12px; }
 .jmx-kv { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12.5px; padding: 4px 0; align-items: baseline; }
 .jmx-csv { padding: 6px 0; border-bottom: 1px dashed #f0f2f8; }
 .jmx-csv-head { display: flex; gap: 8px; align-items: center; font-size: 12.5px; word-break: break-all; }
@@ -1342,8 +1696,8 @@ body {
 .jmx-listener { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 3px 0; }
 .jmx-listener-off { opacity: 0.45; }
 .jmx-listener-scope { color: #3c4256; }
-.jmx-listener-scope b { color: var(--primary-deep); font-weight: 600; }
-.jmx-listener-name { font-size: 11.5px; }
+.jmx-listener-scope b { color: var(--primary-text); font-weight: 600; }
+.jmx-listener-name { font-size: 12px; }
 
 /* ---------- 导入压测报告 ---------- */
 .report-import { padding-top: 4px; }
@@ -1363,7 +1717,7 @@ body {
 .tpl-list { width: 210px; flex: 0 0 210px; border-right: 1px solid var(--line-soft); padding-right: 12px; overflow: auto; }
 .tpl-item { display: flex; align-items: center; gap: 6px; padding: 7px 8px; border-radius: 7px; cursor: pointer; font-size: 12.5px; color: #3c4256; }
 .tpl-item:hover { background: #f7f8fc; }
-.tpl-item.active { background: var(--primary-soft); color: var(--primary-deep); font-weight: 600; }
+.tpl-item.active { background: var(--primary-soft); color: var(--primary-text); font-weight: 600; }
 .tpl-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tpl-divider { height: 1px; background: var(--line-soft); margin: 8px 0; }
 .tpl-empty { font-size: 12px; color: var(--muted); padding: 8px; }
@@ -1375,9 +1729,9 @@ body {
 .tpl-code-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 14px 0 6px; font-size: 12.5px; color: #3c4256; }
 .tpl-code { background: #1e2233; color: #d8dee9; padding: 14px 16px; border-radius: 9px; font-size: 12px; line-height: 1.7; overflow: auto; max-height: 460px; white-space: pre; margin: 0; }
 .tpl-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.tpl-table th { text-align: left; color: #9aa1b4; font-weight: 500; padding: 7px 8px; border-bottom: 1px solid #eef0f6; }
+.tpl-table th { text-align: left; color: var(--text-3); font-weight: 500; padding: 7px 8px; border-bottom: 1px solid #eef0f6; }
 .tpl-table td { padding: 8px; border-bottom: 1px solid #f4f5fa; vertical-align: top; }
-.tpl-note { color: #9aa1b4; font-size: 11.5px; margin-top: 3px; }
+.tpl-note { color: var(--text-3); font-size: 12px; margin-top: 3px; }
 
 /* 模板分类分组 */
 .tpl-group { margin-bottom: 10px; }
@@ -1403,11 +1757,11 @@ body {
 .kb-toc-group { margin-bottom: 2px; }
 .kb-toc-item { padding: 3px 6px; border-radius: 5px; cursor: pointer; color: #3c4256; }
 .kb-toc-item:hover { background: #eef0f6; }
-.kb-toc-item.active { background: var(--primary-soft); color: var(--primary-deep); font-weight: 600; }
+.kb-toc-item.active { background: var(--primary-soft); color: var(--primary-text); font-weight: 600; }
 .kb-toc-children { padding-left: 14px; }
 .kb-toc-sub { padding: 2px 6px; border-radius: 5px; cursor: pointer; color: #6b7280; font-size: 12px; }
 .kb-toc-sub:hover { background: #eef0f6; }
-.kb-toc-sub.active { background: var(--primary-soft); color: var(--primary-deep); }
+.kb-toc-sub.active { background: var(--primary-soft); color: var(--primary-text); }
 .kb-content { font-size: 13px; line-height: 1.8; color: #333; }
 /* 阅读全文：短文章一键展开，不用逐章点 */
 .kb-readall { display: flex; align-items: center; gap: 10px; padding: 0 0 14px; margin-bottom: 4px; border-bottom: 1px dashed var(--line-soft); }
@@ -1429,7 +1783,7 @@ body {
 
 /* 目录下拉（hover 展开） */
 .kb-toc-dropdown { background: #fff; border-radius: 10px; box-shadow: 0 6px 24px rgba(30, 34, 51, 0.14); padding: 8px 0; min-width: 260px; max-width: 380px; }
-.kb-toc-dropdown-head { font-size: 11.5px; color: #9aa1b4; padding: 2px 14px 6px; border-bottom: 1px solid var(--line-soft); margin-bottom: 4px; }
+.kb-toc-dropdown-head { font-size: 12px; color: var(--text-3); padding: 2px 14px 6px; border-bottom: 1px solid var(--line-soft); margin-bottom: 4px; }
 .kb-toc-dropdown-body { max-height: 420px; overflow: auto; padding: 0 6px; }
 .kb-toc-dropdown .kb-toc-item { padding: 5px 8px; font-size: 12.5px; }
 .kb-toc-dropdown .kb-toc-sub { padding: 4px 8px; font-size: 12px; }
@@ -1573,7 +1927,7 @@ body {
 }
 .json-table-tip {
   margin: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.6;
   max-height: 260px;
   overflow: auto;
@@ -1590,7 +1944,7 @@ body {
   padding: 6px 10px;
   border-left: 1px solid #f4f5fa;
   color: #8a90a2;
-  font-size: 11.5px;
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1617,8 +1971,8 @@ body {
   padding: 1px 6px;
   border-radius: 4px;
   background: var(--primary-soft);
-  color: var(--primary-deep);
-  font-size: 11.5px;
+  color: var(--primary-text);
+  font-size: 12px;
 }
 .var-preview-head {
   margin: 14px 0 6px;
@@ -1749,7 +2103,7 @@ body {
   gap: 2px;
 }
 .accounts-editor .account-field label {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 .accounts-editor .account-field-wide {
@@ -1758,7 +2112,7 @@ body {
 
 /* 角色标签（显式表达） */
 .role-tags .ant-tag {
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 18px;
 }
 
@@ -1797,37 +2151,9 @@ body {
   font-weight: 600;
   color: #3a4055;
 }
-/* 列表页的账号单元格（默认账号 + 更多提示） */
-.account-cell {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-}
-.account-cell-main {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.account-cell-label {
-  font-size: 11.5px;
-  color: var(--muted);
-}
-.account-cell-more {
-  flex: 0 0 auto;
-  padding: 0 5px;
-  border-radius: 8px;
-  background: var(--primary-soft);
-  color: var(--primary-deep);
-  font-size: 11px;
-  line-height: 16px;
-  cursor: help;
-}
-/* 账号单元格：单行省略，不换行撑高行 */
+/* 列表页的账号单元格（默认账号 + 更多提示）
+ * 单行省略：不换行撑高行；完整列表在详情里看。
+ * 原来这段在文件里重复了两份，合并成一份。 */
 .account-cell {
   display: inline-flex;
   align-items: center;
@@ -1846,11 +2172,11 @@ body {
 }
 .account-cell-label {
   flex: 0 0 auto;
-  font-size: 11.5px;
-  color: var(--muted);
   max-width: 60px;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--muted);
 }
 .account-cell-account {
   min-width: 0;
@@ -1863,7 +2189,7 @@ body {
   padding: 0 5px;
   border-radius: 8px;
   background: var(--primary-soft);
-  color: var(--primary-deep);
+  color: var(--primary-text);
   font-size: 11px;
   line-height: 16px;
   cursor: help;
@@ -1970,7 +2296,7 @@ body {
 }
 .settings-nav-item:hover {
   background: var(--primary-soft);
-  color: var(--primary-deep);
+  color: var(--primary-text);
 }
 
 /* ===== 开发环境卡片 ===== */
@@ -2018,7 +2344,7 @@ body {
 }
 .env-strip-label {
   flex: 0 0 auto;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .env-chip {
   display: inline-flex;
@@ -2067,7 +2393,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 /* ===== 环境提示条（30s 倒计时绿条）===== */
 .env-tip {
@@ -2170,7 +2496,7 @@ body {
 }
 .codegen-el-table th {
   padding: 5px 6px;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .codegen-output {
   display: flex;
@@ -2208,7 +2534,7 @@ body {
   align-items: center;
   justify-content: center;
 }
-/* ===== 皮肤设置卡片 ===== */
+/* ===== 外观设置卡片（只剩主题色 5 选 1） ===== */
 .skin-row {
   display: flex;
   align-items: center;
@@ -2250,48 +2576,8 @@ body {
   border-color: #fff;
   box-shadow: 0 0 0 2px var(--primary);
 }
-.skin-bg {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
-  min-width: 0;
-}
-.skin-bg-preview {
-  width: 120px;
-  height: 68px;
-  border-radius: 6px;
-  border: 1px solid var(--line-soft);
-  background-size: cover;
-  background-position: center;
-  flex: 0 0 auto;
-}
-.skin-bg-empty {
-  width: 120px;
-  height: 68px;
-  border-radius: 6px;
-  border: 1px dashed var(--line);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  color: var(--muted);
-  font-size: 12px;
-  flex: 0 0 auto;
-}
-.skin-bg-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.skin-opacity {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
-}
 .skin-hint {
-  font-size: 11.5px;
+  font-size: 12px;
   padding: 6px 0 0;
 }
 /* ===== 报告分析 ===== */
@@ -2336,7 +2622,7 @@ body {
   line-height: 1.3;
 }
 .report-stat-label {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 2px;
 }
@@ -2372,7 +2658,7 @@ body {
   word-break: break-all;
 }
 .cluster-sample {
-  font-size: 11.5px;
+  font-size: 12px;
   padding: 4px 0;
   word-break: break-all;
 }
@@ -2425,19 +2711,19 @@ body {
 .report-test-class {
   flex: 0 1 auto;
   min-width: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .report-test-dur {
   flex: 0 0 auto;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .report-test-msg {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2490,23 +2776,151 @@ body {
   gap: 8px;
   flex-wrap: wrap;
 }
-.codescan-view-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.codescan-empty {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 0;
-}
 .codescan-filter {
   display: flex;
   align-items: center;
   gap: 10px;
 }
+
+/* 摘要条：36px 单行，替代原来 4 张 cov-stat 大卡 */
+.codescan-statbar {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12.5px;
+  color: #4a5165;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.codescan-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.codescan-stat-mark {
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  background: var(--text-3);
+}
+
+.codescan-stat-value {
+  color: #3a4055;
+  font-weight: 700;
+}
+
+.codescan-divider {
+  width: 1px;
+  height: 14px;
+  margin: 0 10px;
+  flex: 0 0 auto;
+  background: var(--line-soft);
+}
+
+.codescan-extra {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 结果区：左 96px 筛选列 + 右侧内容 */
+.codescan-main {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.codescan-rail {
+  flex: 0 0 96px;
+  width: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+}
+
+.codescan-rail-title {
+  padding: 0 8px 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.codescan-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #4a5165;
+  font-size: 12.5px;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+}
+
+.codescan-rail-item.active {
+  background: var(--primary-soft);
+  color: var(--primary-text);
+  font-weight: 600;
+}
+
+.codescan-rail-mark {
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+
+.codescan-rail-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codescan-rail-count {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.codescan-rail-item.active .codescan-rail-count {
+  color: inherit;
+}
+
+.codescan-main-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.codescan-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+
+.codescan-content-scroll {
+  overflow-y: auto;
+}
+
 /* ===== 代码体检：规则勾选面板 ===== */
 .rule-panel {
   display: flex;
@@ -2576,31 +2990,6 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.cov-summary {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.cov-stat {
-  flex: 1;
-  min-width: 90px;
-  padding: 10px 14px;
-  border-radius: 8px;
-  background: #fff;
-  border: 1px solid var(--line-soft);
-  text-align: center;
-}
-.cov-stat-value {
-  font-size: 20px;
-  font-weight: 700;
-  color: #3a4055;
-  line-height: 1.3;
-}
-.cov-stat-label {
-  font-size: 11.5px;
-  color: var(--muted);
-  margin-top: 2px;
-}
 .cov-section-title {
   font-size: 12.5px;
   font-weight: 600;
@@ -2639,7 +3028,7 @@ body {
 .cov-name {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2657,7 +3046,17 @@ body {
   border-radius: 8px;
   background: #fff;
   border: 1px solid var(--line-soft);
-  border-left: 3px solid #e5534b;
+  /* 默认弱色，由严重度修饰类覆盖；原来恒为红，低危也像事故 */
+  border-left: 3px solid var(--line-soft);
+}
+.issue-row-high {
+  border-left-color: #b42318;
+}
+.issue-row-medium {
+  border-left-color: #a15c00;
+}
+.issue-row-low {
+  border-left-color: #e1e5ee;
 }
 .issue-label {
   font-size: 12.5px;
@@ -2666,7 +3065,7 @@ body {
   margin-left: 4px;
 }
 .issue-file {
-  font-size: 11.5px;
+  font-size: 12px;
   margin-left: 8px;
 }
 .issue-snippet {
@@ -2674,14 +3073,190 @@ body {
   padding: 4px 8px;
   border-radius: 4px;
   background: #f7f8fc;
-  font-size: 11.5px;
+  font-size: 12px;
   color: #5a6072;
   word-break: break-all;
 }
 .issue-hint {
   margin-top: 3px;
-  font-size: 11.5px;
+  font-size: 12px;
 }
+
+/* ================= 09 状态组件（空 / 错误 / 骨架） ================= */
+/**
+ * 三态容器：
+ *   .state-empty        基础容器（inline 尺寸）
+ *   .state-page         占满内容区，垂直居中
+ *   .state-inline       卡片内（默认）
+ * 组件 src/components/states/* 只挂类，不再写内联布局。
+ */
+.state-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 18px 12px;
+}
+
+.state-empty.state-page {
+  flex: 1;
+  min-height: 180px;
+  padding: 36px 16px;
+}
+
+.state-empty-icon {
+  font-size: 26px;
+  line-height: 1;
+  color: #b8bed2;
+  margin-bottom: 8px;
+}
+
+.state-page .state-empty-icon {
+  font-size: 34px;
+  margin-bottom: 12px;
+}
+
+.state-empty-icon.is-failed {
+  color: #d97706;
+}
+
+.state-empty-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #3a4055;
+}
+
+.state-page .state-empty-title {
+  font-size: 14.5px;
+}
+
+.state-empty-desc {
+  margin-top: 6px;
+  max-width: 460px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+
+.state-empty-actions {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.state-empty-detail {
+  margin-top: 10px;
+  width: 100%;
+  max-width: 560px;
+  max-height: 200px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: #f7f8fc;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #5a6072;
+  text-align: left;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+/* 就地错误条：旧结果还在，只压一条说明，不清屏 */
+.state-error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid #f0c2bd;
+  border-left: 3px solid #b42318;
+  border-radius: 8px;
+  background: #fff8f7;
+}
+
+.state-error-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.state-error-icon {
+  color: #b42318;
+}
+
+.state-error-msg {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #7a2019;
+}
+
+.state-error-stale {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.state-error-spacer {
+  flex: 1;
+}
+
+.state-error-detail {
+  max-height: 180px;
+  overflow: auto;
+  padding: 6px 8px;
+  border: 1px solid #f3d7d3;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #7a2019;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+/* 骨架行：和 antd size="middle" 的行高一致（38px），加载完不跳高度 */
+.loading-rows {
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid var(--line-soft);
+  overflow: hidden;
+}
+
+.loading-rows.is-borderless {
+  border: none;
+  border-radius: 0;
+}
+
+.loading-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 12px;
+  border-bottom: 1px solid #f4f5fa;
+}
+
+.loading-row:last-child {
+  border-bottom: none;
+}
+
+.loading-bar {
+  height: 10px;
+  border-radius: 4px;
+  background: #f3f4f9;
+}
+
+.loading-bar.is-alt {
+  background: #eef0f6;
+}
+
 /* ===== 脚本生成 ===== */
 .scriptgen-page {
   display: flex;
@@ -2718,7 +3293,7 @@ body {
   gap: 3px;
 }
 .scriptgen-field > label {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 .scriptgen-row {
@@ -2731,7 +3306,7 @@ body {
 }
 .scriptgen-table th {
   padding: 5px 6px;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .scriptgen-output {
   display: flex;
@@ -2779,7 +3354,7 @@ body {
   position: sticky;
   top: 0;
   background: #f7f8fc;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   color: #4a5165;
   z-index: 1;
@@ -2794,177 +3369,21 @@ body {
   font-weight: 600;
   color: #4a5165;
 }
-/* ===== 皮肤：低透明度时的文字清晰度 ===== */
-/* 有背景图时，给面板里的文字加白色阴影（由 JS 按透明度注入强度） */
-body.has-bg .panel,
-body.has-bg .tool-card,
-body.has-bg .sidebar,
-body.has-bg .nav-item,
-body.has-bg .page-title,
-body.has-bg .tool-card-title,
-body.has-bg .nav-group-label {
-  text-shadow: var(--skin-text-shadow, none);
-}
-
+/* ================= 10 antd 局部覆盖（只作用于列表页面板） ================= */
 /**
- * 侧栏分组标题（资产 / 索引 / 自动化 / 辅助）。
+ * 原来的选择器是全局 `.ant-table-*`，弹窗 / 设置页里的表格也被压扁。
+ * 现在只命中 .panel（其他列表页）和 .pg-surface（PageShell），
+ * 弹窗里的表格保持 antd 默认行高。
  *
- * 原本是 #9aa1b4（很淡的灰）+ 11px 小字，
- * 在有背景图时（尤其压暗模式）糊成一团看不清（踩坑 #98）。
- * 加深到 #5c6478 + 加粗，并给一点白色阴影防止和背景糊在一起。
+ * 行高收到 38px 左右：一屏能多看 3-4 行，长列表滚动更少。
  */
-body.has-bg .nav-group-label {
-  color: #5c6478;
-  font-weight: 650;
-  letter-spacing: 0.3px;
-  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
-}
-
-/* 提亮模式下背景更浅，分组标题反而要更深一点 */
-body.has-bg.bg-overlay-light .nav-group-label {
-  color: #4a5165;
-  text-shadow: none;
-}
-
-/* 没背景图时也顺手加深一点（原来太淡） */
-.nav-group-label {
-  color: #6b7280;
-  font-weight: 600;
-}
-/* ============================================================
- * 皮肤：三层结构（背景图 → 蒙版 → 面板）
- *
- * 为什么需要蒙版：
- *   只有「背景图 + 半透明面板」时，内容少的地方会大片露出背景图，
- *   视觉上很刺眼，而且面板和背景糊在一起、没有层次。
- *   中间加一层蒙版把背景压暗/柔化，面板才「浮」得起来。
- *
- * 层顺序（从下到上）：
- *   body            背景图
- *   body::before    蒙版（半透明纯色，强度可调）
- *   .app            侧栏 + 主内容（面板在这一层）
- * ============================================================ */
-
-body.has-bg {
-  background-size: cover;
-  background-position: center;
-  background-attachment: fixed;
-  background-repeat: no-repeat;
-}
-
-/* 蒙版层：铺满窗口，不拦鼠标 */
-body.has-bg::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  background: rgba(18, 22, 34, var(--bg-overlay, 0.35));
-  pointer-events: none;
-  z-index: 0;
-}
-
-/* 蒙版是浅色时用白色，深色时用深灰（由 JS 注入具体值） */
-body.has-bg.bg-overlay-light::before {
-  background: rgba(255, 255, 255, var(--bg-overlay, 0.35));
-}
-
-/* 内容层要压在蒙版之上 */
-body.has-bg .app {
-  position: relative;
-  z-index: 1;
-}
-
-/* 有背景图时，面板/侧栏用半透明白 + 毛玻璃 */
-body.has-bg .sidebar {
-  background: rgba(var(--panel-rgb, 255, 255, 255), var(--panel-alpha, 0.85));
-  backdrop-filter: blur(10px) saturate(1.1);
-  border-right-color: rgba(255, 255, 255, 0.25);
-}
-
-body.has-bg .panel,
-body.has-bg .tool-card,
-body.has-bg .stat,
-body.has-bg .settings-nav {
-  background: rgba(var(--panel-rgb, 255, 255, 255), var(--panel-alpha, 0.85));
-  backdrop-filter: blur(10px) saturate(1.1);
-  border-color: rgba(255, 255, 255, 0.3);
-}
-
-/* 页头不要底色（让它直接落在蒙版上，减少"白块堆叠"） */
-body.has-bg .page-head {
-  background: transparent;
-  backdrop-filter: none;
-}
-
-/**
- * 页头文字颜色要跟着蒙版走。
- *
- * 为什么不能写死白色（踩坑 #98）：
- *   蒙版有「压暗 / 提亮」两种。
- *   压暗时背景深 → 白字清楚；提亮时背景浅 → 白字直接看不见。
- *   所以两种模式各给一套颜色。
- */
-
-/* 压暗模式（默认）：深背景 → 白字 + 深色阴影 */
-body.has-bg .page-title {
-  color: #fff;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-}
-body.has-bg .page-desc {
-  color: rgba(255, 255, 255, 0.86);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-}
-/**
- * 页头右边的按钮组：默认按钮给白底，否则压在背景上看不清。
- *
- * 注意必须排除 primary（主按钮，如「新增」）：
- *   它本来就是紫色实心 + 白字，套白底会变成「白底白字」——比不处理还糟。
- */
-body.has-bg .page-head-right .ant-btn-default {
-  background: rgba(255, 255, 255, 0.92);
-  border-color: rgba(255, 255, 255, 0.5);
-  color: #1f2430;
-}
-
-/* primary 按钮保持主色，只加一点点阴影让它从背景里浮起来 */
-body.has-bg .page-head-right .ant-btn-primary {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-}
-
-/* 提亮模式：浅背景 → 深字 + 白色阴影 */
-body.has-bg.bg-overlay-light .page-title {
-  color: #10141f;
-  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.75);
-}
-body.has-bg.bg-overlay-light .page-desc {
-  color: #3d4354;
-  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.65);
-}
-body.has-bg.bg-overlay-light .page-head-right .ant-btn-default {
-  background: rgba(255, 255, 255, 0.96);
-  border-color: rgba(15, 20, 31, 0.12);
-  color: #1f2430;
-}
-body.has-bg.bg-overlay-light .page-head-right .ant-btn-primary {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
-}
-
-/* 表格行保持透明（否则一行行白块很碎） */
-body.has-bg .ant-table,
-body.has-bg .ant-table-tbody > tr > td {
-  background: transparent;
-}
-
-/* ============================================================
- * 列表页：更紧凑的表格
- *
- * 原来的行高 48px 左右，一屏只能看 10 行出头，信息密度太低。
- * 收到 38px 左右，一屏能多看 3-4 行，长列表滚动更少。
- * ============================================================ */
-.ant-table-tbody > tr > td {
+.panel .ant-table-tbody > tr > td,
+.pg-surface .ant-table-tbody > tr > td {
   padding: 9px 14px !important;
 }
 
-.ant-table-thead > tr > th {
+.panel .ant-table-thead > tr > th,
+.pg-surface .ant-table-thead > tr > th {
   padding: 9px 14px !important;
   font-size: 12px;
 }
@@ -3005,7 +3424,7 @@ body.has-bg .ant-table-tbody > tr > td {
 }
 
 .dir-row-hint {
-  font-size: 11.5px;
+  font-size: 12px;
   padding-left: 120px;
   margin-top: -2px;
   padding-bottom: 4px;

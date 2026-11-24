@@ -58,7 +58,7 @@ export default function ScenePicker({ value, onChange, placeholder, readOnly }: 
           <div className="scene-option">
             <FileTextOutlined style={{ color: '#6c5ce7', marginRight: 6 }} />
             <span className="mono">{f.name}</span>
-            <span className="muted" style={{ marginLeft: 8, fontSize: 11.5 }}>
+            <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
               {f.samplers} 个采样器
             </span>
           </div>
@@ -114,7 +114,7 @@ export default function ScenePicker({ value, onChange, placeholder, readOnly }: 
             已关联脚本 · {matched.samplers} 个采样器
           </Tag>
         ) : (
-          <span className="muted" style={{ fontSize: 11.5 }}>
+          <span className="muted" style={{ fontSize: 12 }}>
             手填场景名，或从下拉里选已导入的 jmx
           </span>
         )}

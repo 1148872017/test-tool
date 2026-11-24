@@ -132,6 +132,17 @@ const RE_PLATE_NEW = new RegExp('^' + PROV + LETTER + '[DF]\\d{5}$');
   // v0.41.2 的大数量导出逻辑必须原样保留
   check('大数量阈值/预览常量未被改动', /LARGE_THRESHOLD = 200/.test(src) && /PREVIEW_ROWS = 200/.test(src), 'threshold changed');
   check('generateToFile 仍在', /generateToFile/.test(src), 'no generateToFile');
+
+  /**
+   * 14 个类型必须一次全渲染出来。
+   *
+   * rc-select 默认虚拟滚动：listHeight=200 / listItemHeight=20 → 刚好显示 10 行，
+   * 第 11~14 项（boundary / plate / mac 等）要滚动才看得到，用户会以为功能缺失。
+   * 14 项虚拟化没有任何收益，两处 TYPES 下拉都必须 virtual={false}。
+   */
+  const virtualOff = src.match(/options=\{TYPES\}[\s\S]{0,120}?virtual=\{false\}/g) || [];
+  check('单类型下拉 virtual={false}', virtualOff.length === 2, virtualOff.length + ' 处');
+  check('TYPES 下拉的虚拟化全部关掉（没有漏网的）', (src.match(/virtual=\{false\}/g) || []).length === 2, (src.match(/virtual=\{false\}/g) || []).length);
 }
 
 const failed = results.filter((r) => !r.ok);
