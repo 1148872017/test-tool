@@ -17,6 +17,7 @@ const security = require('./security');
 const runner = require('./runner');
 const projects = require('./projects');
 const { RUNNERS, listRunners } = require('../shared/runners');
+const codegen = require('../shared/codegen');
 const { TOOLS, COLLECTION_MAP } = require('../shared/collections');
 
 const DEBUG = process.env.TT_DEBUG === '1';
@@ -757,6 +758,94 @@ function registerIpc() {
       return '';
     }
   };
+
+  /* ==================== 代码骨架生成 ==================== *
+   * 从接口记录 / JSON / 页面元素生成 Java/Python 代码骨架。
+   * 纯模板替换，不做 AST。
+   * ---------------------------------------------------- */
+
+  /** 可用的生成目标 */
+  ipcMain.handle('codegen:targets', async () => {
+    assertUnlocked();
+    return { ok: true, targets: codegen.listTargets() };
+  });
+
+  /**
+   * 生成代码（预览，不写文件）。
+   *
+   * payload:
+   *   targetKey  生成目标（java-restassured / python-pytest / ...）
+   *   apiId      接口记录 id（kind=api 用）
+   *   page       页面信息（kind=page 用）
+   *   json       JSON 文本（kind=model 用）
+   *   className  类名（可选）
+   */
+  ipcMain.handle('codegen:preview', async (e, payload = {}) => {
+    assertUnlocked();
+    const targetKey = String(payload.targetKey || '').trim();
+    if (!targetKey) return { ok: false, message: '缺少生成目标' };
+
+    const input = {
+      className: String(payload.className || '').trim(),
+      page: payload.page,
+      json: payload.json
+    };
+
+    // 接口记录：从数据库读
+    if (payload.apiId) {
+      const rec = store.get(String(payload.apiId));
+      if (!rec) return { ok: false, message: '接口记录不存在' };
+      input.api = rec.data;
+    }
+
+    return codegen.generate(targetKey, input);
+  });
+
+  /**
+   * 生成并保存到文件。
+   *
+   * payload: 同 codegen:preview，另加
+   *   dir  保存目录（空 = 弹选择框）
+   */
+  ipcMain.handle('codegen:save', async (e, payload = {}) => {
+    assertUnlocked();
+    const targetKey = String(payload.targetKey || '').trim();
+    if (!targetKey) return { ok: false, message: '缺少生成目标' };
+
+    const input = {
+      className: String(payload.className || '').trim(),
+      page: payload.page,
+      json: payload.json
+    };
+    if (payload.apiId) {
+      const rec = store.get(String(payload.apiId));
+      if (!rec) return { ok: false, message: '接口记录不存在' };
+      input.api = rec.data;
+    }
+
+    const gen = codegen.generate(targetKey, input);
+    if (!gen.ok) return gen;
+
+    // 选目录
+    let dir = String(payload.dir || '').trim();
+    if (!dir) {
+      const picked = await dialog.showOpenDialog(win, {
+        title: '选择保存目录',
+        properties: ['openDirectory']
+      });
+      if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+      dir = picked.filePaths[0];
+    }
+
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const full = path.join(dir, gen.filename);
+      fs.writeFileSync(full, gen.code, 'utf8');
+      return { ok: true, file: full, filename: gen.filename };
+    } catch (err) {
+      return { ok: false, message: '写文件失败：' + (err && err.message) };
+    }
+  });
 
   /* ==================== 代码调试 ==================== *
    * 在平台里写代码 → 跑 → 看输出。

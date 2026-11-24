@@ -45,6 +45,11 @@ contextBridge.exposeInMainWorld('api', {
   runnerOpenBrowserDir: () => invoke('runner:openBrowserDir'),
   pickFile: (payload) => invoke('util:pickFile', payload),
 
+  // ---- 代码骨架生成 ----
+  codegenTargets: () => invoke('codegen:targets'),
+  codegenPreview: (payload) => invoke('codegen:preview', payload),
+  codegenSave: (payload) => invoke('codegen:save', payload),
+
   /** 订阅代码运行输出（返回取消订阅函数） */
   onRunnerOutput: (cb) => {
     const handler = (_e, data) => cb(data);

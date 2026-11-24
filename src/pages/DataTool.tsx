@@ -112,13 +112,55 @@ export default function DataTool() {
 
   const generate = () => {
     const def = TYPES.find((t) => t.value === type) || TYPES[0];
-    const n = Math.max(1, Math.min(200, Number(count) || 1));
+    // 上限 10 万（CSV 导出用，太多会卡）
+    const n = Math.max(1, Math.min(100000, Number(count) || 1));
     setRows(Array.from({ length: n }, () => def.fn()));
   };
 
   const copyOne = async (v: string) => {
     await api.copy(v, false);
     toast('已复制');
+  };
+
+  /**
+   * 导出为 CSV / JSON。
+   *
+   * 用 Blob + a[download] 触发浏览器下载（Electron 里也能用）。
+   * CSV 加 BOM，否则 Excel 打开中文乱码。
+   */
+  const doExport = (format: 'csv' | 'json') => {
+    if (!rows.length) return;
+    const def = TYPES.find((t) => t.value === type) || TYPES[0];
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').replace(/\..+/, '');
+    let content = '';
+    let mime = '';
+    let ext = '';
+
+    if (format === 'csv') {
+      // CSV：表头 + 每行一个值（值里有逗号/引号要转义）
+      const esc = (v: string) => {
+        const t = String(v);
+        return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+      };
+      content = '\uFEFF' + def.label + '\n' + rows.map(esc).join('\n');
+      mime = 'text/csv;charset=utf-8';
+      ext = 'csv';
+    } else {
+      content = JSON.stringify(rows, null, 2);
+      mime = 'application/json;charset=utf-8';
+      ext = 'json';
+    }
+
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${def.value}-${rows.length}-${stamp}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`已导出 ${rows.length} 条 ${ext.toUpperCase()}`);
   };
 
   const copyAll = async () => {
@@ -144,13 +186,19 @@ export default function DataTool() {
           <Select value={type} onChange={setType} options={TYPES} style={{ width: 140 }} />
           <Space size={6}>
             <span className="muted">数量</span>
-            <InputNumber min={1} max={200} value={count} onChange={(v) => setCount(Number(v) || 1)} style={{ width: 80 }} />
+            <InputNumber min={1} max={100000} value={count} onChange={(v) => setCount(Number(v) || 1)} style={{ width: 100 }} />
           </Space>
           <Button type="primary" icon={<ThunderboltOutlined />} onClick={generate}>
             生成
           </Button>
           <Button icon={<CopyOutlined />} onClick={copyAll} disabled={!rows.length}>
             复制全部
+          </Button>
+          <Button icon={<DownloadOutlined />} onClick={() => doExport('csv')} disabled={!rows.length}>
+            导出 CSV
+          </Button>
+          <Button icon={<DownloadOutlined />} onClick={() => doExport('json')} disabled={!rows.length}>
+            导出 JSON
           </Button>
         </Space>
       </div>

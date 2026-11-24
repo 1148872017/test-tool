@@ -9,6 +9,7 @@ import JsonTool from './pages/JsonTool';
 import DataTool from './pages/DataTool';
 import Toolbox from './pages/Toolbox';
 import CodeRunnerPage from './pages/CodeRunnerPage';
+import CodegenPage from './pages/CodegenPage';
 import SettingsPage from './pages/SettingsPage';
 import CasePage from './pages/CasePage';
 import JmxPage from './pages/JmxPage';
@@ -183,6 +184,7 @@ export default function App() {
         {route.type === 'tool' && route.key === 'data' ? <DataTool /> : null}
         {route.type === 'tool' && route.key === 'toolbox' ? <Toolbox /> : null}
         {route.type === 'tool' && route.key === 'runner' ? <CodeRunnerPage /> : null}
+        {route.type === 'tool' && route.key === 'codegen' ? <CodegenPage /> : null}
         {route.type === 'settings' ? (
           <SettingsPage
             boot={boot}

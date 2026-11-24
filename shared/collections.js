@@ -216,7 +216,8 @@ const TOOLS = [
   { key: 'json', name: 'JSON 转化', icon: 'CodeOutlined', desc: '格式化 / 压缩 / 转义 / 校验' },
   { key: 'data', name: '测试数据', icon: 'ExperimentOutlined', desc: '手机号 / 身份证 / 银行卡 / 地址…' },
   { key: 'toolbox', name: '工具箱', icon: 'ToolOutlined', desc: 'Base64 / 时间戳 / 哈希 / UUID' },
-  { key: 'runner', name: '代码调试', icon: 'BugOutlined', desc: 'Groovy / Python / pytest / Maven 跑代码看输出' }
+  { key: 'runner', name: '代码调试', icon: 'BugOutlined', desc: 'Groovy / Python / pytest / Maven 跑代码看输出' },
+  { key: 'codegen', name: '代码生成', icon: 'FileAddOutlined', desc: '接口/JSON/页面元素 → Java/Python 代码骨架' }
 ];
 
 const COLLECTION_MAP = COLLECTIONS.reduce((acc, c) => {
