@@ -142,7 +142,8 @@ contextBridge.exposeInMainWorld('api', {
   sniffStatus: () => invoke('sniff:status'),
   sniffStart: (payload) => invoke('sniff:start', payload),
   sniffHighlight: (payload) => invoke('sniff:highlight', payload),
-  sniffReopen: (url) => invoke('sniff:reopen', { url }),
+  // 入参统一透传 { url, browser }（v0.56：以前这里把 url 再包一层，browser 传不进去）
+  sniffReopen: (payload) => invoke('sniff:reopen', payload),
   sniffStop: () => invoke('sniff:stop'),
   // 拉起 Playwright codegen 录制器；入参 { url, lang }
   //   lang='python'|'pytest' → 本机 Python 录制器（只能出 Python）

@@ -570,6 +570,7 @@ const isTrashed = (id: string) => {
     ok: false,
     running: false,
     browser: '',
+    browserChosen: '',
     url: '',
     name: '',
     mode: '',
@@ -603,12 +604,30 @@ const isTrashed = (id: string) => {
   let sniffName = '';
   let sniffMode = 'css';
   let sniffSelector = '';
+  /**
+   * 浏览器选择（v0.56）：界面传 { browser: 'auto'|'edge'|'chrome' }，默认 auto。
+   * 真机上 auto 由主进程读系统默认浏览器；预览里固定按「系统默认 = chrome」演，
+   * 这样用户默认 Chrome 却拉起 Edge 的那种回显差异在浏览器里也看得见。
+   */
+  let sniffBrowserChosen = 'auto';
+  let sniffBrowser = 'chrome';
+
+  /** 记住这次按哪个选择起的，并算回「实际用哪个」 */
+  const applyBrowserChoice = (choice: any) => {
+    const v = String(choice === undefined || choice === null ? '' : choice)
+      .trim()
+      .toLowerCase();
+    sniffBrowserChosen = v === 'edge' || v === 'chrome' ? v : 'auto';
+    sniffBrowser = sniffBrowserChosen === 'auto' ? 'chrome' : sniffBrowserChosen;
+    return sniffBrowser;
+  };
 
   /** 当前这次解析出的统一返回体底稿（真机里 url/name/mode/selector 是回显上次的目标） */
   const sniffBase = () => ({
     ok: true,
     running: sniffRunning,
-    browser: 'edge',
+    browser: sniffBrowser,
+    browserChosen: sniffBrowserChosen,
     url: sniffUrl,
     name: sniffName,
     mode: sniffMode,
@@ -1878,6 +1897,8 @@ const isTrashed = (id: string) => {
       sniffName = String((payload && payload.name) || '');
       sniffMode = String((payload && payload.mode) || 'css');
       sniffSelector = String((payload && payload.selector) || '');
+      // v0.56：{ browser: 'auto'|'edge'|'chrome' }，默认 auto（跟随系统）
+      applyBrowserChoice(payload && payload.browser);
       await sniffDelay(600); // 让「正在启动浏览器…」这个状态能被看到
       sniffRunning = true;
       return sniffResult();
@@ -1887,13 +1908,22 @@ const isTrashed = (id: string) => {
       if (payload && payload.name) sniffName = String(payload.name);
       if (payload && payload.mode) sniffMode = String(payload.mode);
       if (payload && payload.selector) sniffSelector = String(payload.selector);
+      // 换浏览器「下一次启动生效」：高亮时把选择记住，真机会在需要重新拉起时用它
+      if (payload && payload.browser) applyBrowserChoice(payload.browser);
       // 高亮之前顺手保证会话在（真机里主进程也会负责起浏览器）
       sniffRunning = true;
       return sniffResult();
     },
-    sniffReopen: async (url?: string) => {
+    /**
+     * 重新打开页面。
+     * v0.56 入参是 `{ url, browser }`；老调用方还会传纯字符串 url，
+     * 两种都认（真机 preload 两代形态并存，这里保持同样的宽容）。
+     */
+    sniffReopen: async (payload?: any) => {
       if (!sniffDebug()) return sniffUnsupported();
-      sniffUrl = String(url || sniffUrl);
+      const p = payload && typeof payload === 'object' ? payload : { url: payload };
+      if (p.browser) applyBrowserChoice(p.browser);
+      sniffUrl = String(p.url || sniffUrl);
       sniffRunning = true;
       sniffStep = 0;
       return Object.assign(sniffBase(), { found: 1, total: 1, visible: true, message: '已重新打开页面' });

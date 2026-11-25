@@ -217,6 +217,47 @@ const editor = loadTsxModule(path.join(ROOT, 'src', 'components', 'PageElementsE
 });
 
 const noopComp = () => null;
+
+/* ============================================================
+ * v0.56：详情页实时校验的 api 桩
+ *
+ * bugB 要验「挂载不自动 start、重挂载也不再 start」，所以每次 sniff:start
+ * 的入参都得记下来；bugC 要验 browser 有没有带上；bugD 要验连点只发一次。
+ * ============================================================ */
+const sniffStartCalls = [];
+const detailApi = {
+  copy: async () => {},
+  openUrl: async () => {},
+  settings: async () => ({}),
+  records: async () => [],
+  linksForApi: async () => [],
+  removeRecord: async () => {},
+  linkRemove: async () => {},
+  sniffStart: async (p) => {
+    sniffStartCalls.push(p || {});
+    return {
+      ok: true,
+      running: true,
+      browser: 'chrome',
+      browserChosen: 'auto',
+      url: String((p && p.url) || ''),
+      name: String((p && p.name) || ''),
+      mode: String((p && p.mode) || 'css'),
+      selector: String((p && p.selector) || ''),
+      found: 1,
+      total: 1,
+      visible: true,
+      inIframe: false,
+      reason: '',
+      message: ''
+    };
+  },
+  sniffHighlight: async () => ({ ok: true, running: true, browser: 'chrome', browserChosen: 'auto', found: 1, total: 1, visible: true, reason: '' }),
+  sniffReopen: async () => ({ ok: true, running: true, browser: 'chrome', browserChosen: 'auto', found: 1, total: 1, visible: true, reason: '' }),
+  sniffStatus: async () => ({ ok: true, running: true }),
+  sniffStop: async () => ({ ok: true, running: false, message: '浏览器已关闭' })
+};
+
 const detail = loadTsxModule(DETAIL, {
   react: () => hooks,
   'react/jsx-runtime': () => jsxRuntime,
@@ -224,18 +265,7 @@ const detail = loadTsxModule(DETAIL, {
   '@ant-design/icons': () => iconsProxy,
   marked: () => ({ __esModule: true, marked: { setOptions: () => {}, parse: (s) => String(s) }, default: { setOptions: () => {}, parse: (s) => String(s) } }),
   dompurify: () => ({ sanitize: (s) => s }),
-  '../api': () => ({
-    __esModule: true,
-    default: {
-      copy: async () => {},
-      openUrl: async () => {},
-      settings: async () => ({}),
-      records: async () => [],
-      linksForApi: async () => [],
-      removeRecord: async () => {},
-      linkRemove: async () => {}
-    }
-  }),
+  '../api': () => ({ __esModule: true, default: detailApi }),
   '../msg': () => ({ __esModule: true, toast: () => {} }),
   '../utils': () => ({
     __esModule: true,
@@ -272,12 +302,12 @@ const detail = loadTsxModule(DETAIL, {
   './PageElementsEditor': () => editor,
   /*
    * v0.55：详情页元素行末多了「▶ 实时校验」，拉起的是同一个 SniffPanel。
-   * 本套件只渲染正常结构（不点校验），面板桩成空组件即可；
-   * 不补这行会直接抛「测试没有为这个依赖准备桩」。
+   * v0.56：桩改成「把 props 原样留在树上」——bugB 的闸门断言要读面板/按钮的 props
+   * （不点校验时它不会出现在树里，正常渲染的断言不受影响）。
    */
   './SniffPanel': () => ({
     __esModule: true,
-    default: noopComp,
+    default: (props) => ({ __comp: 'SniffPanel', props: props || {} }),
     describeResult: () => ({ lines: [], tone: 'muted' }),
     phaseLabel: () => '',
     browserLabel: () => ''
@@ -559,9 +589,128 @@ check('页面元素下拉的 placeholder 仍在（v0.44 的不能丢）', /选�
   );
 }
 
+/* ============================================================
+ * 8. v0.56 bugB：详情页的校验只能由「刚点了 ▶」启动
+ *
+ * 这里不只看源码：把 DetailElementSniff 真跑一遍（迷你 hooks 运行时），
+ * 数 sniff:start 的调用次数 —— 挂载不该发、重挂载不该发、点 ▶ 才发、连点只发一次。
+ * ============================================================ */
+
+const TARGET = { name: 'usernameInput', mode: 'css', selector: '#username' };
+
+function mountDetailSniff(props) {
+  hookSlots.length = 0;
+  hookIndex = 0;
+  pendingEffects = [];
+  dirty = false;
+  componentFn = detail.DetailElementSniff;
+  return runRenderLoop(props);
+}
+
+function sniffProps(patch) {
+  return Object.assign(
+    {
+      url: 'http://127.0.0.1:8080/login',
+      target: TARGET,
+      browser: 'auto',
+      autoStart: false,
+      onStarted: () => {},
+      onBrowserChange: () => {},
+      onClose: () => {}
+    },
+    patch || {}
+  );
+}
+
+/** 面板节点（桩组件 props 里有 onRestart/browserNotice） */
+function findPanelNode(tree) {
+  return collect(tree, []).find((n) => n.props && typeof n.props.onRestart === 'function' && 'browserNotice' in n.props) || null;
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+(async () => {
+  check('DetailElementSniff 被导出（测试/排查可直接跑它）', typeof detail.DetailElementSniff === 'function', typeof detail.DetailElementSniff);
+
+  /* 8.1 挂载不启动（bugB 的核心） */
+  sniffStartCalls.length = 0;
+  let startedCount = 0;
+  const picked = [];
+  const propsIdle = sniffProps({
+    onStarted: () => (startedCount += 1),
+    onBrowserChange: (b) => picked.push(b)
+  });
+  let tree = mountDetailSniff(propsIdle);
+  check('bugB：autoStart=false 时挂载不发 sniff:start', sniffStartCalls.length === 0, sniffStartCalls.length);
+  check('bugB：挂载时 onStarted 也没被调用（没启动就不算启动过）', startedCount === 0, startedCount);
+  let panel = findPanelNode(tree);
+  check('面板仍然渲染出来（phase=idle，未启动）', !!panel && panel.props.phase === 'idle' && panel.props.busy === false, panel && [panel.props.phase, panel.props.busy]);
+  check('未启动时面板也拿到「结束校验」（bugA 在详情页同样成立）', !!panel && typeof panel.props.onStopBrowser === 'function');
+
+  /* 8.2 点「重新开始」才启动，且带上 browser / 目标 */
+  panel.props.onRestart();
+  check('bugB：点下去才发 sniff:start', sniffStartCalls.length === 1, sniffStartCalls.length);
+  check('bugC：详情页启动入参带 browser=auto', sniffStartCalls[0].browser === 'auto', sniffStartCalls[0]);
+  check('启动入参带 url / 元素名 / 定位值', sniffStartCalls[0].url === 'http://127.0.0.1:8080/login' && sniffStartCalls[0].name === 'usernameInput' && sniffStartCalls[0].selector === '#username', sniffStartCalls[0]);
+
+  /* 8.3 bugD：连点只发一次 */
+  panel.props.onRestart();
+  panel.props.onRestart();
+  check('bugD：详情页连点也只发一次 sniff:start', sniffStartCalls.length === 1, sniffStartCalls.length);
+
+  /* 8.4 回包后进入 ready */
+  await settle();
+  tree = runRenderLoop(propsIdle);
+  panel = findPanelNode(tree);
+  check('回包后 phase=ready（面板报事实）', !!panel && panel.props.phase === 'ready' && panel.props.resp && panel.props.resp.ok === true, panel && panel.props.phase);
+
+  /* 8.5 bugC：切换浏览器不打断会话，下一次启动生效 */
+  const beforeSwitch = sniffStartCalls.length;
+  panel.props.onBrowserChange('chrome');
+  tree = runRenderLoop(propsIdle);
+  panel = findPanelNode(tree);
+  check('bugC：切换回调把选择交回父组件（父组件写 localStorage）', picked.join(',') === 'chrome', picked);
+  check('bugC：会话存在时提示「已切换，重新点校验生效」', !!panel && panel.props.browserNotice === '已切换，重新点校验生效', panel && panel.props.browserNotice);
+  check('bugC：切换本身不重启会话', sniffStartCalls.length === beforeSwitch, [beforeSwitch, sniffStartCalls.length]);
+  panel.props.onRestart();
+  check('bugC：下一次启动用切换后的浏览器（chrome）', sniffStartCalls[sniffStartCalls.length - 1].browser === 'chrome', sniffStartCalls.map((p) => p.browser));
+
+  /* 8.6 autoStart=true（父组件判定「刚点过 ▶」）+ 重挂载不再启动 */
+  sniffStartCalls.length = 0;
+  let startedOnce = 0;
+  const propsFresh = sniffProps({ autoStart: true, onStarted: () => (startedOnce += 1) });
+  mountDetailSniff(propsFresh);
+  check('autoStart=true 时启动一次，并回报「已启动」', sniffStartCalls.length === 1 && startedOnce === 1, [sniffStartCalls.length, startedOnce]);
+
+  // 同一个 nonce 已经启动过 → 抽屉重开时父组件算出 autoStart=false
+  const treeRemount = mountDetailSniff(sniffProps({ autoStart: false }));
+  check('bugB：重挂载（这个 nonce 已启动过）绝不再自动 start', sniffStartCalls.length === 1, sniffStartCalls.length);
+  check('bugB：重挂载后面板是未启动状态，不假装在跑', (findPanelNode(treeRemount) || { props: {} }).props.phase === 'idle');
+
+  /* 8.7 源码守卫：闸门、stop、换记录收尾都不能被改回去 */
+  const detailSrc2 = stripComments(fs.readFileSync(DETAIL, 'utf8'));
+  check('bugB：父组件用 startedNonce 记住已启动过的 nonce', /const startedNonce = useRef\(0\)/.test(detailSrc2), 'no startedNonce');
+  check('bugB：渲染时 autoStart 由 nonce 与 startedNonce 比较得出', /autoStart=\{verify\.nonce !== startedNonce\.current\}/.test(detailSrc2), 'autoStart not gated');
+  check('bugB：子组件只在 autoStart 时才 onStarted + start', /if \(autoStart\) \{[\s\S]{0,160}onStarted\(\);[\s\S]{0,80}start\(\)/.test(detailSrc2), 'mount still auto-starts');
+  check('bugB：verify 里存的是 { target, nonce }（不再是 seq）', /target: SniffTarget; nonce: number/.test(detailSrc2) && !/verify\.seq/.test(detailSrc2), 'still verify.seq');
+  check('bugB：stopVerify 清 target 并调一次 sniffStop', /const stopVerify = \(\) =>/.test(detailSrc2) && /sniffStop/.test(detailSrc2), 'no stopVerify');
+  check('bugB：抽屉 onClose 先 stopVerify 再关', /onClose=\{\(\) => \{[\s\S]{0,80}stopVerify\(\);[\s\S]{0,40}onClose\(\);/.test(detailSrc2), 'drawer close not stopping');
+  check('bugB：换一条记录（recordId 变）也收尾', /lastRecordId/.test(detailSrc2), 'no record switch guard');
+  check('bugC：详情页的浏览器选择从 localStorage 初始化', /useState<SniffBrowser>\(\(\) => readSniffBrowser\(\)\)/.test(detailSrc2), 'no browser state');
+  check('bugC：详情页重新打开页面带上浏览器', /reopenWithBrowser\(request, url, browserRef\.current\)/.test(detailSrc2), 'reopen without browser');
+  check('bugC/D：详情页也传 browser / onBrowserChange 给面板', /browser=\{sniffBrowser\}/.test(detailSrc2) && /onBrowserChange=\{changeSniffBrowser\}/.test(detailSrc2), 'panel props missing');
+
+  report();
+})().catch((e) => {
+  console.error('异步段炸了：', (e && e.stack) || e);
+  process.exit(2);
+});
+
 /* ---------- 汇总 ---------- */
-const failed = results.filter((r) => !r.ok);
-console.log('===== 记录详情元素表格 + 代码生成 placeholder 测试 =====');
-for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));
-console.log('\n' + (results.length - failed.length) + '/' + results.length + ' passed');
-process.exit(failed.length ? 1 : 0);
+function report() {
+  const failed = results.filter((r) => !r.ok);
+  console.log('===== 记录详情元素表格 + 代码生成 placeholder 测试 =====');
+  for (const r of results) console.log((r.ok ? '  PASS  ' : '  FAIL  ') + r.name + (r.extra ? '  -> ' + r.extra : ''));
+  console.log('\n' + (results.length - failed.length) + '/' + results.length + ' passed');
+  process.exit(failed.length ? 1 : 0);
+}

@@ -13,14 +13,19 @@
  *      · parseSniffState 收口（页面里的脏值不能污染上层）。
  *   2. electron/sniffer/browser-session.js 的纯函数部分
  *      · 浏览器候选路径（Edge 优先，Program Files / x86 / LOCALAPPDATA 都认）；
+ *      · v0.56 浏览器选择：progId→浏览器名、auto/edge/chrome 解析、默认浏览器优先；
+ *      · v0.56 残留清理判据：命令行必须同时含本 profile 绝对路径 + sniff-profile，
+ *        不认识的进程名/pid 一律不碰；主进程（无 --type=）与账本读写；
  *      · url 只放 http/https；端口范围；启动参数（随机端口 + 只绑 127.0.0.1 + 独立 profile）；
  *      · 事实 → 人话。
+ *   3. electron/ipc/ipc-sniff.js 的入参契约（reopen 兼容 preload 的包裹形状）。
  *
  * 真浏览器链路在 scripts/test-sniff-browser.cjs（找不到浏览器会显式 SKIP）。
  *
- * unit 档：不碰本机真实资产、不联网、不 spawn 任何进程。
+ * unit 档：不碰本机真实资产、不联网、不 spawn 任何进程（进程盘点/注册表都用注入的假实现）。
  */
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
@@ -29,6 +34,7 @@ const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: con
 
 const hl = require(path.join(ROOT, 'electron', 'sniffer', 'highlight.js'));
 const bs = require(path.join(ROOT, 'electron', 'sniffer', 'browser-session.js'));
+const ipcSniff = require(path.join(ROOT, 'electron', 'ipc', 'ipc-sniff.js'));
 const lm = require(path.join(ROOT, 'shared', 'locatorModes.js'));
 
 const readSrc = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -377,6 +383,259 @@ check('归一化：null / undefined / 空串都当 css', hl.normalizeMode(null) 
 }
 
 /* ============================================================
+ * 6.5 v0.56 真机 bug 修复：浏览器选择 / 残留清理判据 / pid 账本
+ * ============================================================ */
+{
+  /* ---------------- 6.5.1 常量与「目录名/账本名」约定 ---------------- */
+  check('v0.56：profile 目录名固定 sniff-profile（命令行校验靠它）', bs.PROFILE_DIR_NAME === 'sniff-profile', bs.PROFILE_DIR_NAME);
+  check('v0.56：pid 账本文件名是 tt-pids.json', bs.PID_FILE_NAME === 'tt-pids.json', bs.PID_FILE_NAME);
+  check('v0.56：浏览器选择只有 auto / edge / chrome', bs.BROWSER_CHOICES.join(',') === 'auto,edge,chrome', bs.BROWSER_CHOICES);
+  check('v0.56：默认浏览器选择是 auto（不写也不换浏览器）', bs.DEFAULT_BROWSER_CHOICE === 'auto', bs.DEFAULT_BROWSER_CHOICE);
+
+  /* ---------------- 6.5.2 注册表 ProgId → 浏览器名 ---------------- */
+  check('ProgId：ChromeHTML → chrome（用户默认 Chrome 就该用 Chrome）', bs.progIdToBrowser('ChromeHTML') === 'chrome', bs.progIdToBrowser('ChromeHTML'));
+  check('ProgId：ChromeHTML 带后缀也认（真机上偶见 ChromeHTML.PROGID）', bs.progIdToBrowser('ChromeHTML.abc123') === 'chrome', bs.progIdToBrowser('ChromeHTML.abc123'));
+  check('ProgId：MSEdgeHTM → edge', bs.progIdToBrowser('MSEdgeHTM') === 'edge', bs.progIdToBrowser('MSEdgeHTM'));
+  check('ProgId：大小写不敏感', bs.progIdToBrowser('chromehtml') === 'chrome' && bs.progIdToBrowser('msedgehtm') === 'edge');
+  check('ProgId：别的浏览器（Firefox）认不出 → 空串', bs.progIdToBrowser('FirefoxURL-308046B0AF4A39CB') === '', bs.progIdToBrowser('FirefoxURL-308046B0AF4A39CB'));
+  check('ProgId：PDF 阅读器之类也认不出 → 空串', bs.progIdToBrowser('AcrobatURL') === '' && bs.progIdToBrowser('IE.HTTP') === '');
+  check('ProgId：空 / null / undefined 都不抛', bs.progIdToBrowser('') === '' && bs.progIdToBrowser(null) === '' && bs.progIdToBrowser(undefined) === '');
+
+  check('注册表：reg query 的 ProgId 行能解析出来', (() => {
+    const fake = () => ({ status: 0, stdout: '\r\nHKEY_CURRENT_USER\\...\\UserChoice\r\n    ProgId    REG_SZ    ChromeHTML\r\n\r\n', stderr: '' });
+    return bs.readDefaultBrowserProgId({ spawnSync: fake }) === 'ChromeHTML';
+  })());
+  check('注册表：reg 失败/没有这个键 → 空串（不抛、不瞎猜）', (() => {
+    const fail = () => ({ status: 1, stdout: '', stderr: 'reg: 找不到指定的注册表项' });
+    const crash = () => {
+      throw new Error('reg 不在');
+    };
+    return bs.readDefaultBrowserProgId({ spawnSync: fail }) === '' && bs.readDefaultBrowserProgId({ spawnSync: crash }) === '';
+  })());
+  check('注册表：注入 defaultProgId 时不去碰注册表（单测/排查用）', bs.readDefaultBrowserProgId({ defaultProgId: 'MSEdgeHTM', spawnSync: () => { throw new Error('不该被调用'); } }) === 'MSEdgeHTM');
+  check('注册表：http 键认得出浏览器就只读一次（以需求写的 http 键为准）', (() => {
+    const calls = [];
+    const fake = (cmd, args) => {
+      calls.push(args[1]);
+      return { status: 0, stdout: '    ProgId    REG_SZ    MSEdgeHTM\r\n', stderr: '' };
+    };
+    const got = bs.readDefaultBrowserProgId({ spawnSync: fake });
+    return got === 'MSEdgeHTM' && calls.length === 1 && /\\http\\/.test(calls[0]);
+  })());
+  check('注册表：http 键是 PDF 阅读器之类（认不出）→ 补看 https 键', (() => {
+    const fake = (cmd, args) => {
+      const key = String(args[1] || '');
+      const prog = /\\https\\/i.test(key) ? 'MSEdgeHTM' : 'AcrobatURL';
+      return { status: 0, stdout: '    ProgId    REG_SZ    ' + prog + '\r\n', stderr: '' };
+    };
+    return bs.readDefaultBrowserProgId({ spawnSync: fake }) === 'MSEdgeHTM';
+  })());
+  check('注册表：http 键不存在但 https 键有浏览器 → 用 https 的', (() => {
+    const fake = (cmd, args) => {
+      const isHttps = /\\https\\/i.test(String(args[1] || ''));
+      return isHttps
+        ? { status: 0, stdout: '    ProgId    REG_SZ    ChromeHTML\r\n', stderr: '' }
+        : { status: 1, stdout: '', stderr: 'reg: 找不到指定的注册表项' };
+    };
+    return bs.readDefaultBrowserProgId({ spawnSync: fake }) === 'ChromeHTML';
+  })());
+  check('注册表：两个键都不是浏览器 → 回 http 原值（日志能看出「默认是别的程序」）', (() => {
+    const fake = (cmd, args) => {
+      const prog = /\\https\\/i.test(String(args[1] || '')) ? 'FirefoxURL-x' : 'AcrobatURL';
+      return { status: 0, stdout: '    ProgId    REG_SZ    ' + prog + '\r\n', stderr: '' };
+    };
+    return bs.readDefaultBrowserProgId({ spawnSync: fake }) === 'AcrobatURL';
+  })());
+
+  /* ---------------- 6.5.3 入参 browser 解析 ---------------- */
+  check('入参：不传 / null / 空串 → auto', (() => {
+    return bs.parseBrowserChoice(undefined).choice === 'auto' && bs.parseBrowserChoice(null).choice === 'auto' && bs.parseBrowserChoice('  ').choice === 'auto';
+  })());
+  check('入参：auto / edge / chrome 原样收下（大小写、空格都能容错）', ['auto', 'edge', 'chrome', ' EDGE ', 'Chrome'].every((v) => bs.parseBrowserChoice(v).ok === true && bs.parseBrowserChoice(v).choice === v.trim().toLowerCase()));
+  check('入参：写错了要明确报错（不能悄悄当 auto）', (() => {
+    const r = bs.parseBrowserChoice('firefox');
+    return r.ok === false && String(r.message).indexOf('auto / edge / chrome') >= 0;
+  })(), bs.parseBrowserChoice('firefox'));
+  check('归一化：认不出的一律 auto（内部兜底用）', bs.normalizeBrowserChoice('firefox') === 'auto' && bs.normalizeBrowserChoice(undefined) === 'auto');
+
+  /* ---------------- 6.5.4 选浏览器：auto 真的跟着系统默认走 ---------------- */
+  // 用临时目录造「装了哪些浏览器」的假环境，绝不碰本机真实安装
+  const candRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sniff-cand-'));
+  const touch = (rel) => {
+    const p = path.join(candRoot, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, 'x');
+    return p;
+  };
+  try {
+    const candEnv = {
+      ProgramFiles: path.join(candRoot, 'pf'),
+      'ProgramFiles(x86)': path.join(candRoot, 'pf86'),
+      LOCALAPPDATA: path.join(candRoot, 'local')
+    };
+    const edgeExe = touch('pf86/Microsoft/Edge/Application/msedge.exe');
+    const chromeExe = touch('local/Google/Chrome/Application/chrome.exe');
+
+    const autoChrome = bs.resolveBrowser('auto', candEnv, { defaultProgId: 'ChromeHTML' });
+    check('auto：系统默认是 Chrome 就用 Chrome（bug3 的核心）', autoChrome.ok === true && autoChrome.name === 'chrome' && autoChrome.path === chromeExe, autoChrome);
+    check('auto：默认浏览器优先时 source=default-browser', autoChrome.source === 'default-browser', autoChrome.source);
+    check('auto：返回值里 chosen 仍是 auto（界面回显用）', autoChrome.chosen === 'auto', autoChrome.chosen);
+
+    const autoEdge = bs.resolveBrowser('auto', candEnv, { defaultProgId: 'MSEdgeHTM' });
+    check('auto：系统默认是 Edge 就用 Edge', autoEdge.ok === true && autoEdge.name === 'edge' && autoEdge.path === edgeExe, autoEdge);
+
+    const autoUnknown = bs.resolveBrowser('auto', candEnv, { defaultProgId: 'FirefoxURL-xxx' });
+    check('auto：认不出默认浏览器 → Edge → Chrome 兜底（先 Edge）', autoUnknown.ok === true && autoUnknown.name === 'edge', autoUnknown);
+
+    const autoNone = bs.resolveBrowser('auto', candEnv, { defaultProgId: '' });
+    check('auto：连 ProgId 都读不到也照样先 Edge', autoNone.ok === true && autoNone.name === 'edge', autoNone);
+
+    // 把 Edge 挪走 → 只剩 Chrome
+    fs.renameSync(edgeExe, edgeExe + '.bak');
+    const fallbackChrome = bs.resolveBrowser('auto', candEnv, { defaultProgId: 'MSEdgeHTM' });
+    check('auto：默认是 Edge 但只有 Chrome 能启动 → 退到 Chrome 并标记 fallback', fallbackChrome.ok === true && fallbackChrome.name === 'chrome' && fallbackChrome.source === 'fallback', fallbackChrome);
+
+    const explicitChrome = bs.resolveBrowser('chrome', candEnv, { defaultProgId: 'MSEdgeHTM' });
+    check('显式 chrome：照办，不看默认浏览器', explicitChrome.ok === true && explicitChrome.name === 'chrome' && explicitChrome.source === 'explicit', explicitChrome);
+    const missEdge = bs.resolveBrowser('edge', candEnv, { defaultProgId: 'ChromeHTML' });
+    check('显式 edge 但本机没装 → 明确报错（不偷偷换 Chrome）', missEdge.ok === false && String(missEdge.message).indexOf('指定用 Edge') >= 0, missEdge);
+    check('显式 edge 报错文案里说清找过几个位置', /找过 \d+ 个位置/.test(String(missEdge.message)), missEdge.message);
+
+    fs.renameSync(edgeExe + '.bak', edgeExe);
+    const backToEdge = bs.resolveBrowser('edge', candEnv, { defaultProgId: '' });
+    check('挪回来之后显式 edge 又能找到', backToEdge.ok === true && backToEdge.name === 'edge' && backToEdge.path === edgeExe, backToEdge);
+
+    check('显式选择写错（firefox）→ 明确错误，不静默', bs.resolveBrowser('firefox', candEnv, { defaultProgId: '' }).ok === false);
+    check('一台浏览器都没有 → ok:false + 明确文案', bs.resolveBrowser('auto', { LOCALAPPDATA: path.join(candRoot, 'empty') }, { defaultProgId: '' }).ok === false);
+  } finally {
+    try {
+      fs.rmSync(candRoot, { recursive: true, force: true });
+    } catch (e) {
+      /* 临时目录删不掉就留着 */
+    }
+  }
+
+  /* ---------------- 6.5.5 残留清理判据（bug2） ---------------- */
+  const P = 'C:\\Users\\t\\AppData\\Local\\Temp\\sniff-e2e-1\\sniff-profile';
+  check('认领：命令行同时含 profile 绝对路径 + sniff-profile → 是我们的', bs.isOurProfileCommand('"C:\\x\\msedge.exe" --user-data-dir=C:\\Users\\t\\AppData\\Local\\Temp\\sniff-e2e-1\\sniff-profile --remote-debugging-port=0', P) === true);
+  check('认领：别的会话（不同 profile 目录）→ 不是我们的，绝不碰', bs.isOurProfileCommand('"C:\\x\\msedge.exe" --user-data-dir=C:\\Users\\t\\AppData\\Local\\Temp\\sniff-e2e-2\\sniff-profile', P) === false);
+  check('认领：用户自己的浏览器（没有 sniff-profile）→ 不碰', bs.isOurProfileCommand('"C:\\x\\msedge.exe" --profile-directory=Default', P) === false);
+  check('认领：斜杠方向 / 大小写不影响判断', bs.isOurProfileCommand('"c:/users/T/appdata/local/temp/SNIFF-E2E-1/sniff-profile/msedge.exe"', P) === true);
+  check('认领：空命令行 → false（不认识就不动）', bs.isOurProfileCommand('', P) === false && bs.isOurProfileCommand(null, P) === false);
+  check('认领：没有 profileDir 时退回「含 sniff-profile 标记」', bs.isOurProfileCommand('--user-data-dir=D:\\d\\sniff-profile', '') === true);
+
+  check('主进程识别：没有 --type= 的是浏览器主进程', bs.isMainBrowserProcess('"C:\\x\\msedge.exe" --user-data-dir=... --remote-debugging-port=0') === true);
+  check('主进程识别：--type=renderer / gpu-process 都不算主进程（窗口只有主进程那个）', bs.isMainBrowserProcess('msedge.exe --type=renderer --user-data-dir=...') === false && bs.isMainBrowserProcess('msedge.exe --type=gpu-process') === false);
+
+  check('进程名白名单：msedge/chrome/chromium 认，别的一律不认', (() => {
+    return bs.isBrowserProcessName('msedge.exe') && bs.isBrowserProcessName('chrome.exe') && bs.isBrowserProcessName('CHROME.EXE') && bs.isBrowserProcessName('chromium.exe') && !bs.isBrowserProcessName('notepad.exe') && !bs.isBrowserProcessName('msedgewebview2.exe') && !bs.isBrowserProcessName('');
+  })());
+
+  check('进程列表解析：单个对象也能解析（PowerShell 只有一条时不是数组）', (() => {
+    const r = bs.parseProcessList(JSON.stringify({ ProcessId: 42, Name: 'msedge.exe', CommandLine: '--user-data-dir=' + P }));
+    return r.ok === true && r.list.length === 1 && r.list[0].pid === 42 && r.list[0].name === 'msedge.exe' && r.list[0].cmd.indexOf('sniff-profile') > 0;
+  })());
+  check('进程列表解析：数组 / 空输出 / BOM 都稳', (() => {
+    const arr = bs.parseProcessList(JSON.stringify([{ ProcessId: 1, Name: 'chrome.exe', CommandLine: 'a' }, { ProcessId: 2, Name: 'msedge.exe', CommandLine: 'b' }]));
+    const empty = bs.parseProcessList('');
+    const nullOut = bs.parseProcessList('null');
+    const bom = bs.parseProcessList('\uFEFF' + JSON.stringify([{ ProcessId: 3, Name: 'chrome.exe', CommandLine: 'c' }]));
+    return arr.list.length === 2 && empty.list.length === 0 && nullOut.list.length === 0 && bom.list.length === 1;
+  })());
+  check('进程列表解析：垃圾输出 → ok:false（上层据此「不敢乱杀」）', (() => {
+    const bad = bs.parseProcessList('Get-CimInstance : 拒绝访问');
+    return bad.ok === false && bad.list.length === 0;
+  })());
+
+  check('collectOwnedPids：账本里的 pid 必须命令行验明才认领，其它只记 skipped', (() => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sniff-own-'));
+    const dir = path.join(root, 'sniff-profile');
+    try {
+      bs.writePidFile(dir, { pids: [11, 12, 13], browser: 'edge', exe: 'msedge.exe' }, { replace: true });
+      const fakeList = () => ({
+        status: 0,
+        stdout: JSON.stringify([
+          { ProcessId: 11, Name: 'msedge.exe', CommandLine: '"C:\\x\\msedge.exe" --user-data-dir=' + dir },
+          // 12 号 pid 被系统复用成了记事本 → 名字就不对
+          { ProcessId: 12, Name: 'notepad.exe', CommandLine: 'notepad.exe D:\\note.txt' },
+          // 13 号 pid 命令行里没有我们的 profile（不认识的 pid 一律不碰）
+          { ProcessId: 13, Name: 'msedge.exe', CommandLine: '"C:\\x\\msedge.exe" --profile-directory=Default' },
+          // 14 号没记账但命令行明确写着我们 profile（上一轮的子孙进程）
+          { ProcessId: 14, Name: 'msedge.exe', CommandLine: '"C:\\x\\msedge.exe" --type=renderer --user-data-dir=' + dir }
+        ]),
+        stderr: ''
+      });
+      const r = bs.collectOwnedPids(dir, { spawnSync: fakeList });
+      const ours = r.ours.map((p) => p.pid).sort((a, b) => a - b);
+      const skipped = r.skipped.map((s) => s.pid).sort((a, b) => a - b);
+      return JSON.stringify(ours) === '[11,14]' && JSON.stringify(skipped) === '[12,13]';
+    } finally {
+      try {
+        fs.rmSync(root, { recursive: true, force: true });
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  })(), '按命令行验明正身的判据不对');
+
+  /* ---------------- 6.5.6 pid 账本（tt-pids.json） ---------------- */
+  {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sniff-pids-'));
+    const dir = path.join(root, 'sniff-profile');
+    try {
+      check('账本：路径落在 <profile>/tt-pids.json', bs.pidFilePath(dir) === path.join(dir, 'tt-pids.json'), bs.pidFilePath(dir));
+      check('账本：没写过时是空账本（不抛）', bs.readPidFile(dir).pids.length === 0);
+      bs.writePidFile(dir, { pids: [100], browser: 'edge', exe: 'C:\\x\\msedge.exe' });
+      check('账本：启动后立即写就能读回来', (() => {
+        const r = bs.readPidFile(dir);
+        return r.pids.join(',') === '100' && r.browser === 'edge' && r.exe === 'C:\\x\\msedge.exe';
+      })(), bs.readPidFile(dir));
+      bs.writePidFile(dir, { pids: [200] });
+      check('账本：默认合并 pid（启动 pid + 盘点到的子孙 pid 都要留底）', bs.readPidFile(dir).pids.sort((a, b) => a - b).join(',') === '100,200', bs.readPidFile(dir).pids);
+      bs.writePidFile(dir, { pids: [300] }, { replace: true });
+      check('账本：replace=true 时整体替换（清理后把死 pid 去掉）', bs.readPidFile(dir).pids.join(',') === '300', bs.readPidFile(dir).pids);
+      check('账本：坏 JSON / 垃圾 pid 都收敛成空账本', (() => {
+        fs.writeFileSync(bs.pidFilePath(dir), '{不是 JSON', 'utf8');
+        const bad = bs.readPidFile(dir);
+        bs.writePidFile(dir, { pids: ['abc', -1, 0, 4.5, 501] }, { replace: true });
+        const mixed = bs.readPidFile(dir);
+        return bad.pids.length === 0 && mixed.pids.join(',') === '501';
+      })());
+      bs.clearPidFile(dir);
+      check('账本：clear 之后文件没了（不抛）', !fs.existsSync(bs.pidFilePath(dir)));
+      check('账本：profileDir 为空时写不进去但也不抛', bs.writePidFile('', { pids: [1] }).ok === false);
+    } finally {
+      try {
+        fs.rmSync(root, { recursive: true, force: true });
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+
+  /* ---------------- 6.5.7 静态：三个 bug 的修法必须在源码里 ---------------- */
+  const BS_CODE = BS_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  check('bug1：等就绪不再看子进程 exitCode（只认 DevToolsActivePort + /json/version）', !/exitCode/.test(BS_CODE), '还在用 exitCode 判就绪');
+  check('bug1：waitForDevTools 签名里没有 child 参数', /async function waitForDevTools\(profileDir, timeoutMs\)/.test(BS_CODE));
+  check('bug1：子进程 exit / error 只记日志（注释里写明不代表浏览器退出）', /child\.on\('exit'/.test(BS_CODE) && /只记日志/.test(BS_SRC));
+  check('bug2：不再换「干净 profile」重试（那是第二个窗口的来源）', BS_CODE.indexOf('sniff-profile-clean') < 0, 'still has clean-profile retry');
+  check('bug2：重试只挂在 DAP 超时上', /first\.reason !== 'dap-timeout'/.test(BS_CODE), 'retry condition missing');
+  check('bug2：重试前先 killOwnedAndWait（先杀再试）', /first\.reason !== 'dap-timeout'[\s\S]{0,900}killOwnedAndWait/.test(BS_CODE));
+  check('bug2：启动前先清残留（cleanupResidual 在 launchOnce 之前）', /cleanupResidual\(profileDir\)[\s\S]{0,900}launchOnce\(/.test(BS_CODE));
+  check('bug2：pid 账本文件名常量与 writePidFile/readPidFile 都在', /PID_FILE_NAME = 'tt-pids\.json'/.test(BS_CODE) && /function writePidFile/.test(BS_CODE) && /function readPidFile/.test(BS_CODE));
+  check('bug2：stop 三级（Browser.close → taskkill → 报错）', /Browser\.close/.test(BS_CODE) && /level: 'taskkill'/.test(BS_CODE) && /level: 'failed'/.test(BS_CODE));
+  check('bug2：关不掉时如实返回 ok:false（不假装关掉了）', /ok: false,\s*level: 'failed'/.test(BS_CODE), 'no failed result');
+  check('bug3：resolveBrowser 支持 auto / edge / chrome', /function resolveBrowser\(choice, env, options\)/.test(BS_CODE) && /source: 'explicit'/.test(BS_CODE) && /'default-browser'/.test(BS_CODE));
+  check('bug3：auto 才读注册表（显式选择不去碰）', (() => {
+    const at = BS_CODE.indexOf("if (chosen === 'edge' || chosen === 'chrome')");
+    const autoAt = BS_CODE.indexOf('const progId =');
+    return at > 0 && autoAt > at;
+  })());
+  check('bug3：返回值里有 browserChosen（界面回显用）', /browserChosen: current\.browserChoice/.test(BS_CODE), 'no browserChosen');
+  check('bug3：已有会话但浏览器变了 → 先停旧的再起新的', /先关旧会话再起新的/.test(BS_SRC) && /stopInternal\(\)/.test(BS_CODE));
+}
+
+/* ============================================================
  * 7. ipc-sniff 的安全约定（静态）
  * ============================================================ */
 {
@@ -399,6 +658,40 @@ check('归一化：null / undefined / 空串都当 css', hl.normalizeMode(null) 
   check('ipc：Java 录制命令是 npx playwright codegen --target java', /playwright codegen --target java/.test(IPC_SRC), 'no java command');
   check('ipc：python 系仍走 python -m playwright codegen（原路径不变）', /'playwright',\s*'codegen'/.test(IPC_SRC) && /'-m',\s*'playwright',\s*'codegen'/.test(IPC_SRC), 'python command changed');
   check('ipc：Java 走 shell 前先挡掉引号/百分号/换行（UNSAFE_URL）', /UNSAFE_URL/.test(IPC_SRC) && /\["%\\r\\n\]/.test(IPC_SRC), 'unsafe url guard missing');
+
+  /* ---- v0.56：浏览器选择（bug3）---- */
+  check(
+    'ipc：start / highlight / reopen 都把 browser 透传给会话（不再写死 Edge）',
+    /sniffer\.start\(\{ url, name, mode, selector, browser \}\)/.test(IPC_SRC) &&
+      /sniffer\.highlight\(\{ name, mode, selector, browser \}\)/.test(IPC_SRC) &&
+      /sniffer\.reopen\(\{ url: norm\.url, browser: norm\.browser \}\)/.test(IPC_SRC),
+    'browser not forwarded'
+  );
+  check('ipc：注释里写清 auto / edge / chrome 三种取值', IPC_SRC.indexOf("'auto'") >= 0 && IPC_SRC.indexOf("'edge'") >= 0 && IPC_SRC.indexOf("'chrome'") >= 0);
+  check('ipc：返回形状文档里有 browserChosen（界面回显用）', /browserChosen/.test(IPC_SRC));
+  check('ipc：browser 不合法时由会话层回明确错误（IPC 不自己瞎兜）', /return sniffer\.reject\(parsed\.message\)|parseBrowserChoice/.test(BS_SRC));
+
+  /* ---- v0.56：reopen 入参兼容拆包（preload 仍是 (url) => invoke(..., {url})）---- */
+  check(
+    'ipc：reopen 用 normalizeReopenPayload 归一化入参',
+    /normalizeReopenPayload\(payload\)/.test(IPC_SRC) && /sniffer\.reopen\(\{ url: norm\.url, browser: norm\.browser \}\)/.test(IPC_SRC)
+  );
+  check('ipc：reopen 归一化——纯字符串入参当成 url', (() => {
+    const r = ipcSniff.normalizeReopenPayload('http://a.test/x');
+    return r.url === 'http://a.test/x' && r.browser === undefined;
+  })());
+  check('ipc：reopen 归一化——{url,browser} 原样通过', (() => {
+    const r = ipcSniff.normalizeReopenPayload({ url: 'http://a.test/x', browser: 'chrome' });
+    return r.url === 'http://a.test/x' && r.browser === 'chrome';
+  })());
+  check('ipc：reopen 归一化——能拆开 preload 的 {url:{url,browser}} 包裹（url 与 browser 都不丢）', (() => {
+    const r = ipcSniff.normalizeReopenPayload({ url: { url: 'http://a.test/x', browser: 'edge' } });
+    return r.url === 'http://a.test/x' && r.browser === 'edge';
+  })());
+  check('ipc：reopen 归一化——内层没带 browser 时取外层', ipcSniff.normalizeReopenPayload({ url: { url: 'http://a.test/' }, browser: 'chrome' }).browser === 'chrome');
+  check('ipc：reopen 归一化——垃圾/空入参 → 空 url（按会话记住的地址重开）', (() => {
+    return ipcSniff.normalizeReopenPayload(null).url === '' && ipcSniff.normalizeReopenPayload(42).url === '' && ipcSniff.normalizeReopenPayload({}).url === '';
+  })());
 }
 
 /* ============================================================

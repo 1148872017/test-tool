@@ -14,8 +14,19 @@
  *   6. 不可见元素 → found=1 / visible=false / 红色**虚线**框；
  *   7. iframe 内 / shadow DOM 内 → 只报 reason，**不画框**；
  *   8. 不存在的 selector → found=0 / reason='not-found'；
- *   9. stop 之后进程真的退出了（按 pid 查，不信「返回值说关了」）；
+ *   9. stop 之后进程真的退出了（按 pid 查 + 按命令行计数，不信「返回值说关了」）；
+ *      并验证走的是 CDP Browser.close 这一级；
  *  10. 模拟「用户自己关窗口」（外部 taskkill）→ status 必须回 running:false。
+ *
+ * ============================================================
+ * v0.56 三个真机 bug 的回归点（同一根因链）
+ * ============================================================
+ *   bug1 子进程退出 ≠ 浏览器退出：等就绪只认 DevToolsActivePort + /json/version，
+ *        转发进程退掉也要 running:true（真实链路里靠 pid 记账 + 命令行认领来收尾）。
+ *   bug2 反复 start 只能有一个实例：复用同一 pid / 同一调试端口，
+ *        本 profile 的浏览器**主进程**（无 --type=）数必须是 1。
+ *   bug3 browser 选择：auto 跟系统默认浏览器；显式 edge/chrome 照办；
+ *        写错回明确错误；返回值里 browser（实际）+ browserChosen（用户选的）。
  *
  * ============================================================
  * 找不到浏览器怎么办：显式 SKIP，绝不假装通过
@@ -26,6 +37,7 @@
  * 用法：
  *   node scripts/test-sniff-browser.cjs
  *   $env:TT_SNIFF_BROWSER="D:\my\chrome.exe"; node scripts/test-sniff-browser.cjs   # 指定浏览器
+ *   $env:TT_SNIFF_DEFAULT_PROGID="ChromeHTML"; node scripts/test-sniff-browser.cjs  # 假装默认浏览器是 Chrome
  *
  * 退出码：0 全通过（或显式跳过）/ 1 有失败。
  */
@@ -140,6 +152,31 @@ async function waitGone(pid, timeoutMs) {
   return !isAlive(pid);
 }
 
+/**
+ * v0.56：按**命令行**数本会话语义的浏览器进程。
+ *
+ * 为什么不用 child.pid：Windows 上 spawn 出来的可能只是转发进程，
+ * 真正的主进程是另一个 pid。判据和 browser-session 完全一致：
+ *   进程名是 msedge/chrome/chromium + 命令行含本次 profile 绝对路径 + sniff-profile；
+ *   主进程 = 命令行里没有 --type=（渲染/GPU/工具进程都带）。
+ */
+function ownedProcesses(profileDir) {
+  const listed = bs.listBrowserProcesses();
+  if (!listed.ok) return { ok: false, all: [], main: [], message: listed.message };
+  const all = listed.list.filter((p) => bs.isBrowserProcessName(p.name) && bs.isOurProfileCommand(p.cmd, profileDir));
+  return { ok: true, all, main: all.filter((p) => bs.isMainBrowserProcess(p.cmd)) };
+}
+
+/** 等「本 profile 的浏览器进程」全部消失（不再计数 > 0） */
+async function waitOwnedGone(profileDir, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!ownedProcesses(profileDir).all.length) return true;
+    await sleep(300);
+  }
+  return !ownedProcesses(profileDir).all.length;
+}
+
 async function openPageClient(port) {
   const res = await fetch('http://127.0.0.1:' + port + '/json/list');
   const list = await res.json();
@@ -194,10 +231,17 @@ const BOX_PROBE = `(function () {
   console.log('fixture: ' + fixture.url);
 
   /** 无头模式：不能弹窗（CI/沙箱里弹窗会卡住整条链路） */
+  /** v0.56：会话日志也要留底，用来断言「stop 走的是哪一级」（Browser.close / taskkill） */
+  const logs = [];
   const session = bs.createSession({
     dataDir: tmp,
     headless: true,
-    log: (msg) => console.log('    [sniff] ' + msg)
+    // 允许用环境变量假装「系统默认浏览器是 Chrome」，验证 auto 真的跟着默认走
+    defaultProgId: process.env.TT_SNIFF_DEFAULT_PROGID,
+    log: (msg) => {
+      logs.push(String(msg));
+      console.log('    [sniff] ' + msg);
+    }
   });
 
   let pageClient = null;
@@ -214,6 +258,8 @@ const BOX_PROBE = `(function () {
     check('start 成功', started.ok === true, started.message);
     check('running=true', started.running === true, started.running);
     check('browser 识别为 edge 或 chrome', started.browser === 'edge' || started.browser === 'chrome', started.browser);
+    check('browserChosen 默认是 auto（界面回显用）', started.browserChosen === 'auto', started.browserChosen);
+    check('browserChosen 与实际浏览器对得上（auto 解析结果）', ['edge', 'chrome'].indexOf(started.browserChosen) < 0 || started.browserChosen === started.browser, [started.browser, started.browserChosen]);
     check('浏览器版本能读到（/json/version）', /(Edg|Chrome)\/\d+/.test(session.browserVersion()), session.browserVersion());
     console.log('    浏览器版本: ' + session.browserVersion() + '，拉起+加载+高亮 ' + bootMs + 'ms');
     check('url 原样回显', started.url === fixture.url, started.url);
@@ -395,12 +441,35 @@ const BOX_PROBE = `(function () {
     check('reopen 传 javascript: → ok:false', badReopen.ok === false, badReopen.message);
     check('非法 url 不影响已有会话', session.isRunning() === true);
 
+    /* ---------------- 11.5 v0.56：反复 start 不再多开窗口 + pid 记账 ---------------- */
+    const profileDir = session.profileDir();
+    check('会话暴露 profile 目录（排查用，形如 <dataDir>/sniff-profile）', typeof profileDir === 'string' && profileDir.indexOf('sniff-profile') > 0, profileDir);
+    check('启动后立即记账：<profile>/tt-pids.json 里有 pid', (() => {
+      const rec = bs.readPidFile(profileDir);
+      return fs.existsSync(bs.pidFilePath(profileDir)) && rec.pids.length > 0;
+    })(), bs.readPidFile(profileDir));
+    const pidBefore = session.pid();
+    const portBefore = session.debugPort();
+    const again1 = await session.start({ url: fixture.url, name: '用户名', mode: 'testid', selector: 'user-input' });
+    const again2 = await session.start({ url: fixture.url, name: '关闭按钮', mode: 'title', selector: '关闭按钮' });
+    check('连续 start 都成功，并且每次都真的高亮到元素', again1.ok === true && again1.found === 1 && again2.ok === true && again2.found === 1, [again1.message, again2.message]);
+    check('连续 start 复用同一个会话（主进程 pid 不变）', session.pid() === pidBefore && pidBefore > 0, [pidBefore, session.pid()]);
+    check('连续 start 复用同一个调试端口（没有另起实例）', session.debugPort() === portBefore, [portBefore, session.debugPort()]);
+    const ownedMain = ownedProcesses(profileDir);
+    check('本 profile 的浏览器主进程只有 1 个（bug2：不会越点越多）', ownedMain.ok === true && ownedMain.main.length === 1, ownedMain.main.map((p) => p.pid));
+    check('自报的 pid() 就是那个主进程（不是转发进程的 pid）', ownedMain.main.length === 1 && session.pid() === ownedMain.main[0].pid, [session.pid(), ownedMain.main.map((p) => p.pid)]);
+    check('本 profile 的浏览器进程全都带我们的命令行标记（没有串到用户自己的浏览器）', ownedMain.all.length > 0 && ownedMain.all.every((p) => bs.isOurProfileCommand(p.cmd, profileDir)), ownedMain.all.length);
+
     /* ---------------- 12. stop：进程真的退出 ---------------- */
     const pid = session.pid();
     check('能拿到浏览器进程号', pid > 0, pid);
+    const stopLogAt = logs.length;
     const stopped = await session.stop();
     check('stop 返回 running=false', stopped.running === false, stopped.running);
-    check('stop 之后进程真的没了（按 pid 查）', await waitGone(pid, 4000), 'pid ' + pid + ' 还活着');
+    check('stop 走的是 CDP Browser.close（三级关闭的第一级）', logs.slice(stopLogAt).join('\n').indexOf('Browser.close') >= 0, logs.slice(stopLogAt));
+    check('stop 之后进程真的没了（按 pid 查）', await waitGone(pid, 5000), 'pid ' + pid + ' 还活着');
+    check('stop 之后本 profile 的浏览器进程计数 = 0（按命令行数）', await waitOwnedGone(profileDir, 8000), ownedProcesses(profileDir).all.map((p) => p.pid));
+    check('stop 之后账本被清掉（不把死 pid 留给下一轮）', !fs.existsSync(bs.pidFilePath(profileDir)));
     check('stop 之后调试端口连不上了', await (async () => {
       try {
         await fetch('http://127.0.0.1:' + port + '/json/version');
@@ -432,6 +501,27 @@ const BOX_PROBE = `(function () {
     check('用户关掉窗口后 status 仍然 ok（查询成功，不是错误）', userClosed.ok === true, userClosed.ok);
     check('用户关掉窗口后 message 说明浏览器已关闭', String(userClosed.message).indexOf('关闭') >= 0, userClosed.message);
     check('用户关掉窗口后不再有浏览器进程', isAlive(pid2) === false, pid2);
+    check('用户关掉窗口后本 profile 也没有残留进程（命令行计数 = 0）', await waitOwnedGone(profileDir, 8000), ownedProcesses(profileDir).all.map((p) => p.pid));
+
+    /* ---------------- 14. v0.56：browser 选择（写错 / 显式指定） ---------------- */
+    const badBrowser = await session.start({ url: fixture.url, name: '登录按钮', mode: 'testid', selector: 'login-btn', browser: 'firefox' });
+    check('browser 写错（firefox）→ ok:false', badBrowser.ok === false, badBrowser.message);
+    check('browser 写错的文案点明 auto / edge / chrome', String(badBrowser.message).indexOf('auto / edge / chrome') >= 0, badBrowser.message);
+    check('browser 写错时不会顺手拉起浏览器', session.isRunning() === false);
+
+    const other = found.name === 'edge' ? 'chrome' : 'edge';
+    const otherExe = bs.browserCandidates(process.env).find((c) => c.name === other && fs.existsSync(c.path));
+    if (!otherExe) {
+      skip('显式换用 ' + other, '本机没装 ' + other + '（找不到 ' + other + '.exe）');
+    } else {
+      const picked = await session.start({ url: fixture.url, name: '登录按钮', mode: 'testid', selector: 'login-btn', browser: other });
+      check('显式 browser=' + other + '：照办（browser 是 ' + other + '）', picked.ok === true && picked.browser === other, [picked.ok, picked.browser, picked.message]);
+      check('显式指定时 browserChosen 回显 ' + other, picked.browserChosen === other, picked.browserChosen);
+      check('换浏览器之后高亮仍然生效（found=1）', picked.found === 1, picked.found);
+      check('换浏览器后本 profile 只有 1 个主进程（旧浏览器已关掉）', ownedProcesses(profileDir).main.length === 1, ownedProcesses(profileDir).main.map((p) => p.pid));
+      const otherStop = await session.stop();
+      check('换浏览器之后的会话也关得掉（进程消失）', otherStop.ok === true && (await waitOwnedGone(profileDir, 8000)), [otherStop.ok, otherStop.message]);
+    }
   } catch (e) {
     record('链路跑通（未抛异常）', false, String((e && e.stack) || e));
   } finally {

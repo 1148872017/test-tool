@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Tag, Tooltip } from 'antd';
+import { Button, Select, Tag, Tooltip } from 'antd';
 import {
   AimOutlined,
   CloseOutlined,
@@ -42,6 +42,24 @@ export type SniffFacts = { lines: string[]; tone: 'ok' | 'warn' | 'muted' };
 
 export type SniffTarget = { name: string; mode: string; selector: string };
 
+/**
+ * 校验用哪个浏览器（v0.56，bugC）。
+ *
+ *   auto   —— 跟随系统默认浏览器（后端自己判断，用户默认 Chrome 就拉 Chrome）
+ *   edge   —— 强制 Edge
+ *   chrome —— 强制 Chrome
+ *
+ * 这三项要和后端 `{ browser: 'auto'|'edge'|'chrome' }` 的入参完全一致，别自己加值。
+ */
+export type SniffBrowser = 'auto' | 'edge' | 'chrome';
+
+/** 下拉选项：顺序固定「跟随系统 → Edge → Chrome」，默认值永远是 auto */
+export const SNIFF_BROWSER_OPTIONS: { value: SniffBrowser; label: string }[] = [
+  { value: 'auto', label: '跟随系统' },
+  { value: 'edge', label: 'Edge' },
+  { value: 'chrome', label: 'Chrome' }
+];
+
 export type SniffPanelProps = {
   /** 状态机当前阶段 */
   phase: SniffPhase;
@@ -64,6 +82,12 @@ export type SniffPanelProps = {
   skipped: string[];
   /** 当前记录的页面地址 */
   url: string;
+  /** 用户选的浏览器（auto / edge / chrome）；受控值，由调用方存 localStorage */
+  browser: SniffBrowser;
+  /** 切换浏览器；会话已存在时调用方会给 browserNotice，本组件只负责显示 */
+  onBrowserChange: (b: SniffBrowser) => void;
+  /** 「已切换，重新点校验生效」这类提示（可为空） */
+  browserNotice?: string;
   onClose: () => void;
   onHighlight: () => void;
   onReopen: () => void;
@@ -188,13 +212,24 @@ export default function SniffPanel(props: SniffPanelProps) {
     currentModeLabel,
     currentSelector,
     skipped,
-    url
+    url,
+    // 属性名 browser 和「实际用的是哪个浏览器」重名，解构时改个名，别把两者搞混
+    browser: browserChoice,
+    browserNotice
   } = props;
 
   const facts = describeResult(resp);
-  // 浏览器只在「已就绪」时显示：会话结束后窗口已经没了，再挂个 Edge 标签等于在说假话
-  const browser = phase === 'ready' ? browserLabel(resp && resp.browser) : '';
+  /**
+   * 实际用的是哪个浏览器：只在「已就绪」时显示 —— 会话结束后窗口已经没了，
+   * 再挂个 Chrome 标签等于在说假话。
+   * browserChosen 是后端回的「这次按哪个选择起的」（auto 就写明是跟随系统）。
+   */
+  const actualBrowser = phase === 'ready' ? browserLabel(resp && resp.browser) : '';
+  const chosen = String((resp && resp.browserChosen) || '').toLowerCase();
+  const browserText = actualBrowser ? actualBrowser + (chosen === 'auto' ? '（跟随系统）' : '') : '';
   const running = phase === 'ready';
+  /** 未启动 / 已结束才给「重新开始」（启动中给会误导成“又点了一次”） */
+  const canRestart = phase === 'idle' || phase === 'ended';
   const lastOne = sequential && total > 0 && index >= total;
 
   const phaseColor = running ? 'green' : phase === 'starting' ? 'blue' : phase === 'ended' ? 'orange' : 'default';
@@ -215,9 +250,9 @@ export default function SniffPanel(props: SniffPanelProps) {
             {' 个'}
           </Tag>
         ) : null}
-        {browser ? (
+        {browserText ? (
           <Tag color="geekblue" style={{ marginInlineEnd: 0 }}>
-            {browser}
+            {browserText}
           </Tag>
         ) : null}
         <span style={{ flex: 1 }} />
@@ -244,6 +279,28 @@ export default function SniffPanel(props: SniffPanelProps) {
           {currentSelector || '（定位值为空）'}
         </div>
       ) : null}
+
+      {/*
+        浏览器选择（bugC）：默认「跟随系统」，后端按 chrome/edge 落地。
+        值永远不是空串（auto / edge / chrome），所以不存在 antd 受控空值吞 placeholder 的坑。
+        会话已经起来了也不打断它：换浏览器等于换进程，只提示「重新点校验生效」。
+      */}
+      <div style={ROW}>
+        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>浏览器</span>
+        <Select
+          size="small"
+          style={{ width: 116 }}
+          value={browserChoice}
+          options={SNIFF_BROWSER_OPTIONS}
+          onChange={(v) => props.onBrowserChange(v as SniffBrowser)}
+          disabled={busy && phase === 'starting'}
+          aria-label="校验用哪个浏览器"
+          popupMatchSelectWidth={false}
+        />
+        {browserNotice ? (
+          <span style={{ fontSize: 11, lineHeight: '16px', color: '#d46b08' }}>{browserNotice}</span>
+        ) : null}
+      </div>
 
       {phase === 'starting' ? <div style={{ ...FACT, fontWeight: 400 }}>正在启动浏览器，稍等…</div> : null}
 
@@ -279,11 +336,6 @@ export default function SniffPanel(props: SniffPanelProps) {
             <Button size="small" icon={<ReloadOutlined />} loading={busy} onClick={props.onReopen}>
               重新打开页面
             </Button>
-            <Tooltip title="关掉这次拉起的浏览器进程，并收起这个面板">
-              <Button size="small" danger icon={<StopOutlined />} onClick={props.onStopBrowser}>
-                结束校验
-              </Button>
-            </Tooltip>
           </div>
           {sequential ? (
             <div style={ROW}>
@@ -312,13 +364,30 @@ export default function SniffPanel(props: SniffPanelProps) {
         </>
       ) : null}
 
-      {phase === 'idle' || phase === 'ended' ? (
-        <div style={ROW}>
-          <Button size="small" type="primary" onClick={props.onRestart}>
+      {/*
+        bugA：「结束校验」在**任何阶段**都要在（启动中除外 —— 正在拉进程时点它容易留下半截会话）。
+        未启动 / 出错 / 会话已结束时浏览器可能还在后台跑，这里是没有面板控制入口前唯一的关闭按钮。
+        调用方（PageElementsEditor / DetailElementSniff）都保证点了会先 sniffStop 再收面板。
+      */}
+      <div style={ROW}>
+        {canRestart ? (
+          <Button size="small" type="primary" loading={busy} disabled={busy} onClick={props.onRestart}>
             重新开始
           </Button>
-        </div>
-      ) : null}
+        ) : null}
+        <Tooltip title="关掉这次拉起的浏览器进程，并收起这个面板">
+          <Button
+            size="small"
+            danger
+            icon={<StopOutlined />}
+            onClick={props.onStopBrowser}
+            disabled={busy && phase === 'starting'}
+          >
+            结束校验
+          </Button>
+        </Tooltip>
+        {canRestart ? <span style={MUTED}>浏览器若还在后台，点「结束校验」关掉</span> : null}
+      </div>
 
       <div style={{ ...MUTED, marginTop: 8 }}>进度只在界面内存里，关掉面板即结束，不会写进台账</div>
     </div>

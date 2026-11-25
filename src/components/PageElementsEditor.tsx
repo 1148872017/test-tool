@@ -3,7 +3,7 @@ import { Button, Input, Modal, Select, Space, Tag } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { LOCATOR_MODES, previewLocatorCode } from '../../shared/locatorModes';
 import api from '../api';
-import SniffPanel, { type SniffPhase, type SniffTarget } from './SniffPanel';
+import SniffPanel, { type SniffBrowser, type SniffPhase, type SniffTarget } from './SniffPanel';
 import { parsePlaywrightSnippet } from '../utils/playwrightSnippet';
 
 /**
@@ -129,6 +129,62 @@ export function writeRecordLang(lang: RecordLang) {
   } catch (e) {
     /* 存不进去只影响下次默认值，不影响这一次录制 */
   }
+}
+
+/* ============================================================
+ * 校验用哪个浏览器（v0.56，bugC）
+ *
+ * 用户的默认浏览器是 Chrome，平台却总拉 Edge —— 所以面板上加了这个选择：
+ *   auto（跟随系统）/ edge / chrome，存 localStorage，下次打开还记着。
+ * 后端入参是 `{ browser: 'auto'|'edge'|'chrome' }`，默认 auto；回包里
+ * `browser` 是实际拉起的、`browserChosen` 是这次按哪个选择起的（auto 就写 auto）。
+ *
+ * 存 localStorage 而不是进设置：这个选择只影响「实时校验」，不属于全局设置，
+ * 也不给测试的手工 require 桩加负担（和 codegen 语言同一个做法）。
+ * ============================================================ */
+
+/** localStorage 键（写死，别改 —— 用户升级后选择要还在） */
+export const SNIFF_BROWSER_KEY = 'test-tool.sniff.browser';
+
+/** 读用户选的浏览器；没存过 / 存了脏值一律 auto（跟随系统） */
+export function readSniffBrowser(): SniffBrowser {
+  const s = langStorage();
+  const v = s ? String(s.getItem(SNIFF_BROWSER_KEY) || '') : '';
+  return v === 'edge' || v === 'chrome' ? (v as SniffBrowser) : 'auto';
+}
+
+/** 记住用户的选择（存不进去不影响这一次校验） */
+export function writeSniffBrowser(browser: SniffBrowser) {
+  const s = langStorage();
+  if (!s) return;
+  try {
+    s.setItem(SNIFF_BROWSER_KEY, browser);
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+/**
+ * 调 sniff:reopen，并把「用哪个浏览器」带上。
+ *
+ * 入参契约（v0.56）：`{ url, browser }`。但老 preload 的签名是
+ * `sniffReopen: (url) => invoke('sniff:reopen', { url })` —— 它会自己再包一层，
+ * 传对象进去就变成 `{ url: { url, browser } }`，后端只会回「只支持 http(s)」。
+ *
+ * 所以：先按新契约传对象；**只有当回包说 url 不合法**时才退回老形态再调一次。
+ * 老 preload 收到对象会把 url 变成 '[object Object]'，后端判它不合法 —— 那条回执
+ * 说明的是 preload 形态没跟上，不是用户地址写错；退回字符串再调，错的地址照样会被拒。
+ */
+export async function reopenWithBrowser(
+  request: (method: string, payload?: any) => Promise<any>,
+  url: string,
+  browser: SniffBrowser
+): Promise<any> {
+  const res = await request('sniffReopen', { url, browser });
+  if (res && res.ok === false && /http/i.test(String(res.message || ''))) {
+    return request('sniffReopen', url);
+  }
+  return res;
 }
 
 /**
@@ -293,6 +349,8 @@ type SniffSession = {
   total: number;
   /** 这一轮跳过的元素名（内存里，用于结束时给个交代） */
   skipped: string[];
+  /** 「浏览器已切换，重新点校验生效」这类一次性提示（不落库） */
+  browserNotice: string;
 };
 
 const SNIFF_IDLE: SniffSession = {
@@ -305,7 +363,8 @@ const SNIFF_IDLE: SniffSession = {
   target: null,
   index: 0,
   total: 0,
-  skipped: []
+  skipped: [],
+  browserNotice: ''
 };
 
 /**
@@ -386,6 +445,9 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
    * ============================================================ */
   const [sniff, setSniff] = useState<SniffSession>(() => SNIFF_IDLE);
 
+  /** 校验用哪个浏览器（bugC）：初始化时读 localStorage，切换时写回 */
+  const [sniffBrowser, setSniffBrowser] = useState<SniffBrowser>(() => readSniffBrowser());
+
   /** codegen 录制小窗的状态（文本/提示都在里面，关掉即清） */
   const [codegen, setCodegen] = useState<{ open: boolean; busy: boolean; text: string; msg: string; err: string; lang: RecordLang }>({
     open: false,
@@ -399,9 +461,32 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
   /** 卸载时要不要顺手关浏览器：面板开着就说明这一轮还没收尾 */
   const sniffOpen = useRef<boolean>(false);
 
+  /**
+   * 连点闸门（bugD）：busy 是异步 state，用户点两下时两次点击可能都读到旧值，
+   * 于是真的发两次 sniff:start —— 那是两个浏览器会话。ref 是同步的，先挡一次。
+   */
+  const sniffGate = useRef<boolean>(false);
+
+  /** 每一轮请求的序号：过期回包（用户又点了别的 / 面板已关）直接丢掉 */
+  const sniffRound = useRef<number>(0);
+
   useEffect(() => {
     sniffOpen.current = sniff.open;
   }, [sniff.open]);
+
+  /** 开始一轮：占住闸门 + 拿一个序号 */
+  const beginRound = (): number => {
+    sniffGate.current = true;
+    sniffRound.current += 1;
+    return sniffRound.current;
+  };
+
+  /** 结束一轮：序号已经过期（有更新的一轮）就返回 false，调用方别再落状态 */
+  const endRound = (round: number): boolean => {
+    if (round !== sniffRound.current) return false;
+    sniffGate.current = false;
+    return true;
+  };
 
   const patchSniff = (patch: Partial<SniffSession>) => {
     setSniff((prev) => Object.assign({}, prev, patch));
@@ -441,24 +526,42 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
       }))
       .filter((x) => x.name);
 
-  /** 起一次校验（单行「▶ 校验」和顺序模式的每一行都走这里） */
+  /**
+   * 起一次校验（单行「▶ 校验」和顺序模式的每一行都走这里）。
+   *
+   * 连点保护（bugD）：闸门在第一行同步占住，后面的点击一律吞掉；
+   * 回包回来才放开 —— 期间按钮是 loading + disabled，用户不会以为没点上。
+   */
   const startAt = async (target: SniffTarget, next: Partial<SniffSession>) => {
+    if (sniffGate.current) return;
+    const round = beginRound();
     const url = String(pageUrl || '').trim();
-    patchSniff(Object.assign({ open: true, target, busy: false, resp: null, error: '' }, next));
+    patchSniff(Object.assign({ open: true, target, busy: true, resp: null, error: '', browserNotice: '' }, next));
     if (!url) {
-      patchSniff({ phase: 'idle', error: '这条记录还没有页面地址（url），先填上再校验' });
+      sniffGate.current = false;
+      patchSniff({ phase: 'idle', busy: false, error: '这条记录还没有页面地址（url），先填上再校验' });
       return;
     }
     if (!target.name) {
-      patchSniff({ phase: 'idle', error: '这一行还没有元素名称，先补上再校验' });
+      sniffGate.current = false;
+      patchSniff({ phase: 'idle', busy: false, error: '这一行还没有元素名称，先补上再校验' });
       return;
     }
     if (!target.selector) {
-      patchSniff({ phase: 'idle', error: '这一行还没有定位值，先补上再校验' });
+      sniffGate.current = false;
+      patchSniff({ phase: 'idle', busy: false, error: '这一行还没有定位值，先补上再校验' });
       return;
     }
     patchSniff({ phase: 'starting', busy: true });
-    const res = await request('sniffStart', { url, name: target.name, mode: target.mode, selector: target.selector });
+    // browser：每次启动都带上用户的选择（auto = 跟随系统），默认 auto
+    const res = await request('sniffStart', {
+      url,
+      name: target.name,
+      mode: target.mode,
+      selector: target.selector,
+      browser: sniffBrowser
+    });
+    if (!endRound(round)) return;
     applyResponse(res);
   };
 
@@ -498,9 +601,18 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
   /** 重复当前：对当前这一行再发一次 highlight（不重新导航，只看它还在不在） */
   const seqRepeat = () => {
     const t = sniff.target;
-    if (!t) return;
+    if (!t || sniffGate.current) return;
+    const round = beginRound();
     patchSniff({ busy: true, error: '' });
-    request('sniffHighlight', { name: t.name, mode: t.mode, selector: t.selector }).then((res) => applyResponse(res));
+    request('sniffHighlight', {
+      name: t.name,
+      mode: t.mode,
+      selector: t.selector,
+      browser: sniffBrowser
+    }).then((res) => {
+      if (!endRound(round)) return;
+      applyResponse(res);
+    });
   };
 
   /** 跳过：这一行不看，记进「已跳过」并直接高亮下一行 */
@@ -524,18 +636,43 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
       patchSniff({ error: '这条记录还没有页面地址（url），没法重新打开' });
       return;
     }
+    if (sniffGate.current) return;
+    const round = beginRound();
     patchSniff({ busy: true, error: '' });
-    const res = await request('sniffReopen', url);
+    // 带上浏览器选择（老 preload 的兼容在 reopenWithBrowser 里）
+    const res = await reopenWithBrowser(request, url, sniffBrowser);
+    if (!endRound(round)) return;
     applyResponse(res);
+  };
+
+  /**
+   * 切换校验用浏览器（bugC）。
+   *
+   * 写 localStorage 后只影响**下一次** sniff:start / highlight / reopen ——
+   * 已经起来的会话不打断（换浏览器等于换一个进程，硬切会把用户正在看的窗口关了）。
+   * 会话存在时给一句「已切换，重新点校验生效」；没启动时切换不报错、不弹任何东西。
+   */
+  const changeSniffBrowser = (b: SniffBrowser) => {
+    writeSniffBrowser(b);
+    setSniffBrowser(b);
+    setSniff((prev) => {
+      if (!prev.open || (prev.phase !== 'ready' && prev.phase !== 'starting')) return prev;
+      return Object.assign({}, prev, { browserNotice: '已切换，重新点校验生效' });
+    });
   };
 
   /**
    * 「结束校验」按钮：**手动关掉浏览器和进程，并收起面板**。
    *
    * 和右上角 X 的区别只是明不明显（X 太小，用户找不到"怎么关掉那个浏览器"）。
+   * 面板在**任何阶段**都渲染这个按钮（bugA）：未启动 / 出错 / 会话已结束时，
+   * 浏览器可能还在后台跑，这是唯一的关闭入口 —— 所以这里点了就先 sniffStop 再收面板。
    * 关不掉时（stillRunning）保留面板并显示原因，别把错误一起收走。
    */
   const stopBrowser = async () => {
+    // 先让正在飞的回包作废：启动中被按下时，后续 phase 不能再把面板翻回来
+    sniffRound.current += 1;
+    sniffGate.current = false;
     patchSniff({ busy: true, error: '' });
     const res = await request('sniffStop');
     const stillRunning = !!(res && res.ok !== false && res.running);
@@ -550,6 +687,7 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
       return;
     }
     sniffOpen.current = false;
+    sniffGate.current = false;
     patchSniff(Object.assign({}, SNIFF_IDLE));
   };
 
@@ -636,7 +774,10 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
   };
 
   /** 关面板 = 结束这一轮；面板没了就没有控制入口，浏览器一并关掉 */
-  const closeSniff = () => {    sniffOpen.current = false;
+  const closeSniff = () => {
+    sniffRound.current += 1; // 正在飞的回包作废
+    sniffGate.current = false;
+    sniffOpen.current = false;
     patchSniff(Object.assign({}, SNIFF_IDLE));
     request('sniffStop');
   };
@@ -710,7 +851,8 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
     <div className="page-elements-editor">
       {/* 顶部工具条：按顺序逐行高亮（进度只在内存里） */}
       <div className="pe-sniff-bar" style={SNIFF_BAR_STYLE}>
-        <Button size="small" onClick={startSequence} disabled={sniff.busy}>
+        {/* loading + disabled：点下去就锁住，连点不会再拉起第二个浏览器（bugD） */}
+        <Button size="small" onClick={startSequence} loading={sniff.busy} disabled={sniff.busy}>
           ▶ 按顺序校验
         </Button>
         <Button size="small" onClick={openCodegen} disabled={sniff.busy}>
@@ -745,6 +887,11 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
             const preview = previewLocatorCode(mode, r.selector, 'java');
             // 聚焦或已填内容才显示预览，否则每行两栏会把表格挤得很长
             const showPreview = focusRow === i || String(r.selector || '').trim() !== '';
+            // 正在校验的就是这一行 → 按钮转圈；其余行只是禁用（点下去锁住，bugD）
+            const verifyingThis =
+              !!sniff.target &&
+              sniff.target.name === String(r.name || '').trim() &&
+              sniff.target.selector === String(r.selector || '').trim();
             return (
               <tr key={i}>
                 <td>
@@ -801,6 +948,7 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
                     type="link"
                     size="small"
                     style={{ paddingInline: 0, fontSize: 11 }}
+                    loading={sniff.busy && verifyingThis}
                     disabled={sniff.busy}
                     onClick={() => verifyRow(i)}
                     title="在浏览器里高亮这一行的元素"
@@ -849,6 +997,9 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
           currentSelector={sniff.target ? sniff.target.selector : ''}
           skipped={sniff.skipped}
           url={String(pageUrl || '').trim()}
+          browser={sniffBrowser}
+          browserNotice={sniff.browserNotice}
+          onBrowserChange={changeSniffBrowser}
           onClose={closeSniff}
           onHighlight={() => {
             if (sniff.target) seqRepeat();

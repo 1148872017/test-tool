@@ -5,21 +5,28 @@
  * ============================================================
  * 五个通道（全部走 deps.handle + assertUnlocked）
  * ============================================================
- *   sniff:status     入参 {}                        查会话状态（界面轮询用）
- *   sniff:start      入参 {url,name,mode,selector}  起浏览器 + 打开页面 + 高亮
- *   sniff:highlight  入参 {name,mode,selector}      不导航，只重新框
- *                                                  （浏览器被关掉了会按记住的地址自动拉起）
- *   sniff:reopen     入参 {url}                     重新导航并框住当前元素
- *   sniff:stop       入参 {}                        关掉浏览器（幂等）
+ *   sniff:status     入参 {}                              查会话状态（界面轮询用）
+ *   sniff:start      入参 {url,name,mode,selector,browser} 起浏览器 + 打开页面 + 高亮
+ *   sniff:highlight  入参 {name,mode,selector,browser}     不导航，只重新框
+ *                                                        （浏览器被关掉了会按记住的地址自动拉起）
+ *   sniff:reopen     入参 {url,browser}                    重新导航并框住当前元素
+ *   sniff:stop       入参 {}                              关掉浏览器（幂等）
+ *
+ * browser（v0.56 新增，默认 auto）：
+ *   'auto'   —— 跟系统默认浏览器（注册表 UserChoice 的 ProgId：
+ *               ChromeHTML→chrome、MSEdgeHTM→edge），认不出就 Edge → Chrome
+ *   'edge'   —— 只用 Edge（找不到回明确错误，不偷偷换 Chrome）
+ *   'chrome' —— 只用 Chrome（同上）
  *
  * 统一返回形状（五个通道完全一致，前端只认一套）：
- *   { ok, running, browser, url, name, mode, selector,
+ *   { ok, running, browser, browserChosen, url, name, mode, selector,
  *     found, total, visible, inIframe, reason, message, browserVersion }
  *
  *   ok        —— 这一次操作本身成没成（status 恒为 true：查询成功就是成功，
  *                浏览器在不在看 running，免得界面轮询时老弹错误）
  *   running   —— 浏览器会话还在不在（用户自己关窗口后会变 false）
- *   browser   —— 'edge' | 'chrome'（没起来过是空串）
+ *   browser   —— 实际用的：'edge' | 'chrome'（没起来过是空串）
+ *   browserChosen —— 用户选的：'auto' | 'edge' | 'chrome'（界面回显用）
  *   found     —— 匹配到几个元素
  *   total     —— 上报上下文里的匹配总数（正常等于 found）
  *   visible   —— 第一个是否可见
@@ -90,6 +97,37 @@ function probeNodePlaywright() {
   return { ok: false, detail: stderr || stdout };
 }
 
+/**
+ * 归一化 sniff:reopen 的入参（**纯函数**，可单测）。
+ *
+ * 为什么需要这一层（v0.56）：
+ *   preload 里 sniffReopen 目前还是老形状 —— `sniffReopen: (url) => invoke('sniff:reopen', { url })`，
+ *   而界面按新契约传的是 `{ url, browser }`，于是真正到主进程的 payload 变成了
+ *   `{ url: { url, browser } }`。不拆这一层，url 会被判成非法、browser 也丢了。
+ *
+ *   preload 归别人改，这里先做**兼容拆包**（preload 修好之后这段自然不生效，不冲突）：
+ *   · 字符串 payload（`sniffReopen(url)` 直调）→ 当成 url；
+ *   · `{ url: {url, browser} }`          → 用内层的 url / browser；
+ *   · `{ url, browser }`                 → 原样用；
+ *   · 其余 → url 空串（= 用会话里记住的地址），browser 取外层。
+ *
+ * @param {*} payload
+ * @returns {{url: string, browser: (string|undefined)}}
+ */
+function normalizeReopenPayload(payload) {
+  const asUrl = (v) => String(v === undefined || v === null ? '' : v).trim();
+  if (typeof payload === 'string') return { url: asUrl(payload), browser: undefined };
+  if (!payload || typeof payload !== 'object') return { url: '', browser: undefined };
+  const inner = payload.url && typeof payload.url === 'object' ? payload.url : null;
+  if (inner) {
+    return {
+      url: asUrl(inner.url),
+      browser: inner.browser !== undefined ? inner.browser : payload.browser
+    };
+  }
+  return { url: asUrl(payload.url), browser: payload.browser };
+}
+
 function register(deps) {
   const { handle, assertUnlocked, dataDir, app, logStartup, getSettings } = deps;
 
@@ -141,26 +179,25 @@ function register(deps) {
   // ---- 起浏览器 + 打开页面 + 高亮 ----
   handle('sniff:start', async (e, payload = {}) => {
     assertUnlocked();
-    const { url, name, mode, selector } = payload || {};
+    const { url, name, mode, selector, browser } = payload || {};
     if (!sniffer.isHttpUrl(url)) return sniffer.reject(URL_REJECT);
-    return sniffer.start({ url, name, mode, selector });
+    return sniffer.start({ url, name, mode, selector, browser });
   });
 
   // ---- 只重新框（不导航） ----
   handle('sniff:highlight', async (e, payload = {}) => {
     assertUnlocked();
-    const { name, mode, selector } = payload || {};
-    return sniffer.highlight({ name, mode, selector });
+    const { name, mode, selector, browser } = payload || {};
+    return sniffer.highlight({ name, mode, selector, browser });
   });
 
   // ---- 重新导航并框住当前元素 ----
   handle('sniff:reopen', async (e, payload = {}) => {
     assertUnlocked();
-    const { url } = payload || {};
-    const raw = String(url === undefined || url === null ? '' : url).trim();
+    const norm = normalizeReopenPayload(payload);
     // 不传 url = 用会话里的地址重开；传了就必须是 http/https
-    if (raw && !sniffer.isHttpUrl(raw)) return sniffer.reject(URL_REJECT);
-    return sniffer.reopen({ url: raw });
+    if (norm.url && !sniffer.isHttpUrl(norm.url)) return sniffer.reject(URL_REJECT);
+    return sniffer.reopen({ url: norm.url, browser: norm.browser });
   });
 
   // ---- 关掉浏览器 ----
@@ -298,4 +335,4 @@ function register(deps) {
   });
 }
 
-module.exports = { register, URL_REJECT };
+module.exports = { register, URL_REJECT, normalizeReopenPayload };

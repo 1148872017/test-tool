@@ -23,7 +23,7 @@ import VarsEditor from './VarsEditor';
 import MetricsTable from './MetricsTable';
 import ScenePicker from './ScenePicker';
 import AccountsEditor from './AccountsEditor';
-import SniffPanel, { type SniffPhase, type SniffTarget } from './SniffPanel';
+import SniffPanel, { type SniffBrowser, type SniffPhase, type SniffTarget } from './SniffPanel';
 import { caseKey, knownCaseKeys, loadCaseIndex } from '../caseIndex';
 import { matchOnlyFor, recentForApi, resultTone, runLine } from '../../shared/runs';
 import { RUN_KIND_OPTIONS } from '../../shared/collections';
@@ -32,7 +32,15 @@ import CaseLinkModal from './CaseLinkModal';
 import ErrorBoundary from './feedback/ErrorBoundary';
 import StateEmpty from './states/StateEmpty';
 import { asArray, fieldOptions, getOptionsSync, loadOptions, OptionsMap } from '../options';
-import { parseElements, normalizeMode, settleSniff, type PageElement } from './PageElementsEditor';
+import {
+  parseElements,
+  normalizeMode,
+  settleSniff,
+  readSniffBrowser,
+  writeSniffBrowser,
+  reopenWithBrowser,
+  type PageElement
+} from './PageElementsEditor';
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -99,19 +107,50 @@ function elementModeLabel(mode: any): string {
 }
 
 /**
- * 详情页的单行「实时校验」（v0.55）。
+ * 详情页的单行「实时校验」（v0.55 / v0.56 修 bugB）。
  *
- * 和编辑器里用的是同一个 SniffPanel，但**会话生命周期由它自己管**：
- *   挂载 = 起浏览器 + 高亮这一行；关闭 / 卸载 = 收面板 + 关浏览器。
+ * 和编辑器里用的是同一个 SniffPanel，但**启动权只在用户手上**：
+ *   · 挂载本身不发 sniff:start —— 旧实现「挂载即启动」的后果是：关抽屉再打开同一条
+ *     详情就等于自动跑了一次校验（浏览器自己弹出来，用户莫名其妙）；
+ *   · 只有父组件判定「这一次点击的 nonce 还没启动过」（autoStart）时才发；
+ *   · 面板关闭 / 抽屉关闭 / 换一条记录 都由父组件统一 stop 一次并清掉 target。
+ *
  * 详情是只读的：没有顺序走查、不写回 elements、不调 saveRecord。
  */
-function DetailElementSniff({ url, target, onClose }: { url: string; target: SniffTarget; onClose: () => void }) {
-  const [phase, setPhase] = useState<SniffPhase>('starting');
-  const [busy, setBusy] = useState(true);
+export function DetailElementSniff({
+  url,
+  target,
+  browser,
+  autoStart,
+  onStarted,
+  onBrowserChange,
+  onClose
+}: {
+  url: string;
+  target: SniffTarget;
+  /** 用哪个浏览器（auto / edge / chrome），每次 start / highlight / reopen 都带上 */
+  browser: SniffBrowser;
+  /** 一次性闸门：父组件算好的「这一次点击还没启动过」 */
+  autoStart: boolean;
+  /** 真的发起了启动：父组件记下这个 nonce，重挂载不会再自动跑 */
+  onStarted: () => void;
+  onBrowserChange: (b: SniffBrowser) => void;
+  onClose: () => void;
+}) {
+  const [phase, setPhase] = useState<SniffPhase>(autoStart ? 'starting' : 'idle');
+  const [busy, setBusy] = useState(!!autoStart);
   const [resp, setResp] = useState<any>(null);
   const [error, setError] = useState('');
-  const phaseRef = useRef<SniffPhase>('starting');
+  /** 「浏览器已切换，重新点校验生效」这类一次性提示 */
+  const [notice, setNotice] = useState('');
+  const phaseRef = useRef<SniffPhase>(autoStart ? 'starting' : 'idle');
   const aliveRef = useRef(true);
+  /** 连点闸门（bugD）：busy 是异步 state，点两下会真起两个会话 */
+  const gateRef = useRef(false);
+  /** 每一轮请求的序号：过期回包直接丢掉 */
+  const roundRef = useRef(0);
+  /** 浏览器选择（切换后只影响下一次启动） */
+  const browserRef = useRef<SniffBrowser>(browser);
 
   /** 统一调用入口：后端永远 resolve 一个统一返回体，这里再兜一层，面板不会白屏 */
   const request = async (method: string, payload?: any): Promise<any> => {
@@ -127,7 +166,10 @@ function DetailElementSniff({ url, target, onClose }: { url: string; target: Sni
     }
   };
 
-  const apply = (res: any) => {
+  /** 落状态：序号过期（用户又点了别的 / 面板已关）就整包丢掉 */
+  const finish = (round: number, res: any) => {
+    if (round !== roundRef.current) return;
+    gateRef.current = false;
     if (!aliveRef.current) return;
     const next = settleSniff(res, phaseRef.current);
     phaseRef.current = next.phase;
@@ -138,21 +180,36 @@ function DetailElementSniff({ url, target, onClose }: { url: string; target: Sni
   };
 
   const start = async () => {
-    if (!url) {
-      phaseRef.current = 'idle';
-      setPhase('idle');
-      setBusy(false);
-      setError('这条记录还没有页面地址（url），先填上再校验');
-      return;
-    }
+    if (gateRef.current) return;
+    gateRef.current = true;
+    roundRef.current += 1;
+    const round = roundRef.current;
     setBusy(true);
     setError('');
-    apply(await request('sniffStart', { url, name: target.name, mode: target.mode, selector: target.selector }));
+    setNotice('');
+    if (!url) {
+      // 没有页面地址：走同一条落状态路径，错误文案由面板照原文显示
+      finish(round, { ok: false, running: false, message: '这条记录还没有页面地址（url），先填上再校验' });
+      return;
+    }
+    const res = await request('sniffStart', {
+      url,
+      name: target.name,
+      mode: target.mode,
+      selector: target.selector,
+      browser: browserRef.current
+    });
+    finish(round, res);
   };
 
   useEffect(() => {
     aliveRef.current = true;
-    start();
+    if (autoStart) {
+      // 先告诉父组件「这个 nonce 已经启动过」，再发请求：重挂载时 autoStart 会是 false
+      onStarted();
+      start();
+    }
+    // autoStart 为 false（重挂载 / 只是把面板显示出来）就什么都不发 —— 这就是 bugB 的闸门
     // 面板开着时定期问一次：用户把浏览器窗口关了 → 切到「会话已结束」
     const timer = setInterval(() => {
       if (phaseRef.current !== 'ready') return;
@@ -168,30 +225,51 @@ function DetailElementSniff({ url, target, onClose }: { url: string; target: Sni
     return () => {
       aliveRef.current = false;
       clearInterval(timer);
-      // 面板没了就没有控制入口，浏览器一并关掉（stop 是幂等的，重复调无副作用）
-      const fn = (api as any).sniffStop;
-      if (typeof fn === 'function') Promise.resolve(fn()).catch(() => {});
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const rehighlight = async () => {
+    if (gateRef.current) return;
+    gateRef.current = true;
+    roundRef.current += 1;
+    const round = roundRef.current;
     setBusy(true);
     setError('');
-    apply(await request('sniffHighlight', { name: target.name, mode: target.mode, selector: target.selector }));
+    const res = await request('sniffHighlight', {
+      name: target.name,
+      mode: target.mode,
+      selector: target.selector,
+      browser: browserRef.current
+    });
+    finish(round, res);
   };
 
   const reopen = async () => {
+    if (gateRef.current) return;
+    gateRef.current = true;
+    roundRef.current += 1;
+    const round = roundRef.current;
     setBusy(true);
     setError('');
-    apply(await request('sniffReopen', url));
+    const res = await reopenWithBrowser(request, url, browserRef.current);
+    finish(round, res);
   };
 
-  /** 「结束校验」和右上角 X 一样：关浏览器 + 收面板 */
-  const stopAndClose = async () => {
-    setBusy(true);
-    await request('sniffStop');
-    onClose();
+  /**
+   * 切换浏览器：只影响下一次启动（不打断正在跑的会话），存由父组件写 localStorage。
+   * 会话已经存在时给一句「已切换，重新点校验生效」。
+   */
+  const changeBrowser = (b: SniffBrowser) => {
+    browserRef.current = b;
+    onBrowserChange(b);
+    if (phaseRef.current === 'ready' || phaseRef.current === 'starting') {
+      setNotice('已切换，重新点校验生效');
+    }
   };
+
+  /** 「结束校验」和右上角 X 一样：收起面板（stop 由父组件统一调一次，见 stopVerify） */
+  const stopAndClose = () => onClose();
 
   return (
     <SniffPanel
@@ -207,6 +285,9 @@ function DetailElementSniff({ url, target, onClose }: { url: string; target: Sni
       currentSelector={target.selector}
       skipped={[]}
       url={url}
+      browser={browser}
+      browserNotice={notice}
+      onBrowserChange={changeBrowser}
       onClose={stopAndClose}
       onHighlight={rehighlight}
       onReopen={reopen}
@@ -242,8 +323,37 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
   // 这个接口最近跑过的几次（接口测试 / 压测都算一个「执行」）
   const [runs, setRuns] = useState<any[]>([]);
   const [opts, setOpts] = useState<OptionsMap>(getOptionsSync());
-  /** 详情页的单行实时校验：记住目标行 + 递增序号（点另一行就换一个会话） */
-  const [verify, setVerify] = useState<{ target: SniffTarget; seq: number } | null>(null);
+  /**
+   * 详情页的单行实时校验：目标行 + 递增 nonce（每次点 ▶ 自增一次）。
+   *
+   * **只有用户刚点了 ▶ 才启动**（bugB）：nonce 是「这一次点击」的身份，
+   * 父组件用 startedNonce 记住已经启动过哪个 nonce —— 抽屉重开、面板重挂载
+   * 都只是把面板显示出来，不会再一次 sniffStart。
+   */
+  const [verify, setVerify] = useState<{ target: SniffTarget; nonce: number } | null>(null);
+  /** 已经真正启动过的 nonce（父组件持有：子组件重挂载也不会忘） */
+  const startedNonce = useRef(0);
+  /** nonce 发号器（只增不减） */
+  const verifySeq = useRef(0);
+  /** 当前会话是否还在（卸载 / 抽屉关闭时据此决定要不要 stop） */
+  const verifyRef = useRef<{ target: SniffTarget; nonce: number } | null>(null);
+  /** 校验用哪个浏览器（bugC）：初始化读 localStorage，切换时写回 */
+  const [sniffBrowser, setSniffBrowser] = useState<SniffBrowser>(() => readSniffBrowser());
+  /** 上一条记录 id：换了记录就是上一轮校验结束 */
+  const lastRecordId = useRef(record ? record.id : '');
+
+  /**
+   * 关掉详情页的校验会话：清掉 target（重开抽屉 / 切到另一行都不会自动再启动）
+   * 并调一次 sniffStop（幂等；浏览器不会留在后台没人管）。
+   */
+  const stopVerify = () => {
+    const had = !!verifyRef.current;
+    verifyRef.current = null;
+    setVerify(null);
+    if (!had) return;
+    const fn = (api as any).sniffStop;
+    if (typeof fn === 'function') Promise.resolve(fn()).catch(() => {});
+  };
 
   const isApis = conf.key === 'apis';
 
@@ -268,6 +378,45 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
     await copy(recordToText(record, conf, links), true, '整条已复制');
   };
   const recordId = record ? record.id : '';
+
+  /** 换成另一条记录（点别的行）＝ 上一轮校验结束：清目标 + 关浏览器，绝不自动开始下一条 */
+  useEffect(() => {
+    if (lastRecordId.current === recordId) return;
+    lastRecordId.current = recordId;
+    stopVerify();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recordId]);
+
+  /** 记录被清空（点空白处关抽屉 / 删除后 onDeleted）同样收尾 */
+  useEffect(() => {
+    if (record) return;
+    stopVerify();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [record]);
+
+  /** 详情整个卸载（切页面 / 关窗口）也把浏览器收掉 */
+  useEffect(
+    () => () => {
+      if (!verifyRef.current) return;
+      verifyRef.current = null;
+      const fn = (api as any).sniffStop;
+      if (typeof fn === 'function') Promise.resolve(fn()).catch(() => {});
+    },
+    []
+  );
+
+  /**
+   * 打开详情时把浏览器选择与 localStorage 对齐。
+   *
+   * 这个组件在集合页里是常驻挂载的（record 为 null 时 early return），
+   * useState 只跑一次 —— 用户可能刚在编辑表单里改过选择，这里要重新读一遍，
+   * 否则详情页会拿旧选择去拉起浏览器。
+   */
+  const detailOpen = !!record;
+  useEffect(() => {
+    if (!detailOpen) return;
+    setSniffBrowser(readSniffBrowser());
+  }, [detailOpen, recordId]);
 
   useEffect(() => {
     loadOptions().then(setOpts).catch(() => {});
@@ -385,6 +534,8 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
   /**
    * 点元素行末的 ▶：只读地拉起实时校验（本机浏览器高亮这一行）。
    *
+   * 每点一次 nonce +1：这是**用户刚刚点了**的唯一凭据，
+   * 子组件只在「这个 nonce 还没启动过」时才发 sniff:start（bugB）。
    * 详情页不进入编辑：不写回 elements、不保存记录，换个位置只看事实。
    */
   const startVerify = (el: PageElement) => {
@@ -399,10 +550,16 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
       toast('这条记录还没有页面地址（url），先填上再校验', 'warning');
       return;
     }
-    setVerify((prev) => ({
-      target: { name, mode: normalizeMode(el.mode), selector },
-      seq: (prev ? prev.seq : 0) + 1
-    }));
+    verifySeq.current += 1;
+    const next = { target: { name, mode: normalizeMode(el.mode), selector }, nonce: verifySeq.current };
+    verifyRef.current = next;
+    setVerify(next);
+  };
+
+  /** 切换浏览器：写 localStorage + 更新面板受控值；下一次 start / highlight / reopen 生效 */
+  const changeSniffBrowser = (b: SniffBrowser) => {
+    writeSniffBrowser(b);
+    setSniffBrowser(b);
   };
 
   /** 删除 = 移入回收站（软删除）：说清楚「还能找回」，别让人以为数据没了 */
@@ -644,7 +801,11 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
   return (
     <Drawer
       open={!!record}
-      onClose={onClose}
+      // 点空白处 / Esc 关抽屉也当「这一轮校验结束」：清目标 + 关浏览器（bugB）
+      onClose={() => {
+        stopVerify();
+        onClose();
+      }}
       width={560}
       title={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -849,13 +1010,24 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
 
       <VarFillModal open={varOpen} text={String(data.sql || '')} title="填充变量并复制 SQL" onClose={() => setVarOpen(false)} />
 
-      {/* 详情页的单行实时校验：面板自己管会话，关掉即结束（进度不落库） */}
+      {/*
+        详情页的单行实时校验：**只有点过 ▶ 才会启动**。
+        key 带 nonce → 每点一次换一个实例；autoStart 由父组件的 startedNonce 决定，
+        重开抽屉 / 面板重挂载都不会再自动跑一次（bugB）。
+        关面板 / 关抽屉 / 换记录都由 stopVerify 统一 stop 一次并清掉目标。
+      */}
       {verify ? (
         <DetailElementSniff
-          key={(recordId || 'none') + ':' + String(verify.seq)}
+          key={(recordId || 'none') + ':' + String(verify.nonce)}
           url={String(data.url || '').trim()}
           target={verify.target}
-          onClose={() => setVerify(null)}
+          browser={sniffBrowser}
+          autoStart={verify.nonce !== startedNonce.current}
+          onStarted={() => {
+            startedNonce.current = verify.nonce;
+          }}
+          onBrowserChange={changeSniffBrowser}
+          onClose={stopVerify}
         />
       ) : null}
       </ErrorBoundary>

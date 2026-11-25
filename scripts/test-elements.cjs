@@ -23,7 +23,55 @@ const ROOT = path.join(__dirname, '..');
 /** codegen 片段解析器的真模块（懒加载，editor 的 require 桩里回填） */
 let snippetMod = null;
 const EDITOR = path.join(ROOT, 'src', 'components', 'PageElementsEditor.tsx');
+const SNIFF_PANEL = path.join(ROOT, 'src', 'components', 'SniffPanel.tsx');
 const CODEGEN_PAGE = path.join(ROOT, 'src', 'pages', 'CodegenPage.tsx');
+
+/* ============================================================
+ * 0.0 实时校验的 api 桩（记下每次调用的入参）
+ *
+ * v0.56 有三个真机 bug 要靠这些入参验：
+ *   bugC 每次启动都要带浏览器选择；bugD 连点只能发一次 start。
+ * ============================================================ */
+const sniffCalls = { start: [], highlight: [], reopen: [], stop: 0 };
+const sniffOk = (p) =>
+  Object.assign(
+    {
+      ok: true,
+      running: true,
+      browser: 'chrome',
+      browserChosen: 'auto',
+      url: String((p && p.url) || ''),
+      name: String((p && p.name) || ''),
+      mode: String((p && p.mode) || 'css'),
+      selector: String((p && p.selector) || ''),
+      found: 1,
+      total: 1,
+      visible: true,
+      inIframe: false,
+      reason: '',
+      message: ''
+    },
+    {}
+  );
+const sniffApi = {
+  sniffStart: async (p) => {
+    sniffCalls.start.push(p);
+    return sniffOk(p);
+  },
+  sniffHighlight: async (p) => {
+    sniffCalls.highlight.push(p);
+    return sniffOk(p);
+  },
+  sniffReopen: async (p) => {
+    sniffCalls.reopen.push(p);
+    return sniffOk(Object.assign({}, p && typeof p === 'object' ? p : { url: p }));
+  },
+  sniffStatus: async () => ({ ok: true, running: true }),
+  sniffStop: async () => {
+    sniffCalls.stop += 1;
+    return { ok: true, running: false, message: '浏览器已关闭' };
+  }
+};
 
 /* ============================================================
  * 0. 迷你 hooks 运行时：让组件函数可以真的被调用
@@ -180,6 +228,24 @@ function valuesOf(tree) {
   return rowsOf(tree).map((r) => cellsOf(r).map((c) => c.props.value));
 }
 
+/** 虚拟节点是 antd 假组件时取它的名字 */
+const compName = (n) => (n && typeof n.type === 'function' && n.type.__name) || '';
+
+/** 节点里的纯文本（递归拼叶子字符串，用来找按钮文案） */
+function textOf(node) {
+  if (node === null || node === undefined || typeof node === 'boolean') return '';
+  if (typeof node === 'string') return node;
+  if (typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join('');
+  if (typeof node === 'object') return textOf(node.props ? node.props.children : '');
+  return '';
+}
+
+/** 树里的实时校验面板（桩组件把 props 原样留在节点上） */
+function findSniffPanel(tree) {
+  return collect(tree, []).find((n) => n.props && typeof n.props.onRestart === 'function' && 'browserNotice' in n.props) || null;
+}
+
 /* ============================================================
  * 2. 载入 TSX 模块（esbuild 转 CJS + 依赖替换）
  * ============================================================ */
@@ -201,9 +267,9 @@ function loadTsxModule(file, extraStubs) {
       '@ant-design/icons': () => iconsProxy,
       '../../shared/locatorModes': () => require('../shared/locatorModes.js'),
       // 实时校验的两个依赖：
-      //   ../api        —— 组件里只会在「点按钮 / 面板开着轮询」时调它，这里给空桩（调用会走 request 的兜底）
-      //   ./SniffPanel  —— 面板只做展示，桩成占位组件，断言不碰它
-      '../api': () => ({ __esModule: true, default: {} }),
+      //   ../api        —— 记入参的桩（bugC/bugD 的断言全靠它）
+      //   ./SniffPanel  —— 面板只做展示，桩成占位组件并把 props 原样留在树上
+      '../api': () => ({ __esModule: true, default: sniffApi }),
       /**
        * codegen 片段解析器：**用真模块**（纯函数、无依赖），顺便在这里做它的断言。
        * 懒加载避免 loadTsxModule 自己在定义前被调用。
@@ -587,6 +653,170 @@ function mount(initialValue) {
 
   check('codegen：中文描述兜底成 elN（可当变量名）', snippetMod.toIdentifier('登录', 3) === 'el3', snippetMod.toIdentifier('登录', 3));
   check('codegen：英文短语转驼峰', snippetMod.toIdentifier('login button', 1) === 'loginButton', snippetMod.toIdentifier('login button', 1));
+}
+
+/* ============================================================
+ * 12. v0.56 bugC / bugD：浏览器选择 + 连点保护 + 面板任何阶段都能「结束校验」
+ * ============================================================ */
+
+/** 真 SniffPanel（纯展示、无 hooks）：直接当函数调用，断言它渲染出来的按钮/下拉 */
+const panelMod = loadTsxModule(SNIFF_PANEL);
+
+function basePanelProps(patch) {
+  return Object.assign(
+    {
+      phase: 'idle',
+      busy: false,
+      resp: null,
+      error: '',
+      sequential: false,
+      index: 0,
+      total: 0,
+      currentName: 'submitBtn',
+      currentModeLabel: 'CSS 选择器',
+      currentSelector: 'button[type=submit]',
+      skipped: [],
+      url: 'http://127.0.0.1:8080/login',
+      browser: 'auto',
+      browserNotice: '',
+      onClose: () => {},
+      onHighlight: () => {},
+      onReopen: () => {},
+      onStopBrowser: () => {},
+      onNext: () => {},
+      onRepeat: () => {},
+      onSkip: () => {},
+      onStopSeq: () => {},
+      onRestart: () => {},
+      onBrowserChange: () => {}
+    },
+    patch || {}
+  );
+}
+const renderPanel = (patch) => panelMod.default(basePanelProps(patch));
+const panelNodes = (tree) => collect(tree, []);
+const stopButtons = (tree) => panelNodes(tree).filter((n) => compName(n) === 'Button' && textOf(n).trim() === '结束校验');
+const restartButtons = (tree) => panelNodes(tree).filter((n) => compName(n) === 'Button' && textOf(n).trim() === '重新开始');
+const findBrowserSelect = (tree) => panelNodes(tree).find((n) => n.props && n.props['aria-label'] === '校验用哪个浏览器') || null;
+
+{
+  /* 12.1 bugA：任何阶段都有「结束校验」 */
+  const phases = ['idle', 'starting', 'ready', 'ended'];
+  for (const phase of phases) {
+    const tree = renderPanel({ phase, busy: phase === 'starting' });
+    check('bugA：phase=' + phase + ' 时面板里有「结束校验」', stopButtons(tree).length === 1, stopButtons(tree).length);
+  }
+
+  const errTree = renderPanel({ phase: 'idle', error: '没找到浏览器：请先安装 Microsoft Edge' });
+  check('bugA：出错状态下也有「结束校验」（浏览器可能还在后台跑）', stopButtons(errTree).length === 1, stopButtons(errTree).length);
+  check('bugA：出错状态把后端 message 原文照抄出来', textOf(errTree).includes('没找到浏览器：请先安装 Microsoft Edge'), textOf(errTree).slice(0, 120));
+  check('bugA：未启动时「结束校验」是可点的（真点下去会先 sniffStop 再收面板）', stopButtons(errTree)[0].props.disabled !== true, stopButtons(errTree)[0].props.disabled);
+  check('bugA：「结束校验」是 danger 按钮（别和普通操作混在一起）', stopButtons(errTree)[0].props.danger === true, stopButtons(errTree)[0].props.danger);
+
+  check('「重新开始」只在未启动 / 已结束时出现', restartButtons(renderPanel({ phase: 'idle' })).length === 1 && restartButtons(renderPanel({ phase: 'ended' })).length === 1 && restartButtons(renderPanel({ phase: 'ready' })).length === 0 && restartButtons(renderPanel({ phase: 'starting' })).length === 0, [restartButtons(renderPanel({ phase: 'ready' })).length, restartButtons(renderPanel({ phase: 'starting' })).length]);
+  check('启动中不给「重新开始」（避免看起来又点了一次）', restartButtons(renderPanel({ phase: 'starting', busy: true })).length === 0);
+  check('启动中「结束校验」先禁用（正在拉进程，硬关容易留半截会话）', stopButtons(renderPanel({ phase: 'starting', busy: true }))[0].props.disabled === true);
+  check('已就绪时「重新高亮 / 重新打开页面」还在', panelNodes(renderPanel({ phase: 'ready' })).some((n) => compName(n) === 'Button' && textOf(n).trim() === '重新高亮') && panelNodes(renderPanel({ phase: 'ready' })).some((n) => compName(n) === 'Button' && textOf(n).trim() === '重新打开页面'));
+
+  /* 12.2 bugD：等回包时按钮 loading（点了有反馈，也不会被连点） */
+  check('启动中「重新开始」是 loading（点了立刻有反馈）', restartButtons(renderPanel({ phase: 'idle', busy: true }))[0].props.loading === true);
+}
+
+{
+  /* 12.3 bugC：浏览器下拉 */
+  const select = findBrowserSelect(renderPanel({}));
+  check('bugC：面板上有「校验用哪个浏览器」下拉', !!select, panelNodes(renderPanel({})).filter((n) => compName(n) === 'Select').length);
+  check('bugC：下拉默认值 auto（跟随系统）', select && select.props.value === 'auto', select && select.props.value);
+  check('bugC：下拉 3 个选项：跟随系统 / Edge / Chrome', !!select && (select.props.options || []).map((o) => o.value).join(',') === 'auto,edge,chrome', select && select.props.options);
+  check('bugC：选项文案是「跟随系统 / Edge / Chrome」', !!select && (select.props.options || []).map((o) => o.label).join(',') === '跟随系统,Edge,Chrome', select && select.props.options);
+  check('bugC：受控值永远不是空串（空串会吞 placeholder 且等于没选）', !!select && (select.props.options || []).every((o) => !!o.value) && (select.props.value || '') !== '', select && select.props.value);
+
+  let picked = '';
+  const withHandler = renderPanel({ onBrowserChange: (b) => (picked = b) });
+  findBrowserSelect(withHandler).props.onChange('chrome');
+  check('bugC：切换把选择交回调用方（由它写 localStorage）', picked === 'chrome', picked);
+
+  /* 12.4 bugC：回显实际用的浏览器（browser + browserChosen） */
+  const autoTree = renderPanel({ phase: 'ready', resp: { ok: true, running: true, browser: 'chrome', browserChosen: 'auto' } });
+  check('bugC：auto 时回显「Chrome（跟随系统）」', textOf(autoTree).includes('Chrome（跟随系统）'), textOf(autoTree).slice(0, 80));
+  const chromeTree = renderPanel({ phase: 'ready', resp: { ok: true, running: true, browser: 'chrome', browserChosen: 'chrome' } });
+  check('bugC：强制 chrome 时只显示 Chrome（不写跟随系统）', chromeTree && textOf(chromeTree).includes('Chrome') && !textOf(chromeTree).includes('（跟随系统）'), textOf(chromeTree).slice(0, 80));
+  check('bugC：会话结束后不再挂浏览器标签（窗口已经没了，别撒谎）', !textOf(renderPanel({ phase: 'ended', resp: { ok: true, running: false, browser: 'chrome', browserChosen: 'chrome' } })).includes('Chrome'));
+  check('bugC：切换后的提示「已切换，重新点校验生效」会显示', textOf(renderPanel({ phase: 'ready', browserNotice: '已切换，重新点校验生效', resp: { ok: true, running: true, browser: 'chrome', browserChosen: 'auto' } })).includes('已切换，重新点校验生效'));
+}
+
+{
+  /* 12.5 bugC：浏览器选择的存储（key 固定，脏值兜底 auto） */
+  check('bugC：localStorage key 是 test-tool.sniff.browser', editor.SNIFF_BROWSER_KEY === 'test-tool.sniff.browser', editor.SNIFF_BROWSER_KEY);
+  check('bugC：没存过时默认 auto（跟随系统）', editor.readSniffBrowser() === 'auto', editor.readSniffBrowser());
+
+  const store = new Map();
+  global.window = {
+    localStorage: {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => store.set(k, String(v))
+    }
+  };
+  try {
+    editor.writeSniffBrowser('chrome');
+    check('bugC：选择写进 localStorage 的那个 key', store.has('test-tool.sniff.browser') && store.get('test-tool.sniff.browser') === 'chrome', [...store.entries()]);
+    check('bugC：写进去能读回来', editor.readSniffBrowser() === 'chrome', editor.readSniffBrowser());
+
+    editor.writeSniffBrowser('edge');
+    check('bugC：改成 Edge 也能读回来', editor.readSniffBrowser() === 'edge', editor.readSniffBrowser());
+
+    store.set('test-tool.sniff.browser', 'garbage');
+    check('bugC：脏值兜底 auto（不会把浏览器启动参数写坏）', editor.readSniffBrowser() === 'auto', editor.readSniffBrowser());
+  } finally {
+    delete global.window;
+  }
+}
+
+{
+  /* 12.6 bugC + bugD：编辑器真实连点 → 只发一次 start，且带上 browser */
+  hookSlots.length = 0;
+  hookIndex = 0;
+  pendingEffects = [];
+  dirty = false;
+  componentFn = editor.default;
+  const props = {
+    value: VALUE4,
+    onChange: () => {},
+    pageUrl: 'http://127.0.0.1:8080/login'
+  };
+  let tree = runRenderLoop(props);
+  const seqBtn = collect(tree, []).find((n) => compName(n) === 'Button' && textOf(n).includes('按顺序校验'));
+  check('编辑器上有「按顺序校验」按钮', !!seqBtn, collect(tree, []).filter((n) => compName(n) === 'Button').map(textOf));
+
+  sniffCalls.start.length = 0;
+  seqBtn.props.onClick();
+  seqBtn.props.onClick(); // 连点第二下
+  check('bugD：连点只发一次 sniff:start（不会起两个浏览器会话）', sniffCalls.start.length === 1, sniffCalls.start.length);
+  check('bugC：启动入参带 browser=auto', sniffCalls.start[0] && sniffCalls.start[0].browser === 'auto', sniffCalls.start[0]);
+  check('bugC/D：入参仍带 url / 目标（没被新字段冲掉）', sniffCalls.start[0] && sniffCalls.start[0].url === 'http://127.0.0.1:8080/login' && sniffCalls.start[0].name === 'usernameInput' && sniffCalls.start[0].selector === '#username', sniffCalls.start[0]);
+
+  tree = runRenderLoop(props);
+  let panel = findSniffPanel(tree);
+  check('面板被拉起来并进入顺序模式（sequential=true）', !!panel && panel.props.sequential === true, panel && panel.props.sequential);
+  check('面板拿到浏览器受控值（auto）', !!panel && panel.props.browser === 'auto', panel && panel.props.browser);
+
+  panel.props.onBrowserChange('edge');
+  tree = runRenderLoop(props);
+  panel = findSniffPanel(tree);
+  check('切换浏览器后面板受控值变成 edge（并已写入 localStorage 逻辑）', !!panel && panel.props.browser === 'edge', panel && panel.props.browser);
+  check('会话存在时给「已切换，重新点校验生效」', !!panel && panel.props.browserNotice === '已切换，重新点校验生效', panel && panel.props.browserNotice);
+  check('切换浏览器不会额外发 start（下一次启动才生效）', sniffCalls.start.length === 1, sniffCalls.start.length);
+}
+
+{
+  /* 12.7 源码守卫：这三条修复不能被改回去 */
+  const src = stripComments(fs.readFileSync(EDITOR, 'utf8'));
+  check('bugD：startAt 开头有同步闸门（sniffGate）', /if \(sniffGate\.current\) return;/.test(src) && /const sniffGate = useRef/.test(src), 'no gate');
+  check('bugD：按顺序校验按钮 loading + disabled', /onClick=\{startSequence\} loading=\{sniff\.busy\} disabled=\{sniff\.busy\}/.test(src), 'toolbar button not locked');
+  check('bugC：startAt 的 sniffStart 入参带 browser', /request\('sniffStart', \{[\s\S]{0,220}browser: sniffBrowser/.test(src), 'start payload without browser');
+  check('bugC：重新打开页面走 reopenWithBrowser（带上浏览器选择）', /reopenWithBrowser\(request, url, sniffBrowser\)/.test(src), 'reopen without browser');
+  check('bugC：切换选择写 localStorage', /writeSniffBrowser\(b\)/.test(src), 'browser choice not persisted');
+  check('bugA：面板拿到 onBrowserChange（面板里才有这个下拉）', /onBrowserChange=\{changeSniffBrowser\}/.test(src), 'panel missing onBrowserChange');
 }
 
 /* ---------- 汇总 ---------- */
