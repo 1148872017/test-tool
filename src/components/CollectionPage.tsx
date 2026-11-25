@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Table, Input, Button, Tag, Popconfirm, Segmented, Select, Dropdown, Modal, Tooltip } from 'antd';
 import type { InputRef } from 'antd';
 import {
@@ -12,7 +12,6 @@ import {
   GlobalOutlined,
   DownloadOutlined,
   UploadOutlined,
-  InboxOutlined,
   TagOutlined,
   CloudDownloadOutlined,
   BarChartOutlined,
@@ -38,6 +37,12 @@ import { ROLE_OPTIONS } from '../../shared/collections';
 import { asArray, fieldOptions, getOptionsSync, loadOptions, OptionsMap } from '../options';
 import { capabilitiesOf, hasHeaderAction, HeaderAction } from '../features/collections/capabilities';
 import { setAllureHandoff } from '../features/allure/handoff';
+import StateEmpty from './states/StateEmpty';
+import LoadingRows from './states/LoadingRows';
+import { buildHayIndex, matchHay, normalizeKeyword, readHay, recordHay } from '../utils/searchIndex';
+
+/** 每页条数（分页受控 + 页码收敛共用，别再写裸数字 50） */
+const PAGE_SIZE = 50;
 
 type Props = {
   conf: any;
@@ -195,9 +200,12 @@ export default function CollectionPage({
     if (!cap) return '';
     const d = (r && r.data) || {};
     // 例：压测（kind=perf）的 reportDir 是 JMeter 报告，报告分析页解析不了，不挂入口
+    //     Allure 归档现在有 api / ui 两档，两档都能回报告（equals 归一化成数组）
     if (cap.when) {
-      const cur = d[cap.when.field];
-      if (String(cur === undefined || cur === null ? '' : cur) !== cap.when.equals) return '';
+      const raw = d[cap.when.field];
+      const cur = String(raw === undefined || raw === null ? '' : raw);
+      const allow = Array.isArray(cap.when.equals) ? cap.when.equals : [cap.when.equals];
+      if (allow.indexOf(cur) < 0) return '';
     }
     return String(d[cap.field] || '').trim();
   };
@@ -342,8 +350,33 @@ export default function CollectionPage({
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-Hans-CN'));
   }, [all]);
 
+  /**
+   * 搜索索引：**每批数据（loadAll）算一次**，不是每次按键算一次。
+   *
+   * 为什么用 Map<id, hay> 而不是往 record 上挂 `_hay`：
+   *   record 会被 RecordDetail / RecordForm 当 payload / exportData 复用，
+   *   多一个字段就有混进导出文件的风险 —— 索引是派生数据，不该跟着数据走。
+   *   data 段的脱敏仍然走 searchableText（排除密码），这里只负责拼装 + 小写一次。
+   */
+  const hayIndex = useMemo(
+    () =>
+      buildHayIndex(
+        all,
+        (r: any) => String(r && r.id ? r.id : ''),
+        (r: any) => (r ? recordHay(r, searchableText(r.data || {})) : '')
+      ),
+    [all]
+  );
+
+  /**
+   * 关键词走 deferred：输入框立刻响应，列表晚一帧跟上。
+   * 几千条记录时同步过滤会让每次按键掉帧（useDeferredValue 把重活降级成低优先级渲染）。
+   */
+  const deferredKeyword = useDeferredValue(keyword);
+  const kw = normalizeKeyword(deferredKeyword);
+  const searching = keyword !== deferredKeyword;
+
   const filtered = useMemo(() => {
-    const kw = keyword.trim().toLowerCase();
     let rows = all;
     if (favOnly && !noFav) rows = rows.filter((r) => r.favorite);
     if (tagFilter) rows = rows.filter((r) => (r.tags || []).indexOf(tagFilter) >= 0);
@@ -355,15 +388,9 @@ export default function CollectionPage({
       });
     }
     if (kw) {
-      rows = rows.filter((r) => {
-        // 搜索范围：标题 + 标签 + data（**排除密码字段**）
-        // 后端 SQL 已经排除了，但前端还有一层本地过滤，这里也要排除，
-        // 否则搜密码明文照样能命中（JSON.stringify 会把密码拼进去）。
-        const hay = [r.title || '', (r.tags || []).join(','), searchableText(r.data || {})]
-          .join(' ')
-          .toLowerCase();
-        return hay.includes(kw);
-      });
+      // 搜索范围：标题 + 标签 + data（**排除密码字段**，脱敏在 searchableText 里做完）
+      // 匹配只做 indexOf —— 拼装和 toLowerCase 已经在 hayIndex 里一次性做掉了
+      rows = rows.filter((r) => matchHay(readHay(hayIndex, r.id), kw));
     }
     const sorted = rows.slice();
     if (sortKey === 'updated_asc') sorted.sort((a, b) => a.updated_at - b.updated_at);
@@ -371,12 +398,23 @@ export default function CollectionPage({
     else if (sortKey === 'title_desc') sorted.sort((a, b) => String(b.title).localeCompare(String(a.title), 'zh-Hans-CN'));
     else sorted.sort((a, b) => b.updated_at - a.updated_at);
     return sorted;
-  }, [all, keyword, favOnly, envFilter, tagFilter, sortKey, conf, noFav]);
+  }, [all, kw, favOnly, envFilter, tagFilter, sortKey, conf, noFav, hayIndex]);
 
-  // 换集合 / 改筛选 / 改排序 → 回第 1 页
+  /**
+   * 换集合 / 改筛选 / 改排序 → 回第 1 页。
+   *
+   * **依赖里没有 `all`**：保存或删除一条记录后 loadAll() 会换掉 all，
+   * 旧实现把它当筛选条件，于是「在第 2 页改一条 → 保存 → 被踹回第 1 页」。
+   * 数据变少的越界情况由下面单独的收敛效应处理（只夹紧，不归零）。
+   */
   useEffect(() => {
     setPage(1);
-  }, [conf.key, keyword, favOnly, envFilter, tagFilter, sortKey, all]);
+  }, [conf.key, kw, favOnly, envFilter, tagFilter, sortKey]);
+
+  useEffect(() => {
+    const max = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    setPage((p) => (p > max ? max : p));
+  }, [filtered.length]);
 
   const doExport = async () => {
     setBusyIO(true);
@@ -978,15 +1016,22 @@ export default function CollectionPage({
       }
       bar={
         <>
-          <Button
-            type="text"
-            size="small"
-            className="pg-aside-toggle"
-            icon={asideOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
-            title={asideOpen ? '收起标签栏' : '展开标签栏'}
-            onClick={() => setAsideOpen((v) => !v)}
-          />
+          {/* 没有标签时左栅整个不渲染，折叠按钮跟着一起收（留着就是一个点了没反应的摆设） */}
+          {tagList.length ? (
+            <Button
+              type="text"
+              size="small"
+              className="pg-aside-toggle"
+              icon={asideOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
+              title={asideOpen ? '收起标签栏' : '展开标签栏'}
+              onClick={() => setAsideOpen((v) => !v)}
+            />
+          ) : null}
 
+          {/*
+            「全部 / 收藏」只保留工具条这一处（左栅原来还有一份，加上页头计数和状态栏，
+            同屏出现过 4 次「共 N 条」）。条数只在页头 PageShell 的 count 里保留一个。
+          */}
           <button
             type="button"
             className={'pg-chip' + (!favOnly && !tagFilter ? ' active' : '')}
@@ -995,7 +1040,7 @@ export default function CollectionPage({
               setTagFilter('');
             }}
           >
-            全部 <b>{all.length}</b>
+            全部
           </button>
           {!noFav ? (
             <button
@@ -1046,6 +1091,7 @@ export default function CollectionPage({
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
           />
+          {searching ? <span className="pg-searching">筛选中…</span> : null}
           <Select
             size="small"
             className="pg-sort"
@@ -1062,9 +1108,14 @@ export default function CollectionPage({
       }
       status={
         <>
-          <span>共 {all.length} 条</span>
-          {filtered.length !== all.length ? <span>当前 {filtered.length} 条</span> : null}
-          <span className="pg-status-sep">·</span>
+          {/* 总数只在页头（PageShell 的 count）出现一次；这里只在筛选生效时报「当前 N 条」，
+              分隔符跟着一起条件渲染，否则没筛选时状态栏会以「·」开头 */}
+          {filtered.length !== all.length ? (
+            <>
+              <span>当前 {filtered.length} 条</span>
+              <span className="pg-status-sep">·</span>
+            </>
+          ) : null}
           <span>本周新增 {weekCount}</span>
           <span className="pg-status-sep">·</span>
           <span>上次同步 {lastSyncAt ? clockText(lastSyncAt) : '—'}</span>
@@ -1073,8 +1124,9 @@ export default function CollectionPage({
         </>
       }
     >
-      <div className={'collection-body' + (asideOpen ? '' : ' collection-body--folded')}>
-        {asideOpen ? (
+      {/* 左栅只在真有标签时才出现：没标签时让它消失，把 176px 还给表格 */}
+      <div className={'collection-body' + (asideOpen && tagList.length ? '' : ' collection-body--folded')}>
+        {asideOpen && tagList.length ? (
           <aside className="tag-panel collection-aside">
             <div className="tag-panel-head">
               <span>
@@ -1082,51 +1134,22 @@ export default function CollectionPage({
               </span>
               <span className="tag-panel-count">{tagList.length}</span>
             </div>
-            <div
-              className={'tag-item' + (tagFilter === '' && !(favOnly && !noFav) ? ' active' : '')}
-              onClick={() => {
-                setTagFilter('');
-                setFavOnly(false);
-              }}
-            >
-              <span className="tag-dot" />
-              <span className="tag-name">全部</span>
-              <span className="tag-count">{all.length}</span>
-            </div>
-            {!noFav ? (
+            {/* 「全部 / 收藏」已经在工具条上了，这里只列标签本身 */}
+            {tagList.map((t) => (
               <div
-                className={'tag-item' + (favOnly ? ' active' : '')}
+                key={t.name}
+                className={'tag-item' + (tagFilter === t.name ? ' active' : '')}
+                title={t.name}
                 onClick={() => {
-                  setFavOnly(!favOnly);
-                  setTagFilter('');
+                  setTagFilter(tagFilter === t.name ? '' : t.name);
+                  setFavOnly(false);
                 }}
-                title="只看收藏"
               >
-                <span className="tag-dot" style={{ background: '#f5b301' }} />
-                <span className="tag-name">收藏</span>
-                <span className="tag-count">{favoriteCount}</span>
+                <span className="tag-dot" />
+                <span className="tag-name">{t.name}</span>
+                <span className="tag-count">{t.count}</span>
               </div>
-            ) : null}
-            <div className="tag-divider" />
-            {tagList.length ? (
-              tagList.map((t) => (
-                <div
-                  key={t.name}
-                  className={'tag-item' + (tagFilter === t.name ? ' active' : '')}
-                  title={t.name}
-                  onClick={() => {
-                    setTagFilter(tagFilter === t.name ? '' : t.name);
-                    setFavOnly(false);
-                  }}
-                >
-                  <span className="tag-dot" />
-                  <span className="tag-name">{t.name}</span>
-                  <span className="tag-count">{t.count}</span>
-                </div>
-              ))
-            ) : (
-              <div className="tag-empty">暂无标签</div>
-            )}
+            ))}
           </aside>
         ) : null}
 
@@ -1146,46 +1169,39 @@ export default function CollectionPage({
             rowKey="id"
             size="middle"
             tableLayout="fixed"
-            loading={loading}
+            /* 有数据时用遮罩（不闪、不清屏）；没数据时用骨架行，避免「转圈 → 空白 → 行突然出现」 */
+            loading={loading && filtered.length > 0}
             sticky={{ offsetHeader: 0 }}
             showSorterTooltip={false}
             pagination={{
-              pageSize: 50,
-              current: Math.min(page, Math.max(1, Math.ceil(filtered.length / 50))),
+              pageSize: PAGE_SIZE,
+              // 数据变少（删掉最后一页的最后一条）时只是夹紧显示页码，state 由上面的收敛效应收拾
+              current: Math.min(page, Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))),
               onChange: setPage,
               hideOnSinglePage: true,
               showSizeChanger: false,
               size: 'small'
             }}
             locale={{
-              emptyText: (
-                <div className="empty-state">
-                  <div className="empty-icon">
-                    <InboxOutlined />
-                  </div>
-                  <div className="empty-title">
-                    {hasAnyFilter ? '没有匹配的记录' : `还没有${conf.name}记录`}
-                  </div>
-                  <div className="empty-desc">
-                    {hasAnyFilter
-                      ? '换个关键词，或者清掉当前的筛选条件'
-                      : '点下面按钮录入第一条，之后就能一键复制/打开'}
-                  </div>
-                  {/*
-                    空状态必须自带下一步动作（三态组件的设计原则）：
-                      有筛选 → 「清空筛选」
-                      没数据 → 「新增」
-                  */}
-                  {hasAnyFilter ? (
-                    <Button icon={<ReloadOutlined />} onClick={clearAllFilters}>
-                      清空筛选
-                    </Button>
-                  ) : (
-                    <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-                      新增
-                    </Button>
-                  )}
-                </div>
+              // 三态收口：加载 → 骨架行；有筛选 → 无匹配；否则 → 没数据。每种都自带下一步按钮
+              emptyText: loading ? (
+                <LoadingRows rows={6} bordered={false} label={'正在加载' + conf.name} />
+              ) : hasAnyFilter ? (
+                <StateEmpty
+                  size="page"
+                  kind="no-match"
+                  keyword={keyword.trim()}
+                  desc={'「' + conf.name + '」里其实有记录，只是被关键词 / 收藏 / 标签 / 环境筛掉了'}
+                  action={{ label: '清空筛选', onClick: clearAllFilters }}
+                />
+              ) : (
+                <StateEmpty
+                  size="page"
+                  kind="no-data"
+                  object={conf.name + '记录'}
+                  desc="录入第一条之后，就能在这里一键复制 / 打开 / 关联报告"
+                  action={{ label: '新增', onClick: openCreate }}
+                />
               )
             }}
             onRow={(r) => ({

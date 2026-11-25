@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { Table, Input, Button, Tag, Drawer, Segmented, Select, Empty, Tooltip } from 'antd';
 import {
   ReloadOutlined,
@@ -16,6 +16,26 @@ import { toast } from '../msg';
 import { loadCaseIndex } from '../caseIndex';
 import { buildCaseTree, inScope } from '../../shared/caseTree';
 import { methodOf, riskTone } from '../utils';
+import StateEmpty from '../components/states/StateEmpty';
+import StateError from '../components/states/StateError';
+import LoadingRows from '../components/states/LoadingRows';
+import { caseHay, matchHay, normalizeKeyword } from '../utils/searchIndex';
+
+/** 每页条数（分页受控，页码收敛时也用这个数） */
+const PAGE_SIZE = 50;
+
+/**
+ * 一行的搜索索引载体。
+ *
+ * 为什么不把 `_hay` 挂在 item / file 上：
+ *   这两个对象来自 loadCaseIndex 的缓存（已知用例集合、关联软键都读它），
+ *   往里塞派生字段会被别的调用方当成数据。包装对象是一次性的，
+ *   只喂给 Table 的 dataSource，天然进不了任何 payload / 导出。
+ */
+type CaseRow = { item: CaseItem; file: CaseFile; _hay: string };
+
+/** 三态 + 「失败不清屏」的槽位（和 CodeScanPage 的 Slot 同一个模式） */
+type CaseSlot = { data: any; error: string; detail: string; at: number };
 
 type CaseItem = {
   kind: string;
@@ -66,7 +86,14 @@ type Props = {
 };
 
 export default function CasePage({ onOpenApi, openCase, onOpenedCase }: Props) {
-  const [data, setData] = useState<any>(null);
+  /**
+   * 索引结果放在槽位里：data 是「上一次成功的结果」，error 是「这一次没成功」。
+   * 失败时只记错误、**不清 data** —— 一次目录抖动不该把用户正在看的用例列表清空
+   * （CodeScanPage 的「失败不清屏」slot 模式）。
+   */
+  const [slot, setSlot] = useState<CaseSlot>({ data: null, error: '', detail: '', at: 0 });
+  // 立刻解构出来：下面 effect 的依赖数组在渲染期求值，晚声明会撞上 TDZ
+  const data = slot.data;
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
   const [dirFilter, setDirFilter] = useState('');
@@ -86,10 +113,22 @@ export default function CasePage({ onOpenApi, openCase, onOpenedCase }: Props) {
     setLoading(true);
     try {
       const res = await loadCaseIndex(force);
-      setData(res);
-      if (res && res.error) toast(res.error, 'warning');
+      if (res && res.error) {
+        // 目录没配 / 不存在：保留上一次的索引，只压一条错误说明（重新扫描会把缓存清掉）
+        setSlot((prev) => ({ data: prev.data, error: String(res.error), detail: '', at: Date.now() }));
+        toast(res.error, 'warning');
+      } else {
+        setSlot({ data: res, error: '', detail: '', at: Date.now() });
+      }
     } catch (e: any) {
-      toast('扫描失败：' + (e && e.message ? e.message : e), 'error');
+      const msg = e && e.message ? e.message : e;
+      setSlot((prev) => ({
+        data: prev.data,
+        error: '扫描失败：' + msg,
+        detail: e && e.stack ? String(e.stack) : String(msg),
+        at: Date.now()
+      }));
+      toast('扫描失败：' + msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -160,63 +199,65 @@ export default function CasePage({ onOpenApi, openCase, onOpenedCase }: Props) {
     }
   };
 
-  const files: CaseFile[] = data && data.files ? data.files : [];
+  // 必须 memo：写成 `data && data.files ? data.files : []` 时每次渲染都是新数组，
+  // 下面算 _hay 的 useMemo 就会每次按键都重算一遍（等于没优化）
+  const files: CaseFile[] = useMemo(() => (data && data.files ? data.files : []), [data]);
+
+  /**
+   * 平铺 + **扫描时算一次 hay**。
+   *
+   * 这几千条用例的 hay 只在索引换掉时重算（一次 load），按键时只做 indexOf。
+   */
   const flat = useMemo(() => {
-    const out: { item: CaseItem; file: CaseFile }[] = [];
-    for (const f of files) for (const c of f.cases) out.push({ item: c, file: f });
+    const out: CaseRow[] = [];
+    for (const f of files) {
+      for (const c of f.cases) out.push({ item: c, file: f, _hay: caseHay(c, f) });
+    }
     return out;
   }, [files]);
 
   const dirs = useMemo(() => buildCaseTree(files), [files]);
 
+  /**
+   * 搜索关键词走 deferred：输入框的值（keyword）立刻更新，筛选用的值慢一拍。
+   * 大列表里这样输入框不会因为同步过滤而卡顿（React 18 的并发渲染）。
+   */
+  const deferredKeyword = useDeferredValue(keyword);
+  const kw = normalizeKeyword(deferredKeyword);
+  /** 输入框已经变了、筛选还没跟上：给用户一个「正在筛」的即时反馈 */
+  const searching = keyword !== deferredKeyword;
+
   const filtered = useMemo(() => {
-    const kw = keyword.trim().toLowerCase();
-    return flat.filter(({ item, file }) => {
+    return flat.filter(({ item, file, _hay }) => {
       if (!inScope(file, dirFilter, fileFilter)) return false;
       if (kindFilter !== 'all' && item.kind !== kindFilter) return false;
       if (riskFilter === 'smoke' && item.tags.indexOf('冒烟') < 0) return false;
       if (riskFilter === 'core' && !item.corePath) return false;
       if (riskFilter === 'high' && riskTone(item.risk) !== 'red') return false;
-      if (!kw) return true;
-      const hay = [
-        item.title,
-        item.module,
-        item.branch,
-        item.id,
-        file.name,
-        item.covers.join(' '),
-        item.pre.map((x) => x.text).join(' '),
-        item.steps.map((x) => x.text).join(' '),
-        item.expects.map((x) => x.text).join(' '),
-        item.checklist.map((x) => x.text).join(' '),
-        item.notes.map((x) => x.text).join(' '),
-        item.assertions.map((a) => a.dim + ' ' + a.text).join(' '),
-        item.chainMeta.join(' ')
-      ]
-        .join(' ')
-        .toLowerCase();
-      return hay.indexOf(kw) >= 0;
+      return matchHay(_hay, kw);
     });
-  }, [flat, keyword, dirFilter, fileFilter, riskFilter, kindFilter]);
+  }, [flat, kw, dirFilter, fileFilter, riskFilter, kindFilter]);
 
   const columns: any[] = [
     {
       title: '用例',
       dataIndex: 'title',
-      width: '46%',
+      width: '44%',
       render: (_: any, row: any) => {
         const c: CaseItem = row.item;
+        // 一行装不下就靠 hover 补：标题 + 覆盖规则都在 title 里，不再靠换行撑高行
+        const hover = [c.title]
+          .concat(c.covers.length ? ['覆盖规则：' + c.covers.join('、')] : [])
+          .join('\n');
         return (
-          <div className="case-title-cell">
-            <div className="case-title-line">
-              {c.corePath ? (
-                <Tooltip title="核心路径">
-                  <span className="case-core">🛤️</span>
-                </Tooltip>
-              ) : null}
-              <span className="case-title">{c.title}</span>
-            </div>
-            <div className="case-title-tags">
+          <div className="case-title-cell" title={hover}>
+            {c.corePath ? (
+              <Tooltip title="核心路径">
+                <span className="case-core">🛤️</span>
+              </Tooltip>
+            ) : null}
+            <span className="case-title">{c.title}</span>
+            <span className="case-title-tags">
               {c.kind === 'chain' ? <Tag color="purple">{c.id}</Tag> : null}
               {c.risk ? <Tag color={riskTone(c.risk)}>{c.risk}</Tag> : null}
               {c.type ? <Tag>{c.type}</Tag> : null}
@@ -227,7 +268,7 @@ export default function CasePage({ onOpenApi, openCase, onOpenedCase }: Props) {
                 </Tag>
               ))}
               {c.covers.length > 4 ? <span className="case-more">+{c.covers.length - 4}</span> : null}
-            </div>
+            </span>
           </div>
         );
       }
@@ -240,9 +281,9 @@ export default function CasePage({ onOpenApi, openCase, onOpenedCase }: Props) {
         const c: CaseItem = row.item;
         if (c.kind === 'chain') return <span className="muted">回归链路</span>;
         return (
-          <div className="case-module-cell">
-            <div className="case-module">{c.module || '—'}</div>
-            {c.branch ? <div className="case-branch">{c.branch}</div> : null}
+          <div className="case-module-cell" title={[c.module || '—'].concat(c.branch ? [c.branch] : []).join(' / ')}>
+            <span className="case-module">{c.module || '—'}</span>
+            {c.branch ? <span className="case-branch">{c.branch}</span> : null}
           </div>
         );
       }
@@ -250,7 +291,7 @@ export default function CasePage({ onOpenApi, openCase, onOpenedCase }: Props) {
     {
       title: '断言迹',
       dataIndex: 'assertions',
-      width: '20%',
+      width: '18%',
       render: (_: any, row: any) => {
         const c: CaseItem = row.item;
         if (!c.assertions.length) return <span className="muted">—</span>;
@@ -268,14 +309,15 @@ export default function CasePage({ onOpenApi, openCase, onOpenedCase }: Props) {
     {
       title: '文件',
       dataIndex: 'file',
-      width: '12%',
+      width: '16%',
       render: (_: any, row: any) => (
-        <div className="case-file-cell">
-          <div className="case-file-name" title={row.file.relPath}>
-            {row.file.name.replace(/\.md$/i, '')}
-          </div>
-          <div className="case-file-time">{fmtTime(row.file.mtime)}</div>
-        </div>
+        /*
+         * 时间戳不进列表：它是「几乎不变的次要信息」，常显会让每一行都变成两行高
+         * （74px 行高就是这么来的）。改成 hover 看，抽屉里也给了一份完整路径 + 修改时间。
+         */
+        <span className="case-file-name" title={row.file.relPath + '\n修改于 ' + fmtTime(row.file.mtime)}>
+          {String(row.file.name || '').replace(/\.md$/i, '')}
+        </span>
       )
     }
   ];
@@ -304,7 +346,17 @@ export default function CasePage({ onOpenApi, openCase, onOpenedCase }: Props) {
     toast('用例已复制');
   };
 
-  const totalText = data && !data.error ? `${data.totalCases} 条用例 · ${data.totalFiles} 个文件` : '';
+  /** 任何筛选生效中（空状态据此区分「没数据」和「筛不出来」） */
+  const hasAnyFilter = !!(keyword || dirFilter || fileFilter || riskFilter !== 'all' || kindFilter !== 'all');
+
+  /** 空状态里的下一步：清空筛选（数据其实在，别引导用户去重新扫描） */
+  const clearFilters = () => {
+    setKeyword('');
+    setDirFilter('');
+    setFileFilter('');
+    setRiskFilter('all');
+    setKindFilter('all');
+  };
 
   return (
     <div>
@@ -394,7 +446,7 @@ export default function CasePage({ onOpenApi, openCase, onOpenedCase }: Props) {
 
         <div className="page-main">
           <div className="panel">
-            <div className="panel-head">
+            <div className="panel-head panel-head-wrap">
               <Segmented
                 size="small"
                 value={riskFilter}
@@ -426,43 +478,82 @@ export default function CasePage({ onOpenApi, openCase, onOpenedCase }: Props) {
                 ]}
               />
               <span className="spacer" />
-              <span className="muted" style={{ fontSize: 12 }}>
-                {filtered.length} / {data ? data.totalCases : 0} 条{totalText ? '' : ''}
+              {/* 输入框已变、筛选还没跟上时给个即时反馈（useDeferredValue 的代价要可见） */}
+              {searching ? <span className="panel-searching">筛选中…</span> : null}
+              {/* white-space:nowrap：窄窗口下别把「123 / 4567 条」折成两行把工具条撑高 */}
+              <span className="muted panel-count">
+                {filtered.length} / {data ? data.totalCases : 0} 条
               </span>
             </div>
+            {/*
+              失败不清屏：data 还在（上一次成功的结果）就只压一条错误条，
+              告诉用户「下面这堆是上次的」；没有旧结果才走 failed 空状态。
+            */}
+            {slot.error && data ? (
+              <div className="panel-slot-error">
+                <StateError
+                  message={slot.error}
+                  detail={slot.detail || undefined}
+                  staleLabel={slot.at ? '下面还是上次扫描的结果' : ''}
+                  onRetry={() => load(true)}
+                  retryLabel="重新扫描"
+                />
+              </div>
+            ) : null}
             <Table
+              className="case-table"
               dataSource={filtered}
               columns={columns}
               rowKey={(row: any) => row.file.relPath + '#' + row.item.index}
-              size="middle"
+              size="small"
               tableLayout="fixed"
-              loading={loading}
+              /*
+                行高从 74px 降到 38px 量级：
+                  size="small"（单元格上下 8px）+ 四个列都改成单行（标题和标签同一行、模块和分支同一行、
+                  文件名不再挂时间戳）+ scroll.x 给表格一个保底宽度，窄窗口横向滚而不是把列压成两行。
+                触发重扫/失败时只在「已有数据」上盖一层 loading，没数据时用骨架行（不闪、不跳）。
+              */
+              scroll={{ x: 720 }}
+              loading={loading && filtered.length > 0}
               showSorterTooltip={false}
               pagination={{
-                pageSize: 50,
-                current: Math.min(page, Math.max(1, Math.ceil(filtered.length / 50))),
+                pageSize: PAGE_SIZE,
+                current: Math.min(page, Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))),
                 onChange: setPage,
                 hideOnSinglePage: true,
                 showSizeChanger: false,
                 size: 'small'
               }}
               locale={{
-                emptyText: (
-                  <div className="empty-state">
-                    <div className="empty-icon">
-                      <FileTextOutlined />
-                    </div>
-                    <div className="empty-title">
-                      {data && data.error ? data.error : keyword || dirFilter ? '没有匹配的用例' : '目录里还没有用例文件'}
-                    </div>
-                    <div className="empty-desc">
-                      {data && data.error
-                        ? '到「设置」里改成你的用例目录，再点重新扫描'
-                        : keyword || dirFilter
-                        ? '换个关键词，或点左侧「全部」清空筛选'
-                        : '把 markdown 用例放到这个目录下，点右上角「重新扫描」'}
-                    </div>
-                  </div>
+                emptyText: loading ? (
+                  <LoadingRows rows={6} bordered={false} label="正在扫描用例目录" />
+                ) : slot.error ? (
+                  <StateEmpty
+                    size="page"
+                    kind="failed"
+                    object="用例索引"
+                    desc="目录没配、路径写错或没有读权限都可能读不到：到「设置 → 用例目录」改一下，或者先换个目录"
+                    detail={slot.detail || slot.error}
+                    action={{ label: '重新扫描', onClick: () => load(true) }}
+                    secondary={{ label: '打开目录', onClick: openDir }}
+                  />
+                ) : hasAnyFilter ? (
+                  <StateEmpty
+                    size="page"
+                    kind="no-match"
+                    keyword={keyword.trim()}
+                    desc="数据还在，只是被关键词 / 目录 / 风险 / 格式筛掉了"
+                    action={{ label: '清空筛选', onClick: clearFilters }}
+                  />
+                ) : (
+                  <StateEmpty
+                    size="page"
+                    kind="no-data"
+                    object="用例文件"
+                    desc="把 markdown 用例放到这个目录下，点「重新扫描」就能建索引（只读，不写回任何文件）"
+                    action={{ label: '重新扫描', onClick: () => load(true) }}
+                    secondary={{ label: '打开目录', onClick: openDir }}
+                  />
                 )
               }}
               onRow={(row: any) => ({
@@ -518,7 +609,9 @@ export default function CasePage({ onOpenApi, openCase, onOpenedCase }: Props) {
               <div>
                 <span className="muted">文件</span>
                 <a onClick={() => openFile(detail.file.fullPath)}>{detail.file.relPath}</a>
-                <span className="muted"> · 第 {detail.item.line} 行</span>
+                <span className="muted">
+                  {' · 第 ' + detail.item.line + ' 行 · 修改于 ' + fmtTime(detail.file.mtime)}
+                </span>
               </div>
               {detail.item.covers.length ? (
                 <div>

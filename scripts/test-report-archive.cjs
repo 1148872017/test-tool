@@ -238,6 +238,17 @@ function stripComments(src) {
   check('第二条记录的环境按新传的存（staging）', dupRecord.data.env === 'staging', dupRecord.data.env);
 
   /* ---------------------------------------------------------------- *
+   * 3.5 账本口径（v0.50.x）：kind 不再写死 api，可记成 UI 测试
+   *     不传 kind = 老行为（api）；传 ui 存 ui；乱传回落 api
+   * ---------------------------------------------------------------- */
+  const a3 = await call('allure:archive', { dir: passDir, name: 'UI 冒烟-1125', kind: 'ui' });
+  check('归档可以记成 UI 测试（kind 不再写死 api）', !!(a3 && a3.ok) && a3.kind === 'ui', a3 && a3.kind);
+  const uiRec = (await readRuns()).find((r) => r.id === (a3 && a3.id)) || { data: {} };
+  check('落库的 kind 是 ui', uiRec.data.kind === 'ui', uiRec.data.kind);
+  const a4 = await call('allure:archive', { dir: passDir, name: '乱传类型-1125', kind: 'nonsense' });
+  check('不认识的 kind 回落到 api（不写脏值）', !!(a4 && a4.ok) && a4.kind === 'api', a4 && a4.kind);
+
+  /* ---------------------------------------------------------------- *
    * 4. 错误：缺目录 / 目录不存在 / 不是 allure 目录 / 越界
    * ---------------------------------------------------------------- */
   const runsBeforeErr = (await readRuns()).length;
@@ -284,7 +295,17 @@ function stripComments(src) {
   const runsConf = COLLECTIONS.find((c) => c.key === 'runs');
   const linked = runsConf && runsConf.capabilities && runsConf.capabilities.linkedReport;
   check('runs 配了 capabilities.linkedReport → reportDir', !!linked && linked.field === 'reportDir', linked);
-  check('关联报告只在接口测试（kind=api）上给入口（压测目录报告分析解析不了）', !!linked && !!linked.when && linked.when.field === 'kind' && linked.when.equals === 'api', linked && linked.when);
+  // equals 归一化成数组（v0.50.x）：Allure 归档现在有 api / ui 两档，两档都要能回报告；
+  // 压测（perf）的 reportDir 指向 JMeter 报告，报告分析页解析不了，必须排除
+  const whenKinds =
+    linked && linked.when && Array.isArray(linked.when.equals)
+      ? linked.when.equals
+      : [linked && linked.when ? linked.when.equals : ''];
+  check(
+    '关联报告在 api / ui 上给入口、压测不给（目录里是 JMeter 报告，解析不了）',
+    !!linked && !!linked.when && linked.when.field === 'kind' && whenKinds.indexOf('api') >= 0 && whenKinds.indexOf('ui') >= 0 && whenKinds.indexOf('perf') < 0,
+    linked && linked.when
+  );
   const others = COLLECTIONS.filter((c) => c.key !== 'runs');
   check('其余集合都没有 linkedReport（列表不受影响）', others.every((c) => !(c.capabilities && c.capabilities.linkedReport)), others.map((c) => c.key));
   check('reportDir 字段不再限定只给压测（api 记录也要能看）', (() => {

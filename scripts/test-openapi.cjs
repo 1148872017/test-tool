@@ -474,6 +474,11 @@ function baseDoc() {
   await new Promise((r) => setTimeout(r, 2500));
   const call = (channel, payload) => handlers[channel]({}, payload);
 
+  // apis:sync 现在对直传的 file 做白名单校验（v0.51.0 补的路径守卫）。
+  // 生产里这一步由 dialog 完成并 rememberPicked；测试直接塞路径，
+  // 所以这里等价地登记一次「用户选过这个目录」，否则会回 OUTSIDE_ROOT。
+  require(path.join(proj, 'electron', 'shared-helpers.js')).rememberPicked(fileDir);
+
   check('apis:sync IPC 已注册', typeof handlers['apis:sync'] === 'function', Object.keys(handlers).filter((k) => k.indexOf('apis:') === 0));
 
   const synced = await call('apis:sync', { file: goodFile });

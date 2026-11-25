@@ -8,6 +8,7 @@
  */
 const caseIndex = require('../cases');
 const openapifile = require('../openapifile');
+const { acceptScanRoot } = require('../shared-helpers');
 
 function register(deps) {
   const { handle, dialog, shell, getWindow, getSettings, saveSettings, assertUnlocked, assertPathIn, rememberPicked } = deps;
@@ -17,6 +18,9 @@ function register(deps) {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.casesDir;
+    // 扫描根守卫 + 记进会话白名单（v0.50.0 的 P0 修复，见 ipc-knowledge.js kb:scan）
+    const badSeed = acceptScanRoot(dir);
+    if (badSeed) return badSeed;
     return caseIndex.scanCases(dir, {});
   });
 
@@ -74,6 +78,12 @@ function register(deps) {
   /** 解析 OpenAPI 文件，返回接口列表（不写库） */
   handle('openapi:parseFile', async (e, { file } = {}) => {
     assertUnlocked();
+    /**
+     * 入参守卫（v0.50.0）：不校验就能让主进程读任意文件（内容会回给界面）。
+     * 只认白名单目录内的文件 —— openapi:pickFile 选过的文件已在白名单里。
+     */
+    const bad = assertPathIn(String(file || ''));
+    if (bad) return bad;
     return openapifile.parseFile(String(file || ''));
   });
 }

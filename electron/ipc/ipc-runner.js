@@ -20,6 +20,7 @@ const runner = require('../runner');
 const projects = require('../projects');
 const { RUNNERS, listRunners } = require('../../shared/runners');
 const codelab = require('../../shared/codelab');
+const { acceptScanRoot } = require('../shared-helpers');
 
 /**
  * 正在跑的单文件调试任务：runId → { stepId }
@@ -34,7 +35,7 @@ const planRuns = new Map();
 let planSeq = 0;
 
 function register(deps) {
-  const { handle, dialog, shell, app, fs, path, getWindow, getSettings, assertUnlocked, rememberPicked } = deps;
+  const { handle, dialog, shell, app, fs, path, getWindow, getSettings, assertUnlocked, assertPathIn, rememberPicked } = deps;
 
   /**
    * 探测单文件调试需要的运行时。
@@ -301,6 +302,9 @@ function register(deps) {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.projectDir || '';
+    // 扫描根守卫 + 记进会话白名单（v0.50.0 的 P0 修复，见 ipc-knowledge.js kb:scan）
+    const badSeed = acceptScanRoot(dir);
+    if (badSeed) return badSeed;
     return projects.scanProjects(dir);
   });
 
@@ -309,6 +313,13 @@ function register(deps) {
     assertUnlocked();
     const d = String(dir || '').trim();
     if (!d) return { ok: false, classes: [], message: '缺少项目目录' };
+    /**
+     * 入参守卫（v0.50.0）：dir 是渲染进程给的路径，要读目录结构。
+     * 正常流程不会踩到：下拉里的项目来自 projects:scan（已进白名单）
+     * 或 projects:pickDir（选过即记）。越界回 OUTSIDE_ROOT，并保住 classes 字段形状。
+     */
+    const bad = assertPathIn(d);
+    if (bad) return Object.assign({ classes: [] }, bad);
     return { ok: true, classes: projects.listTestClasses(d) };
   });
 

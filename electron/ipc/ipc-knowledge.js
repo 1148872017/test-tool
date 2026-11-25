@@ -8,6 +8,7 @@
  */
 const knowledge = require('../knowledge');
 const notesIndex = require('../notes');
+const { acceptScanRoot } = require('../shared-helpers');
 
 function register(deps) {
   const {
@@ -29,6 +30,14 @@ function register(deps) {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.kbDir;
+    /**
+     * 扫描根守卫 + 记进会话白名单（v0.50.0 的 P0 修复）：
+     * 这一步原来在 ipc-guard 的包装层无条件做（root 不校验），
+     * 传一次 root='C:\' 就能把全盘登记成本会话可信根。
+     * 现在只有「存在、是目录、不是盘符根/系统目录」的根才会被记住。
+     */
+    const badSeed = acceptScanRoot(dir);
+    if (badSeed) return badSeed;
     return knowledge.scanKnowledge(dir, {});
   });
 
@@ -76,6 +85,9 @@ function register(deps) {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.notesDir;
+    // 扫描根守卫 + 记进会话白名单（v0.50.0，同 kb:scan）
+    const badSeed = acceptScanRoot(dir);
+    if (badSeed) return badSeed;
     return notesIndex.scanNotes(dir);
   });
 
@@ -151,7 +163,20 @@ function register(deps) {
   handle('notes:import', async (e, { files, onConflict } = {}) => {
     assertUnlocked();
     const settings = getSettings();
-    const res = notesIndex.importNotes(files, settings.notesDir, onConflict);
+    /**
+     * 入参守卫（v0.50.0）：这条通道会 **把用户的文件 rename 进来**，
+     * 不校验等于「渲染进程说搬哪个就搬哪个」—— 是全仓最危险的一处。
+     * 逐个校验，有一个越界就整单拒绝（和 allure:flaky 同一套口径：
+     * 不静默跳过，否则用户会以为少导了几篇，还找不到原因）。
+     *
+     * 正常流程不会踩到：notes:pickImport 选完文件就把它们记进会话白名单了。
+     */
+    const list = Array.isArray(files) ? files : [];
+    for (const f of list) {
+      const badFile = assertPathIn(String(f));
+      if (badFile) return badFile;
+    }
+    const res = notesIndex.importNotes(list, settings.notesDir, onConflict);
     return Object.assign({ ok: true, dir: settings.notesDir }, res);
   });
 }

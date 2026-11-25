@@ -30,6 +30,8 @@ function publicSettings(settings) {
     autoLockMinutes: settings.autoLockMinutes,
     clipboardClearSeconds: settings.clipboardClearSeconds,
     openCopyPassword: settings.openCopyPassword !== false,
+    // 备份保留份数：每日备份与 jmx 写回共用（默认 10，范围 1..100）
+    backupKeep: settings.backupKeep === undefined ? 10 : settings.backupKeep,
     closeAction: settings.closeAction === 'quit' ? 'quit' : 'tray',
     workspaceDir: settings.workspaceDir || '',
     casesDir: settings.casesDir || '',
@@ -221,7 +223,8 @@ function quoteForDisplay(p) {
  *   1. 当前 settings 里的目录（工作区 / 用例 / jmx / 报告 / allure / 知识库 /
  *      笔记 / 代码项目）—— 用户自己配的，认定可信；
  *   2. 本次会话里 dialog 明确选过的路径（pickDir / pickFile 的返回值）；
- *   3. 本次会话里显式扫描过的根目录（*:scan 的 root 参数，见 ipc-guard.js）。
+ *   3. 本次会话里显式扫描过的**合法**根目录（*:scan 的 root 参数，
+ *      见下面的 acceptScanRoot —— v0.50.0 起必须先过盘符根/系统目录校验）。
  *
  * 2 和 3 是**会话内记忆**：关掉程序就清空，不落盘。
  * ========================================================================== */
@@ -284,15 +287,169 @@ function rememberPicked(p) {
   return addSessionRoot(s);
 }
 
+/* ==========================================================================
+ * 扫描种子校验（v0.50.0 的 P0 修复）
+ *
+ * 为什么要有这一段（别再改回去）：
+ *   v0.43.0 把「把 *:scan 的 root 记成本会话可信根」放在了 ipc-guard.js 的
+ *   包装层 —— 只要通道名以 :scan 结尾就无条件记，**root 一个字节都没校验**。
+ *   于是渲染进程传一次 root='C:\\'，整个盘就成了本会话的可信根，
+ *   后面所有 assertPathIn 全部形同虚设（读 hosts、打开任意 exe 都放行）。
+ *
+ * 现在的分工：
+ *   · ipc-guard.js：只做解锁校验，**不再往会话白名单里塞任何东西**；
+ *   · 每个 *:scan handler：先 acceptScanRoot(root) ——
+ *       盘符根 / 系统目录 → 直接回 OUTSIDE_ROOT（连扫描一起拒绝）；
+ *       其余路径 → 只有「存在且真的是目录」才记进会话白名单。
+ *
+ * 零配置底线（接续指南 §3.1 #6）没变：用户选**任意业务目录**都能扫、都能记，
+ * 只挡「盘符根 + 系统目录」这两类不该当种子的路径。
+ * ========================================================================== */
+
+/** `C:` / `C:\` / `D:/` 这类「整盘」写法（`C:` 后面不带分隔符也算） */
+const DRIVE_ROOT_RE = /^[A-Za-z]:(?:[\\/]{0,2})$/;
+
+/** `\\server\share` / `\\server\share\`：UNC 的共享根同样是「整盘」 */
+const UNC_ROOT_RE = /^[\\/]{2}[^\\/]+[\\/][^\\/]+[\\/]?$/;
+
 /**
- * 记住显式扫描过的根目录。
+ * 这个路径是不是「根」——盘符根 / UNC 共享根 / 文件系统根（POSIX 的 `/`）。
+ *
+ * 为什么要先做字符串判断再 path.resolve：
+ *   `path.resolve('C:')` 在 Windows 上会补成「当前盘的工作目录」，
+ *   结果看起来像个普通目录，反而绕过了判断。字符串形态先挡一道。
+ *
+ * @param {string} p
+ * @returns {boolean}
+ */
+function isDriveRoot(p) {
+  const s = String(p == null ? '' : p).trim();
+  if (!s) return false;
+  if (DRIVE_ROOT_RE.test(s) || UNC_ROOT_RE.test(s)) return true;
+  try {
+    const abs = path.resolve(s);
+    return path.parse(abs).root === abs;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * 永远不该当扫描种子的系统目录（Windows 取环境变量，取不到按盘符兜底）。
+ *
+ * 只列「系统的」：Windows 安装目录、Program Files 两族、ProgramData。
+ * **不列用户目录**（桌面 / 文档 / AppData\Local\Temp）——那是用户放业务数据的
+ * 地方，列进去就破了「零配置」底线（测试也都在 tmpdir 里跑）。
+ *
+ * @returns {string[]}
+ */
+function systemDirs() {
+  const out = [];
+  const push = (p) => {
+    const s = String(p == null ? '' : p).trim();
+    if (s) out.push(s);
+  };
+  if (process.platform === 'win32') {
+    push(process.env.SystemRoot);
+    push(process.env.windir);
+    push(process.env.ProgramFiles);
+    push(process.env['ProgramFiles(x86)']);
+    push(process.env.ProgramW6432);
+    push(process.env.ProgramData);
+    // 环境变量可能被清掉（精简启动 / 测试），按系统盘补一份兜底
+    const drive = String(process.env.SystemDrive || 'C:')
+      .trim()
+      .replace(/[\\/]+$/, '');
+    push(drive + '\\Windows');
+    push(drive + '\\Program Files');
+    push(drive + '\\Program Files (x86)');
+    push(drive + '\\ProgramData');
+  } else {
+    for (const d of ['/etc', '/usr', '/bin', '/sbin', '/boot', '/dev', '/proc', '/sys', '/System', '/Library']) push(d);
+  }
+  return out;
+}
+
+/**
+ * 这个路径是不是「绝不能当扫描种子」的路径（盘符根 / 系统目录及其子目录）。
+ *
+ * 走 realpath：`mklink /J win C:\Windows` 之后扫 `win\System32` 字符串上不像
+ * 系统目录，归一化之后才露出来（和 isPathAllowed 同一套防绕过思路）。
+ *
+ * @param {string} p
+ * @returns {boolean}
+ */
+function isForbiddenScanRoot(p) {
+  const s = String(p == null ? '' : p).trim();
+  if (!s) return false;
+  if (isDriveRoot(s)) return true;
+  const real = realOrResolve(s);
+  if (!real) return false;
+  for (const sys of systemDirs()) {
+    const nr = realOrResolve(sys);
+    if (!nr) continue;
+    if (isInsideRoot(nr, real)) return true;
+  }
+  return false;
+}
+
+/**
+ * *:scan 的 root 入参守卫：盘符根 / 系统目录一律拒绝。
+ *
+ * @param {string} root
+ * @returns {null | {ok: false, code: string, message: string}} null = 通过
+ */
+function assertScanRoot(root) {
+  const s = String(root == null ? '' : root).trim();
+  if (!s) return null; // 没给 root = 用设置里的目录，不是渲染进程塞的值
+  if (!isForbiddenScanRoot(s)) return null;
+  return {
+    ok: false,
+    code: 'OUTSIDE_ROOT',
+    message: '盘符根和系统目录不能当扫描根，已拒绝：' + s
+  };
+}
+
+/**
+ * 记住显式扫描过的根目录（带校验）。
+ *
  * 为什么允许这种「间接信任」：界面上的「打开文件 / 定位」按钮拿到的路径
  * 来自扫描结果，扫描根本身就是用户给的。不记的话「选了目录 → 打开文件」
  * 这条正常流程会被守卫拦掉。
+ *
+ * v0.50.0：只有「存在 + 真的是目录 + 不是盘符根/系统目录」才记。
+ * 目录不存在时静默跳过 —— 扫描函数自己会回「目录不存在」，
+ * 这里不抢它的错误，也不把一个不存在的路径变成可信根。
+ *
  * @param {string} p
+ * @returns {string} 真正记进去的路径（没记则空串）
  */
 function rememberRoot(p) {
-  return addSessionRoot(p);
+  const s = String(p == null ? '' : p).trim();
+  if (!s || isForbiddenScanRoot(s)) return '';
+  try {
+    if (!fs.statSync(s).isDirectory()) return '';
+  } catch (e) {
+    return '';
+  }
+  return addSessionRoot(s);
+}
+
+/**
+ * 扫描种子的统一入口：**校验 + 记住**，一行搞定。
+ *
+ * 为什么合成一个函数：分成两步（先 assert 再 remember）就有两次漏写的机会 ——
+ * 漏 assert 是安全洞，漏 remember 是「选了目录但打不开文件」的功能故障。
+ * 各 *:scan handler 只调这一个。
+ *
+ * @param {string} root
+ * @returns {null | {ok: false, code: string, message: string}} null = 通过（合法根已记住）
+ */
+function acceptScanRoot(root) {
+  const bad = assertScanRoot(root);
+  if (bad) return bad;
+  rememberRoot(root);
+  return null;
 }
 
 /** 清空会话内记忆（测试用；正常运行只在进程退出时随进程消失） */
@@ -399,6 +556,11 @@ module.exports = {
   DIR_SETTING_KEYS,
   rememberPicked,
   rememberRoot,
+  isDriveRoot,
+  systemDirs,
+  isForbiddenScanRoot,
+  assertScanRoot,
+  acceptScanRoot,
   resetSessionRoots,
   sessionRootsSnapshot,
   settingsRoots,

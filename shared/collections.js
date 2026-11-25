@@ -74,9 +74,22 @@ const BODY_TYPE_OPTIONS = [
   { value: 'msgpack', label: 'msgpack', color: 'default' }
 ];
 
-/** 测试执行：一次跑批 = 一条记录（接口测试 / 压测） */
+/**
+ * 测试执行：一次跑批 = 一条记录（接口测试 / UI 测试 / 压测）。
+ *
+ * ui 是 v0.50.x 补的第三档（P1-2「账本口径」）：
+ *   以前 Allure 报告归档一律硬编码成 api，UI 自动化（Playwright / Selenium）跑出来的
+ *   报告也记成「接口测试」，账本口径就是错的。
+ *
+ * 加一个值要同步对齐**三处**（这次一次性做了）：
+ *   1. 本表（下拉 + 列表筛选都读它，filterField = 'kind'）；
+ *   2. 字段裁剪：passCount / failCount 用 onlyFor.alsoKinds 让 api、ui 共用一套；
+ *   3. 关联报告筛选：capabilities.linkedReport.when 里 api / ui 都能回报告分析页
+ *      （只有压测 perf 的 reportDir 指向 jmeter 报告，解析不了）。
+ */
 const RUN_KIND_OPTIONS = [
   { value: 'api', label: '接口测试', color: 'blue' },
+  { value: 'ui', label: 'UI 测试', color: 'cyan' },
   { value: 'perf', label: '压测', color: 'purple' }
 ];
 
@@ -235,15 +248,16 @@ const COLLECTIONS = [
       headerActions: ['importReport', 'importData', 'importTemplate', 'exportData', 'refresh'],
       titleWidthPct: 50,
       /**
-       * 「关联报告」锚点（v0.46.1）。
+       * 「关联报告」锚点（v0.46.1，v0.50.x 扩到 api + ui）。
        *
        * 有值 = 这条执行能在「报告分析」页重新打开那份报告：
-       *   Allure 报告 → 归档时写 reportDir（allure:archive）
+       *   Allure 报告 → 归档时写 reportDir（allure:archive），kind 是 api 或 ui
        *   jtl 压测报告 → 导入时也写 reportDir，但目录里是 JMeter 的报告，
-       *                  报告分析页解析不了 → 用 when 限定只给接口测试挂入口
+       *                  报告分析页解析不了 → 用 when 把 perf 排除掉
        * 存的是**字段名**而不是布尔值：页面拿它去 data 里取值，不认识集合 key。
+       * equals 支持数组（多值），见 src/features/collections/capabilities.ts。
        */
-      linkedReport: { field: 'reportDir', when: { field: 'kind', equals: 'api' } }
+      linkedReport: { field: 'reportDir', when: { field: 'kind', equals: ['api', 'ui'] } }
     },
     fields: [
       { key: 'name', label: '标题', type: 'text', required: true, placeholder: '如：下单链路 10 并发 1 分钟' },
@@ -254,7 +268,7 @@ const COLLECTIONS = [
         options: RUN_KIND_OPTIONS,
         default: 'api',
         // 选哪一类，下面的字段就跟哪一类走
-        hint: '接口测试只填通过/失败数；压测填并发、时长和耗时'
+        hint: '接口测试 / UI 测试只填通过、失败数；压测填并发、时长和耗时'
       },
       { key: 'result', label: '结果', type: 'select', options: RUN_RESULT_OPTIONS, default: 'unknown' },
       { key: 'ranAt', label: '执行时间', type: 'datetime' },
@@ -262,9 +276,9 @@ const COLLECTIONS = [
       { key: 'env', label: '环境', type: 'select', options: ENV_OPTIONS, optionsKey: 'env', default: 'test' },
       { key: 'scene', label: '场景 / 脚本', type: 'scene', placeholder: 'Apifox 测试场景名，或从下拉选已导入的 jmx' },
       { key: 'report', label: '报告链接', type: 'url', placeholder: 'Apifox 跑完的报告地址（选填）' },
-      // ---- 接口测试 ----
-      { key: 'passCount', label: '通过', type: 'number', onlyFor: { kind: 'api' }, hideInDetail: true, placeholder: '通过多少条' },
-      { key: 'failCount', label: '失败', type: 'number', onlyFor: { kind: 'api' }, hideInDetail: true, placeholder: '挂了哪些，写结论里' },
+      // ---- 接口测试 / UI 测试（同一套统计口径：都看通过条数和失败条数）----
+      { key: 'passCount', label: '通过', type: 'number', onlyFor: { kind: 'api', alsoKinds: ['ui'] }, hideInDetail: true, placeholder: '通过多少条' },
+      { key: 'failCount', label: '失败', type: 'number', onlyFor: { kind: 'api', alsoKinds: ['ui'] }, hideInDetail: true, placeholder: '挂了哪些，写结论里' },
       // ---- 压测 ----
       { key: 'concurrency', label: '并发', type: 'number', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '虚拟用户数' },
       { key: 'duration', label: '时长', type: 'text', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '如：60s / 5m' },

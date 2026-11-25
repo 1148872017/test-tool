@@ -187,13 +187,31 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
   check('编辑后未知字段仍在', rec2.data.legacyExtra === '要保住的字段' && rec2.data.username === 'old_admin', rec2.data);
   check('编辑后新值生效', rec2.title === '老站A-改', rec2.title);
 
-  // 迁移前备份不会被每日备份的「只留 10 份」清掉
+  // 迁移前备份不会被每日备份的轮转清掉
   const beforeName = path.basename(info.migration.backupFile);
   for (let i = 0; i < 12; i++) store.backup();
   const stillThere = fs.existsSync(path.join(tmp, 'backups', beforeName));
   check('迁移前备份不会被轮转删除', stillThere, beforeName);
   const daily = fs.readdirSync(path.join(tmp, 'backups')).filter((f) => /^data-\d{4}-/.test(f));
-  check('每日备份只保留 10 份', daily.length <= 10, daily.length);
+  check('每日备份只保留 10 份（默认值）', daily.length <= 10, daily.length);
+
+  /**
+   * v0.52.1：保留份数改成设置项 backupKeep，每日备份与 jmx 写回共用。
+   * 这里验数据层一侧真的跟着设置走（改 3 → 只剩 3 份；脏值 → 回默认 10）。
+   */
+  check('store 暴露 setBackupKeep / getBackupKeep', typeof store.setBackupKeep === 'function' && typeof store.getBackupKeep === 'function');
+  check('backupKeep 默认 10', store.getBackupKeep() === 10, store.getBackupKeep());
+  store.setBackupKeep(3);
+  check('设成 3 后 getBackupKeep 返回 3', store.getBackupKeep() === 3, store.getBackupKeep());
+  for (let i = 0; i < 8; i++) store.backup();
+  const daily3 = fs.readdirSync(path.join(tmp, 'backups')).filter((f) => /^data-\d{4}-/.test(f));
+  check('设成 3 后每日备份只留 3 份', daily3.length <= 3, daily3.length);
+  check('设成 3 也不会删掉迁移前备份', fs.existsSync(path.join(tmp, 'backups', beforeName)));
+  check('脏值 0 回落到默认 10（绝不能变成一份都不留）', store.setBackupKeep(0) === 10, store.getBackupKeep());
+  check('脏值 "abc" 回落到默认 10', store.setBackupKeep('abc') === 10, store.getBackupKeep());
+  check('超过上限 100 被夹到 100', store.setBackupKeep(9999) === 100, store.getBackupKeep());
+  check('小数被取整（7.9 → 7）', store.setBackupKeep(7.9) === 7, store.getBackupKeep());
+  store.setBackupKeep(10);
 
   // 全新库直接就是当前版本，不跑迁移
   const freshDir = path.join(tmp, 'fresh');

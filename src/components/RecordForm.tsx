@@ -83,6 +83,32 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
   const [favorite, setFavorite] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  /**
+   * 本机解不开的密码字段（P0-1）。
+   *
+   * store.hydrate 会把「本机解不开」的 secret 字段从 data 里移除，
+   * 并在记录上标 __secretUnreadable（只是内存标记，不落库）。
+   * 这里据此：
+   *   - 输入框 placeholder 写明「留空保持不变」
+   *   - 提交时**不带这个键**（带了空串就等于告诉后端「清空」）
+   */
+  const unreadable = useMemo<string[]>(() => {
+    const raw = record && (record as any).__secretUnreadable;
+    return Array.isArray(raw) ? raw.map((x: any) => String(x)) : [];
+  }, [record]);
+
+  /** 顶部字段（accounts）有没有解不开的密码：路径形如 accounts[].password */
+  const isSecretUnreadable = (key: string) => unreadable.some((p) => p === key || p.indexOf(key + '[]') === 0);
+
+  /**
+   * 打开表单时 accounts 的原始形态（数组 / JSON 字符串）。
+   *
+   * 为什么要记：迁移 v5 写进去的是**数组**，前端 AccountsEditor 只认 JSON 字符串。
+   * 不归一化的话 String(数组) = "[object Object]" → 表单显示「还没有账号」，
+   * 一保存就把整组账号（连同密码）抹成空。
+   */
+  const accountsWasArray = useRef<Record<string, boolean>>({});
+
   /** 按字段分组 warnings，供标签旁的 ? 使用 */
   const warnByField = useMemo(() => {
     const map: Record<string, { field: string; text: string }[]> = {};
@@ -224,6 +250,11 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
       const raw = source[f.key];
       if (f.type === 'multiselect') {
         init[f.key] = raw !== undefined ? asArray(raw) : asArray(f.default);
+      } else if (f.type === 'accounts') {
+        // 数组形态（迁移 v5 的老记录）先转成 AccountsEditor 认的 JSON 字符串
+        accountsWasArray.current[f.key] = Array.isArray(raw);
+        if (Array.isArray(raw)) init[f.key] = JSON.stringify(raw);
+        else init[f.key] = raw !== undefined ? raw : f.default || '';
       } else {
         init[f.key] = raw !== undefined ? raw : f.default || '';
       }
@@ -296,11 +327,29 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
       for (const f of conf.fields) {
         if (f.type === 'accounts' && payload[f.key]) {
           payload[f.key] = dropEmptyAccounts(String(payload[f.key]));
+          // 原来是数组形态（迁移来的老记录）就还写回数组，别把存储形态改掉
+          if (accountsWasArray.current[f.key] && payload[f.key]) {
+            try {
+              payload[f.key] = JSON.parse(payload[f.key]);
+            } catch (e) {
+              /* 解析失败就按字符串存，至少不丢数据 */
+            }
+          }
         }
         // 页面元素：丢掉空行 + 序列化成 JSON
         if (f.type === 'elements' && payload[f.key]) {
           payload[f.key] = dropEmptyElements(payload[f.key]);
         }
+      }
+      /**
+       * 本机解不开的顶层密码字段：留空 = 保持不变（P0-1）。
+       * 后端契约：传 undefined / 不带这个键 = 沿用磁盘原密文；
+       * 传 '' = 只有解不开时才保留，所以**不能**把空串发出去。
+       */
+      for (const path of unreadable) {
+        if (path.indexOf('[].') >= 0) continue; // 嵌套路径由 store 按账号逐条合并
+        const cur = payload[path];
+        if (cur === undefined || cur === null || String(cur) === '') delete payload[path];
       }
       // 「可选择 + 可新建」：用户输入完直接点保存、没触发失焦时，这里补一次
       for (const f of conf.fields) {
@@ -430,7 +479,14 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
         );
       }
       case 'secret':
-        return <Input.Password value={v} onChange={(e) => set(f.key, e.target.value)} placeholder={f.placeholder} />;
+        return (
+          <Input.Password
+            value={v}
+            onChange={(e) => set(f.key, e.target.value)}
+            // 本机解不开时明确告诉用户「留空 = 保持不变」，别让人以为要重填
+            placeholder={isSecretUnreadable(f.key) ? '本机无法解密，留空保持不变' : f.placeholder}
+          />
+        );
       case 'accounts':
         return <AccountsEditor value={v} onChange={(next) => set(f.key, next)} />;
       case 'elements':
@@ -527,6 +583,13 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
               ) : null}
             </div>
             {renderField(f)}
+            {isSecretUnreadable(f.key) ? (
+              <div className="form-hint" style={{ color: '#d48806' }}>
+                {f.type === 'accounts'
+                  ? '有账号的密码在本机无法解密（跨机器导入过数据 / 换过 Windows 账户）。密码框留空 = 保持不变，只有输入新密码才会覆盖。'
+                  : '本机无法解密这段密码（跨机器导入过数据 / 换过 Windows 账户）。留空 = 保持不变，只有输入新密码才会覆盖。'}
+              </div>
+            ) : null}
             {f.hint ? <div className="form-hint muted">{f.hint}</div> : null}
             {f.key === conf.titleField && record && record.data && record.data.source === 'openapi' ? (
               <div className="form-hint muted">

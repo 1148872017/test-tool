@@ -19,7 +19,21 @@ const openapi = require('../openapi');
 let clipboardTimer = null;
 
 function register(deps) {
-  const { handle, app, dialog, store, fs, path, clipboard, getWindow, getSettings, assertUnlocked, logStartup } = deps;
+  const {
+    handle,
+    app,
+    dialog,
+    store,
+    fs,
+    path,
+    clipboard,
+    getWindow,
+    getSettings,
+    assertUnlocked,
+    assertPathIn,
+    rememberPicked,
+    logStartup
+  } = deps;
 
   handle('clipboard:copy', async (e, { text, secret }) => {
     const value = String(text === undefined || text === null ? '' : text);
@@ -77,7 +91,15 @@ function register(deps) {
   handle('apis:sync', async (e, payload = {}) => {
     assertUnlocked();
     let file = payload && payload.file ? String(payload.file) : '';
-    if (!file) {
+    /**
+     * 入参守卫（v0.50.0）：file 是渲染进程直接给的路径，
+     * 不校验就能让主进程读任意文件（还能把里面解析出来的内容写进库）。
+     * 只认白名单目录内的文件 —— 走 dialog 选的文件会被记进白名单，正常流程不受影响。
+     */
+    if (file) {
+      const bad = assertPathIn(file);
+      if (bad) return bad;
+    } else {
       const picked = await dialog.showOpenDialog(getWindow(), {
         title: '选择 Apifox 导出的 openapi.json',
         filters: [{ name: 'OpenAPI JSON', extensions: ['json'] }],
@@ -85,6 +107,8 @@ function register(deps) {
       });
       if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
       file = picked.filePaths[0];
+      // 用户明确选过的文件 → 本会话可信根（同一次会话里再同步不用重选）
+      rememberPicked(file);
     }
     try {
       const st = fs.statSync(file);

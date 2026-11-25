@@ -24,8 +24,11 @@ import ScenePicker from './ScenePicker';
 import AccountsEditor from './AccountsEditor';
 import { caseKey, knownCaseKeys, loadCaseIndex } from '../caseIndex';
 import { matchOnlyFor, recentForApi, resultTone, runLine } from '../../shared/runs';
+import { RUN_KIND_OPTIONS } from '../../shared/collections';
 import VarFillModal from './VarFillModal';
 import CaseLinkModal from './CaseLinkModal';
+import ErrorBoundary from './feedback/ErrorBoundary';
+import StateEmpty from './states/StateEmpty';
 import { asArray, fieldOptions, getOptionsSync, loadOptions, OptionsMap } from '../options';
 import { parseElements, normalizeMode, type PageElement } from './PageElementsEditor';
 
@@ -500,7 +503,30 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
         </Space>
       }
     >
-      <div className="detail-actions">
+      {/*
+        详情体单独包一层错误边界：一条脏数据（比如某字段是意料之外的结构）
+        不该把整个集合页顶掉 —— React 18 里没人接的 render 异常会卸载整棵树，
+        用户看到的是整窗白屏。这里兜住之后，抽屉里给一句人话 + 重试/关闭，
+        列表和其它功能照常用。key 用记录 id：换一条记录会自动重建边界。
+      */}
+      <ErrorBoundary
+        key={recordId || 'none'}
+        scope={'record-detail:' + (conf && conf.key ? conf.key : '')}
+        fallback={(err: Error, reset: () => void) => (
+          <div className="detail-broken">
+            <StateEmpty
+              kind="failed"
+              object="这条记录"
+              title="这条记录渲染失败了"
+              desc="数据没丢，只是某个字段的格式不对。其他记录不受影响：换一条看，或者先去编辑里把那个字段清掉。"
+              detail={String((err && err.message) || err)}
+              action={{ label: '重试', onClick: reset }}
+              secondary={{ label: '关闭详情', onClick: onClose }}
+            />
+          </div>
+        )}
+      >
+        <div className="detail-actions">
         {conf.actions && conf.actions.includes('open') && data.url ? (
           <Button size="small" icon={<ExportOutlined />} onClick={openInBrowser}>
             打开地址
@@ -572,7 +598,10 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
           {runs.length ? (
             <div className="run-list">
               {runs.map((r: any) => {
-                const kind = r.data.kind === 'perf' ? '压测' : '接口测试';
+                // 类型标签统一从 RUN_KIND_OPTIONS 取：加了 ui 之后不能再按
+                // 「perf / 其它」二分（否则 UI 测试的执行会被标成接口测试）
+                const kindOpt = RUN_KIND_OPTIONS.find((o: any) => o.value === r.data.kind);
+                const kind = kindOpt ? kindOpt.label : '接口测试';
                 const line = runLine(r.data);
                 const at = r.data.ranAt || r.updated_at;
                 return (
@@ -643,6 +672,7 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
       <CaseLinkModal open={linkOpen} record={record} onClose={() => setLinkOpen(false)} onSaved={() => reloadLinks()} />
 
       <VarFillModal open={varOpen} text={String(data.sql || '')} title="填充变量并复制 SQL" onClose={() => setVarOpen(false)} />
+      </ErrorBoundary>
     </Drawer>
   );
 }

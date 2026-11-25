@@ -336,7 +336,14 @@ const call = (channel, payload) => handlers[channel]({}, payload);
       RUN_KIND_OPTIONS.every((o) => visibleFields(runs.fields, o.value).length > 0);
   })());
 
-  check('runs 集合存在且带类型/结果选项', !!COLLECTIONS.find((c) => c.key === 'runs') && RUN_KIND_OPTIONS.length === 2 && RUN_RESULT_OPTIONS.length === 3);
+  // 三档写死而不是 >=2：加类型是要同步改表、字段裁剪、关联报告三处的事，
+  // 通配会让「多加了一档但没人接」这件事静默通过。
+  check(
+    'runs 集合存在且带类型/结果选项（api,ui,perf）',
+    !!COLLECTIONS.find((c) => c.key === 'runs') &&
+      RUN_KIND_OPTIONS.map((o) => o.value).join(',') === 'api,ui,perf' &&
+      RUN_RESULT_OPTIONS.length === 3
+  );
 
   // 字段裁剪
   const runsFields = COLLECTIONS.find((c) => c.key === 'runs').fields;
@@ -344,6 +351,10 @@ const call = (channel, payload) => handlers[channel]({}, payload);
   const perfLabels = visibleFields(runsFields, 'perf').map((f) => f.key);
   check('接口测试看得到通过/失败', apiLabels.includes('passCount') && apiLabels.includes('failCount'), apiLabels);
   check('接口测试看不到并发/TPS', !apiLabels.includes('concurrency') && !apiLabels.includes('tps'), apiLabels);
+  // v0.51 UI 测试：和接口测试共用「通过/失败」口径，但不该出现压测指标
+  const uiLabels = visibleFields(runsFields, 'ui').map((f) => f.key);
+  check('UI 测试与接口测试共用通过/失败口径', uiLabels.includes('passCount') && uiLabels.includes('failCount'), uiLabels);
+  check('UI 测试看不到压测指标', !uiLabels.includes('concurrency') && !uiLabels.includes('p95') && !uiLabels.includes('errRate'), uiLabels);
   check('压测看得到并发/P95/错误率', perfLabels.includes('concurrency') && perfLabels.includes('p95') && perfLabels.includes('errRate'), perfLabels);
   check('压测看不到通过/失败', !perfLabels.includes('passCount'), perfLabels);
   check('公共字段两类都在', ['name', 'kind', 'result', 'ranAt', 'apiRef', 'report'].every((k) => apiLabels.includes(k) && perfLabels.includes(k)));

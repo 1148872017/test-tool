@@ -9,12 +9,21 @@
  * 3. 某个接口最近跑过哪几次
  */
 
-/** 字段是否适用于当前类型（没写 onlyFor 的字段一律显示） */
+/**
+ * 字段是否适用于当前类型（没写 onlyFor 的字段一律显示）。
+ *
+ * 支持 alsoKinds：一个字段同时服务几档时不用复制字段。
+ * 例：runs 的通过/失败数 onlyFor = { kind: 'api', alsoKinds: ['ui'] } ——
+ * 接口测试和 UI 测试共用同一套统计口径，压测才换指标表。
+ */
 function matchOnlyFor(field, kind) {
   if (!field || !field.onlyFor) return true;
   const want = field.onlyFor.kind;
+  const cur = String(kind || '');
   if (!want) return true;
-  return String(kind || '') === String(want);
+  if (String(want) === cur) return true;
+  const also = Array.isArray(field.onlyFor.alsoKinds) ? field.onlyFor.alsoKinds : [];
+  return also.some((k) => String(k) === cur);
 }
 
 /** 只留当前类型该显示的字段 */

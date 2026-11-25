@@ -52,6 +52,10 @@ contextBridge.exposeInMainWorld('api', {
   projectsTestClasses: (dir) => invoke('projects:testClasses', { dir }),
   projectsPickDir: () => invoke('projects:pickDir'),
   runnerOpenBrowserDir: () => invoke('runner:openBrowserDir'),
+  // ---- 报告分析 → 在项目中定位失败用例的源文件（只读扫描 + 文件管理器选中）----
+  // 行号不在这里返回：它来自 Allure 的失败堆栈，由界面解析后复制成「文件:行」
+  projectsLocateTest: (payload) => invoke('projects:locateTest', payload),
+  projectsReveal: (file) => invoke('projects:reveal', { file }),
   pickFile: (payload) => invoke('util:pickFile', payload),
   pickDir: (payload) => invoke('util:pickDir', payload),
 
@@ -120,6 +124,9 @@ contextBridge.exposeInMainWorld('api', {
 
   jmxScan: (root) => invoke('jmx:scan', { root }),
   jmxDetail: (file) => invoke('jmx:detail', { file }),
+  // L2 局部编辑写回：{ file, stamp, edits:[{kind,index,field,value}] }
+  // 成功 { ok:true, file, backup, changes, editable }；失败 { ok:false, code, message }
+  jmxWriteback: (payload) => invoke('jmx:writeback', payload),
   jmxOpenFile: (file) => invoke('jmx:openFile', { file }),
   jmxReveal: (file) => invoke('jmx:reveal', { file }),
   jmxOpenGui: (file) => invoke('jmx:openGui', { file }),

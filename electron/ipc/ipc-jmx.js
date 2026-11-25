@@ -7,6 +7,8 @@
  */
 const jmxIndex = require('../jmx');
 const jmxgen = require('../../shared/jmxgen');
+const jmxWriteback = require('../jmx-writeback');
+const { acceptScanRoot } = require('../shared-helpers');
 
 function register(deps) {
   const {
@@ -80,6 +82,17 @@ function register(deps) {
   handle('jmxgen:save', async (e, payload = {}) => {
     assertUnlocked();
     const settings = getSettings();
+    /**
+     * 入参守卫（v0.50.0）：dir 是「往哪写」的入参，不校验就等于
+     * 「渲染进程指定目录 → 主进程写文件」。
+     * 放在生成之前：越界入参不该先跑一遍生成逻辑。
+     * 不传 dir 时走 dialog（用户明确选的目录，记进会话白名单）。
+     */
+    const wantDir = String(payload.dir || '').trim();
+    if (wantDir) {
+      const bad = assertPathIn(wantDir);
+      if (bad) return bad;
+    }
     const ids = Array.isArray(payload.apiIds) ? payload.apiIds : [];
     if (!ids.length) return { ok: false, message: '至少选一个接口' };
 
@@ -110,7 +123,7 @@ function register(deps) {
     });
     if (!gen.ok) return gen;
 
-    let dir = String(payload.dir || '').trim();
+    let dir = wantDir;
     if (!dir) {
       const picked = await dialog.showOpenDialog(getWindow(), {
         title: '选择保存目录',
@@ -119,6 +132,8 @@ function register(deps) {
       });
       if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
       dir = picked.filePaths[0];
+      // 用户明确选过的目录 → 本会话可信根（下次保存会自动落在这里）
+      rememberPicked(dir);
     }
 
     try {
@@ -136,6 +151,9 @@ function register(deps) {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.jmxDir;
+    // 扫描根守卫 + 记进会话白名单（v0.50.0 的 P0 修复，见 ipc-knowledge.js kb:scan）
+    const badSeed = acceptScanRoot(dir);
+    if (badSeed) return badSeed;
     const bat = detectJmeter();
     const version = bat ? jmeterVersionOf(bat) : '';
     const res = jmxIndex.scanJmx(dir, { jmeterVersion: version });
@@ -148,12 +166,15 @@ function register(deps) {
    *
    * 入参：{ file } —— 绝对路径，或相对「设置 → 压测」jmxDir 的路径。
    * 出参：{ ok:true, file, size, modifiedAt, testPlan, threadGroups, samplers,
-   *         configs, variables, assertionCount, summary }
+   *         configs, variables, assertionCount, summary,
+   *         editable: { stamp, groups:[{index,name,numThreads,rampUp,loops}],
+   *                     assertions:[{index,name,testField,value}] } }
    *
    * 为什么单独开通道而不是复用 jmx:scan：
    *   scan 是整个目录的索引（健康检查、列表），detail 是单文件深读，
    *   打开一行才解析一次，几千个 jmx 的目录也不会因为点详情变慢。
    * 只读：readDetail 全程不写盘（有测试守着 mtime / 内容不变）。
+   * `editable` 只是「哪些字段可以改 + 乐观锁 stamp」，不含字节位置，也不写盘。
    */
   handle('jmx:detail', async (e, { file } = {}) => {
     assertUnlocked();
@@ -172,6 +193,46 @@ function register(deps) {
     if (bad) return bad;
 
     return jmxIndex.readDetail(target);
+  });
+
+  /**
+   * jmx 局部编辑写回（L2）—— 本平台第一个往用户资产里写的通道。
+   *
+   * 入参：{ file, stamp, edits:[{ kind:'thread'|'assertion', index, field, value, name? }] }
+   * 出参成功：{ ok:true, file, backup, changes:[{kind,index,field,from,to}], editable }
+   * 出参失败：{ ok:false, code, message }
+   *
+   * 四道闸都在 electron/jmx-writeback.js 里：
+   *   闸1 只有那个模块写盘；闸2 显式字段白名单；闸3 sidecar 备份 + tmp/fsync/rename；
+   *   闸4 scripts/test-jmx-writeback.cjs。本 handler 只做三件事：
+   *   解锁校验、路径白名单、把参数转交给 writeback —— **这里不碰 fs**。
+   *
+   * 为什么错误用返回值而不是抛异常：
+   *   Electron 的 handler 抛错会被包成 "Error invoking remote method"，
+   *   界面拿不到 code，也就没法区分「越界 / 过期 / 不可编辑 / 值不合法」。
+   */
+  handle('jmx:writeback', async (e, payload = {}) => {
+    assertUnlocked();
+    const settings = getSettings();
+    const input = String((payload && payload.file) || '').trim();
+    if (!input) return { ok: false, code: 'BAD_PATH', message: '缺少文件路径' };
+
+    const jmxDir = String(settings.jmxDir || '').trim();
+    const target = path.isAbsolute(input) ? input : jmxDir ? path.join(jmxDir, input) : '';
+    if (!target) {
+      return { ok: false, code: 'BAD_PATH', message: '还没配置 jmx 目录，没法定位相对路径' };
+    }
+    // 和 jmx:detail / jmx:openFile 同一套路径白名单：越界直接拒绝
+    const bad = assertPathIn(target);
+    if (bad) return bad;
+
+    /**
+     * 备份保留份数跟着设置项走（backupKeep，默认 10）：
+     * 和 backups/ 下的每日备份共用同一个数，改一处全局生效。
+     */
+    return jmxWriteback.writeback(target, payload && payload.stamp, payload && payload.edits, {
+      keepBackups: settings.backupKeep
+    });
   });
 
   handle('jmx:openFile', async (e, { file }) => {

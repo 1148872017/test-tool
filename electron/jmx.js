@@ -13,6 +13,12 @@
 const fs = require('fs');
 const path = require('path');
 const { DOMParser } = require('@xmldom/xmldom');
+/**
+ * L2 局部编辑：详情要返回 `editable`（可改字段 + 乐观锁 stamp）。
+ * 这里只 require 它的**只读**入口 buildEditable；本文件仍然一个写盘调用都没有，
+ * 真正写用户文件的只有 jmx-writeback.js 的 writeback（闸 1）。
+ */
+const jmxWriteback = require('./jmx-writeback');
 
 /* ------------------------------------------------------------------ *
  * DOM 小工具
@@ -840,8 +846,11 @@ function readDetail(filePath, opts) {
   }
 
   let raw = '';
+  let rawBuf = null;
   try {
-    raw = fs.readFileSync(target, 'utf8');
+    // 同时留一份 Buffer：editable 要按**字节偏移**定位值，不能被 utf8 解码/再编码影响
+    rawBuf = fs.readFileSync(target);
+    raw = rawBuf.toString('utf8');
   } catch (e) {
     return { ok: false, code: 'READ_FAILED', message: '读取失败：' + String((e && e.message) || e) };
   }
@@ -850,7 +859,16 @@ function readDetail(filePath, opts) {
   if (parsed.parseError) {
     return { ok: false, code: 'BAD_JMX', message: '不是合法的 jmx 文件：' + parsed.parseError };
   }
-  return Object.assign({ ok: true }, buildDetail(parsed, stat));
+  const detail = Object.assign({ ok: true }, buildDetail(parsed, stat));
+  /**
+   * L2（v0.51.0）：把「可编辑字段」一起返回。
+   *
+   * 只返回白名单内的字段与值，**不返回字节位置** —— span 只在 writeback 内部按
+   * 原文重新计算（文件在两次请求之间被 JMeter 另存过，旧的偏移就是错的）。
+   * stamp = `<mtimeMs>:<size>`，写回时用它做乐观锁。
+   */
+  detail.editable = jmxWriteback.buildEditable(rawBuf, stat);
+  return detail;
 }
 
 /* ------------------------------------------------------------------ *

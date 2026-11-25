@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Select, Button, Alert, Space, Modal, InputNumber, Dropdown } from 'antd';
+import { Select, Button, Alert, Space, Modal, InputNumber, Input, Dropdown } from 'antd';
 import {
   PlayCircleOutlined,
   StopOutlined,
@@ -11,11 +11,14 @@ import {
   DownOutlined,
   ReloadOutlined,
   SettingOutlined,
+  ProfileOutlined,
   CloseOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
 import { CODE_LANGS, DEFAULT_TIMEOUT_MS, clampTimeout } from '../../shared/codelab';
+import { RUN_KIND_OPTIONS, RUN_RESULT_OPTIONS, ENV_OPTIONS } from '../../shared/collections';
+import { buildLedgerDraft } from '../features/runner/runLedger';
 import {
   TEMPLATES as SCRIPT_TEMPLATES,
   CATEGORY_MAP,
@@ -155,6 +158,14 @@ const TIMEOUT_PRESETS = [
 const TIP_DURATION = 30000;
 
 /**
+ * 「记入执行账本」可以选的类型。
+ *
+ * 压测（perf）不在里面：代码调试就是跑一段代码/一个测试类，和压测指标
+ * （并发 / TPS / P90）不是一回事，硬记成压测会把账本搅浑。
+ */
+const LEDGER_KINDS = RUN_KIND_OPTIONS.filter((o: any) => o.value !== 'perf');
+
+/**
  * 模板分类 → 这个分类的脚本在 JMeter 里挂到哪个元件。
  *
  * 下拉分组用它做副标题：用户看到「断言 · JSR223 断言」就知道自己会在
@@ -214,6 +225,10 @@ export default function CodeRunnerPage() {
 
   // 首次进入的引导弹窗
   const [guideOpen, setGuideOpen] = useState(false);
+  // 「记入执行账本」（写一条 runs 记录：测试执行里能看到这次跑批）
+  const [ledgerOpen, setLedgerOpen] = useState(false);
+  const [ledgerDraft, setLedgerDraft] = useState<any>(null);
+  const [ledgerBusy, setLedgerBusy] = useState(false);
   // 环境提示条（可手动关闭 / 30s 自动关）
   const [tipVisible, setTipVisible] = useState(false);
   const [tipPct, setTipPct] = useState(100);
@@ -520,6 +535,85 @@ export default function CodeRunnerPage() {
     await api.copy(snapshot.map((l) => l.text).join(''), false);
     // 丢过行就明说，别让用户以为复制到的是完整输出
     toast(dropped ? `输出已复制（共 ${snapshot.length} 行，前面 ${dropped} 行已丢弃）` : '输出已复制');
+  };
+
+  /* ---------- 记入执行账本（写一条 runs 记录） ---------- */
+  /**
+   * 开弹窗：把这次运行的退出码 / 耗时 / 用例统计读出来预填。
+   *
+   * 数据来源都是真的：
+   *   - 退出码、耗时、超时/取消 → runner:exit 的事件体（result）
+   *   - 通过/失败数 → 控制台输出里的 Maven/pytest 汇总行（认不出就留空）
+   *   - 类型（接口/UI）→ 按代码和输出里的迹象猜一个，弹窗里能改
+   */
+  const openLedger = () => {
+    if (!result) {
+      toast('先跑一次，拿到退出码再记账', 'warning');
+      return;
+    }
+    const text = buffer.lines().map((l) => l.text).join('');
+    setLedgerDraft(
+      buildLedgerDraft({
+        runnerLabel: (currentRunner && currentRunner.label) || runnerKey,
+        code: isMaven ? '' : code,
+        output: text,
+        result
+      })
+    );
+    setLedgerOpen(true);
+  };
+
+  /** 改通过/失败数时顺手把「结果」对齐，避免出现「失败 2 条但结果是正常」 */
+  const updateLedgerCount = (key: 'passCount' | 'failCount', value: any) => {
+    setLedgerDraft((cur: any) => {
+      if (!cur) return cur;
+      const raw = value === null || value === undefined || value === '' ? null : Number(value);
+      const next = Object.assign({}, cur, { [key]: raw === null || Number.isNaN(raw) ? null : raw });
+      const fail = Number(next.failCount) || 0;
+      const pass = Number(next.passCount) || 0;
+      if (fail > 0) next.result = 'bad';
+      else if (pass > 0) next.result = 'ok';
+      return next;
+    });
+  };
+
+  const saveLedger = async () => {
+    if (!ledgerDraft) return;
+    const name = String(ledgerDraft.name || '').trim();
+    if (!name) {
+      toast('先给这条记录起个标题', 'warning');
+      return;
+    }
+    setLedgerBusy(true);
+    try {
+      const data: any = {
+        name,
+        kind: ledgerDraft.kind,
+        result: ledgerDraft.result,
+        ranAt: Date.now(),
+        env: ledgerDraft.env || 'test',
+        conclusion: String(ledgerDraft.conclusion || '').trim()
+      };
+      // 认不出统计时 passCount / failCount 是 null → 不写这两个键，
+      // 免得账本里出现「0 通过 0 失败」这种像是统计过的假数据
+      if (ledgerDraft.passCount !== null && ledgerDraft.passCount !== undefined) {
+        data.passCount = Number(ledgerDraft.passCount) || 0;
+      }
+      if (ledgerDraft.failCount !== null && ledgerDraft.failCount !== undefined) {
+        data.failCount = Number(ledgerDraft.failCount) || 0;
+      }
+      const saved = await api.saveRecord({ collection: 'runs', data, tags: [], favorite: false });
+      if (!saved || !saved.id) {
+        toast('没写进账本（没拿到记录 id）', 'error');
+        return;
+      }
+      setLedgerOpen(false);
+      toast('已记入执行账本：' + name);
+    } catch (e: any) {
+      toast('记入失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      setLedgerBusy(false);
+    }
   };
 
   const closeGuide = () => {
@@ -841,6 +935,20 @@ export default function CodeRunnerPage() {
           <Button size="small" icon={<CopyOutlined />} onClick={doCopy} disabled={!output.length}>
             复制输出
           </Button>
+          {/*
+            「记入执行账本」：跑完才可点。
+            和「压测报告 → 测试执行」「Allure 归档 → 测试执行」同一条流水账，
+            避免「接口/压测能留痕、代码调试跑完什么都不留」的不对称。
+          */}
+          <Button
+            size="small"
+            icon={<ProfileOutlined />}
+            onClick={openLedger}
+            disabled={!result}
+            title={result ? '把这次运行的退出码/耗时/失败数记进「测试执行」' : '先跑一次再记账'}
+          >
+            记入执行账本
+          </Button>
         </Space>
       </div>
 
@@ -923,6 +1031,121 @@ export default function CodeRunnerPage() {
         pickLabel="插入到光标处"
         footerHint={DRAWER_FOOTER_HINT}
       />
+
+      {/* 记入执行账本：退出码 / 耗时 / 失败数已预填，其余可改 */}
+      <Modal
+        open={ledgerOpen}
+        title="记入执行账本（测试执行）"
+        onCancel={() => setLedgerOpen(false)}
+        width={560}
+        footer={
+          <Space>
+            <Button onClick={() => setLedgerOpen(false)}>取消</Button>
+            <Button type="primary" loading={ledgerBusy} onClick={saveLedger} disabled={!ledgerDraft}>
+              记入
+            </Button>
+          </Space>
+        }
+      >
+        {ledgerDraft ? (
+          <>
+            <div className="muted" style={{ marginBottom: 12, fontSize: 12, lineHeight: 1.8 }}>
+              退出码 / 耗时 / 失败数已从这次运行里预填（退出码和耗时写进「结论」，
+              因为账本里这两个字段只给压测用）。输出里认不出用例统计时，通过/失败数留空，请自己填。
+            </div>
+
+            <div style={{ marginBottom: 10 }}>
+              <div className="muted" style={{ marginBottom: 4 }}>
+                标题
+              </div>
+              <Input
+                value={ledgerDraft.name}
+                maxLength={80}
+                onChange={(e) => setLedgerDraft(Object.assign({}, ledgerDraft, { name: e.target.value }))}
+                placeholder="如：登录接口冒烟-1125"
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+              <div style={{ flex: '1 1 0' }}>
+                <div className="muted" style={{ marginBottom: 4 }}>
+                  类型
+                </div>
+                <Select
+                  style={{ width: '100%' }}
+                  value={ledgerDraft.kind}
+                  onChange={(v) => setLedgerDraft(Object.assign({}, ledgerDraft, { kind: v }))}
+                  options={LEDGER_KINDS.map((o: any) => ({ value: o.value, label: o.label }))}
+                />
+              </div>
+              <div style={{ flex: '1 1 0' }}>
+                <div className="muted" style={{ marginBottom: 4 }}>
+                  结果
+                </div>
+                <Select
+                  style={{ width: '100%' }}
+                  value={ledgerDraft.result}
+                  onChange={(v) => setLedgerDraft(Object.assign({}, ledgerDraft, { result: v }))}
+                  options={RUN_RESULT_OPTIONS.map((o: any) => ({ value: o.value, label: o.label }))}
+                />
+              </div>
+              <div style={{ flex: '1 1 0' }}>
+                <div className="muted" style={{ marginBottom: 4 }}>
+                  环境
+                </div>
+                <Select
+                  style={{ width: '100%' }}
+                  value={ledgerDraft.env}
+                  onChange={(v) => setLedgerDraft(Object.assign({}, ledgerDraft, { env: v }))}
+                  options={ENV_OPTIONS.map((o: any) => ({ value: o.value, label: o.label }))}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+              <div style={{ flex: '1 1 0' }}>
+                <div className="muted" style={{ marginBottom: 4 }}>
+                  通过
+                </div>
+                <InputNumber
+                  style={{ width: '100%' }}
+                  min={0}
+                  value={ledgerDraft.passCount === null ? undefined : ledgerDraft.passCount}
+                  onChange={(v) => updateLedgerCount('passCount', v)}
+                  placeholder="认不出就留空"
+                />
+              </div>
+              <div style={{ flex: '1 1 0' }}>
+                <div className="muted" style={{ marginBottom: 4 }}>
+                  失败
+                </div>
+                <InputNumber
+                  style={{ width: '100%' }}
+                  min={0}
+                  value={ledgerDraft.failCount === null ? undefined : ledgerDraft.failCount}
+                  onChange={(v) => updateLedgerCount('failCount', v)}
+                  placeholder="退出码非 0 时自己填"
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="muted" style={{ marginBottom: 4 }}>
+                结论（退出码 / 耗时已经写在这里）
+              </div>
+              <Input.TextArea
+                rows={3}
+                value={ledgerDraft.conclusion}
+                onChange={(e) => setLedgerDraft(Object.assign({}, ledgerDraft, { conclusion: e.target.value }))}
+              />
+            </div>
+
+            <div className="muted" style={{ marginTop: 10, fontSize: 12 }}>
+              类型是按代码/输出里有没有 playwright、selenium 之类的迹象猜的，别当真，按实际改。
+            </div>
+          </>
+        ) : null}
+      </Modal>
     </div>
   );
 }

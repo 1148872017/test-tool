@@ -17,6 +17,7 @@ import { toast } from '../msg';
 import StateEmpty from '../components/states/StateEmpty';
 import ScriptTemplatesDrawer from '../components/ScriptTemplatesDrawer';
 import { takeJmxHandoff } from '../features/jmx/handoff';
+import type { JmxHandoff } from '../features/jmx/handoff';
 
 type Tab = 'jmx' | 'sql';
 
@@ -83,6 +84,14 @@ export default function ScriptGenPage({ onNavigate }: ScriptGenPageProps = {}) {
   const [onError, setOnError] = useState('continue');
   const [jmxCode, setJmxCode] = useState('');
   const [jmxFile, setJmxFile] = useState('');
+  /**
+   * 从「压测脚本」页带过来的源脚本信息（只用于提示）。
+   *
+   * 为什么留一份在 state 里：协议这一项**生成器用不上**（jmxgen 写的是所选接口 URL 的协议），
+   * 所以它唯一诚实的用法是「发现源脚本和新脚本协议不一致时明确提醒用户」——
+   * 而不是假装填了一个实际上不生效的字段。
+   */
+  const [handoff, setHandoff] = useState<JmxHandoff | null>(null);
   /** 最近一次保存成功的完整路径（用于「去『压测脚本』页查看」的入口） */
   const [savedJmx, setSavedJmx] = useState('');
   /** 生成时用的 JMeter 版本（从设置里的 jmeterPath 读） */
@@ -127,20 +136,42 @@ export default function ScriptGenPage({ onNavigate }: ScriptGenPageProps = {}) {
 
   /**
    * 从「压测脚本」页点「基于这个重新生成」跳过来时，把源脚本的
-   * 线程数 / Ramp-Up / 循环 / 域名填进表单（交接参数见 features/jmx/handoff.ts）。
+   * 线程数 / Ramp-Up / 循环 / 域名 / 端口填进表单（交接参数见 features/jmx/handoff.ts）。
    *
-   * 只在挂载时取一次：takeJmxHandoff() 取完即清空，
+   * 为什么端口必须填：生成器里 domain 和 port 是两个独立来源，
+   * 只填域名时端口会退回「所选接口 URL 的端口」，重新生成的脚本就打错端口。
+   *
+   * 只在挂载时取一次：takeJmxHandoff() 取完即清空（且 30 秒后自动过期），
    * 之后用户在本页改的值不会被来回切页面反复覆盖。
    */
   useEffect(() => {
     const h = takeJmxHandoff();
     if (!h) return;
+    setHandoff(h);
     if (h.threads) setThreads(h.threads);
     if (h.rampUp !== undefined) setRampUp(h.rampUp);
     if (h.loops) setLoops(h.loops);
     if (h.domain) setDomain(h.domain);
-    toast('已带入「' + (h.file || '源脚本') + '」的线程数 / Ramp-Up / 循环 / 域名，选好接口就能重新生成');
+    if (h.port) setPort(h.port);
+    toast('已带入「' + (h.file || '源脚本') + '」的线程数 / Ramp-Up / 循环 / 域名 / 端口，选好接口就能重新生成');
   }, []);
+
+  /**
+   * 生成器决定协议的只有这一条 URL：selected 接口里的第一个
+   * （shared/jmxgen.js 的 splitUrl(apis[0].data.url)）。
+   * 拿它和源脚本的协议比一比，不一致就必须说出来 —— 否则用户会以为「重新生成」和源脚本等价。
+   */
+  const firstApiUrl = useMemo(() => {
+    const hit = apis.find((a: any) => a.id === apiIds[0]);
+    return String((hit && hit.data && hit.data.url) || '');
+  }, [apis, apiIds]);
+  const sourceProtocol = handoff && handoff.protocol ? handoff.protocol : '';
+  const pickedProtocol = /^https:\/\//i.test(firstApiUrl) ? 'https' : firstApiUrl ? 'http' : '';
+  const protocolMismatch = !!sourceProtocol && !!pickedProtocol && sourceProtocol !== pickedProtocol;
+  /** 交接来源摘要（给「这些值是哪儿来的」一个出处，避免用户以为是上次残留） */
+  const handoffSummary = handoff
+    ? [handoff.domain, handoff.port].filter(Boolean).join(':') || '（源脚本没配域名端口）'
+    : '';
 
   /** 跳「压测脚本」页（保存成功后给用户的下一步入口） */
   const goJmxPage = () => {
@@ -432,6 +463,29 @@ export default function ScriptGenPage({ onNavigate }: ScriptGenPageProps = {}) {
                 <Input size="small" value={port} onChange={(e) => setPort(e.target.value)} placeholder="自动" />
               </div>
             </div>
+
+            {/* 交接来源：说清这两个值是「从哪个脚本抄过来的」，不然看起来像上次残留 */}
+            {handoff ? (
+              <div className="muted scriptgen-handoff">
+                {'来自「' + (handoff.file || '源脚本') + '」：' + handoffSummary}
+                {sourceProtocol ? '（' + sourceProtocol + '）' : ''}
+              </div>
+            ) : null}
+
+            {/*
+              协议对不上：生成器把 HTTPSampler.protocol 写成**所选接口 URL 的协议**，
+              源脚本是 https、接口是 http 时，新脚本会打到另一个协议上（端口对了也白搭）。
+              这里不假装能改（改不了），而是把事实说清 + 指出去哪儿改。
+            */}
+            {protocolMismatch ? (
+              <Alert
+                type="warning"
+                showIcon
+                className="scriptgen-handoff-warn"
+                message={'源脚本是 ' + sourceProtocol + '，所选接口地址是 ' + pickedProtocol + '://'}
+                description="生成时协议取自接口记录的地址，改这里不会生效：要改成一致，请到「接口记录」里改这条接口的 URL。"
+              />
+            ) : null}
 
             {/* CSV 参数化（规划要求「参数化配置」） */}
             <div className="scriptgen-field">

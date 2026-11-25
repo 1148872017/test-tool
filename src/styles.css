@@ -454,6 +454,14 @@ body {
   flex: 0 0 128px;
 }
 
+/* 「筛选中…」：useDeferredValue 让筛选慢一拍，这一拍要让用户看见（否则像卡住） */
+.pg-searching {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--primary-text);
+  opacity: 0.75;
+}
+
 .pg-aside-toggle {
   flex: 0 0 auto;
   width: 26px;
@@ -767,6 +775,15 @@ body {
   flex-wrap: wrap;
   gap: 8px;
   margin: 4px 0 14px;
+}
+
+/**
+ * 记录详情自己的错误边界兜底容器。
+ * 抽屉只有 560px，直接用 ErrorBoundary 的默认大卡片（min-height:100%）会把抽屉撑满，
+ * 这里换成三态里的 failed 空状态 + 一层内边距。
+ */
+.detail-broken {
+  padding: 8px 0 20px;
 }
 
 .markdown-body {
@@ -1153,21 +1170,62 @@ body {
   margin-bottom: 14px;
 }
 
+/* ---------- 面板内的工具条 / 槽位（用例页、压测脚本页共用） ---------- */
+/**
+ * 工具条允许换行（只有内容装不下时才换）。
+ * 为什么：.panel-head 是 nowrap 的 flex，窄窗口下搜索框会被压成 0 宽 —— 看得见框、
+ * 点不进去、也搜不了。宁可折成两行，也要保证输入框还有 160px 可用。
+ */
+.panel-head-wrap {
+  flex-wrap: wrap;
+}
+
+.panel-head-wrap .ant-input-affix-wrapper,
+.panel-head-wrap .ant-input {
+  min-width: 160px;
+}
+
+/* 计数不折行：窄窗口下「123 / 4567 条」被折成两行会把工具条撑高 */
+.panel-count {
+  font-size: 12px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* 「筛选中…」：useDeferredValue 的延迟要可见，否则用户以为搜索没反应 */
+.panel-searching {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--primary-text);
+  opacity: 0.75;
+}
+
+/* 就地错误条（失败不清屏）在 panel 里的上下留白 */
+.panel-slot-error {
+  padding: 0 12px 10px;
+}
+
 /* ---------- 用例索引 ---------- */
-.case-title-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.case-title-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/**
+ * 列表行压到 38px 量级（改造前 74px）：
+ *   表格用 size="small"（单元格上下 8px），四个列全部改成**单行**：
+ *   标题和标签同一行、模块和分支同一行、文件名不再挂时间戳。
+ *   放不下就省略号 + hover 看全文（title 属性），而不是换行把行撑高。
+ */
+.case-title-cell { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .case-core { font-size: 12px; flex: 0 0 auto; }
-.case-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.case-title-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+.case-title { flex: 0 1 auto; min-width: 90px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.case-title-tags { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.case-title-tags .ant-tag { margin: 0; }
 .case-cover-tag { margin: 0 !important; font-size: 11px; background: #f4f5fa; border-color: #e3e4ee; color: #5a6076; }
-.case-more { font-size: 11px; color: var(--muted); align-self: center; }
-.case-module-cell { display: flex; flex-direction: column; min-width: 0; }
-.case-module { font-size: 13px; color: #3c4256; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.case-branch { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.case-assert-cell { display: flex; gap: 4px; flex-wrap: wrap; }
-.case-file-cell { display: flex; flex-direction: column; min-width: 0; }
-.case-file-name { font-size: 12px; color: #5a6076; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.case-file-time { font-size: 11px; color: var(--muted); }
+.case-more { font-size: 11px; color: var(--muted); flex: 0 0 auto; }
+.case-module-cell { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.case-module { flex: 0 1 auto; font-size: 13px; color: #3c4256; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.case-branch { flex: 0 1 auto; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.case-branch::before { content: '/ '; }
+.case-assert-cell { display: flex; gap: 4px; flex-wrap: nowrap; overflow: hidden; }
+.case-assert-cell .ant-tag { margin: 0; }
+.case-file-name { display: block; font-size: 12px; color: #5a6076; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .case-drawer-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 14px; }
 .case-drawer-tags { display: flex; gap: 4px; }
 .drawer-extra { display: flex; gap: 8px; }
@@ -3311,6 +3369,15 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+/* 「基于这个重新生成」带来的值：一行灰字说清来源，别让用户以为是自己填的 */
+.scriptgen-handoff {
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+.scriptgen-handoff-warn {
+  margin-top: 2px;
 }
 .scriptgen-table td {
   padding: 3px 4px;

@@ -28,7 +28,7 @@ export type HeaderAction =
  * 「关联报告」能力：报告目录存在哪个字段、什么条件下才该给入口。
  *
  * 为什么要带 when：
- *   runs 里 reportDir 有两个来源 —— Allure 归档（kind=api，报告分析页能解析）
+ *   runs 里 reportDir 有两个来源 —— Allure 归档（kind=api / ui，报告分析页能解析）
  *   和 jtl 压测导入（kind=perf，目录里是 JMeter 的报告，报告分析页解析不了）。
  *   只看「有 reportDir」会给压测记录挂一个点了就报错的图标，
  *   所以条件也写进能力里，页面只做通用判断，不认识 kind 的语义。
@@ -36,8 +36,11 @@ export type HeaderAction =
 export interface LinkedReportCapability {
   /** 报告目录存在哪个字段里（一般是 reportDir） */
   field: string;
-  /** 只有这个字段等于这个值时才显示入口；缺省 = 都显示 */
-  when?: { field: string; equals: string };
+  /**
+   * 只有这个字段「属于其中某个值」时才显示入口；缺省 = 都显示。
+   * equals 统一归一化成数组：Allure 归档现在有 api / ui 两档，两档都要能回报告。
+   */
+  when?: { field: string; equals: string[] };
 }
 
 export interface CollectionCapabilities {
@@ -115,6 +118,7 @@ function legacyTitleWidthPct(conf: any): number {
  * 兼容两种写法：
  *   字符串          → 'reportDir'（无条件）
  *   对象            → { field: 'reportDir', when: { field: 'kind', equals: 'api' } }
+ *   when.equals 可写字符串或数组（数组 = 多值命中，本函数统一归一化成数组）
  */
 function asLinkedReport(conf: any, value: any): LinkedReportCapability | null {
   const fields = Array.isArray(conf && conf.fields) ? conf.fields : [];
@@ -129,9 +133,13 @@ function asLinkedReport(conf: any, value: any): LinkedReportCapability | null {
   const when = raw.when && typeof raw.when === 'object' ? raw.when : null;
   if (when) {
     const wf = String(when.field || '').trim();
-    const eq = when.equals === undefined || when.equals === null ? '' : String(when.equals);
-    if (!wf || !has(wf) || !eq) return { field };
-    return { field, when: { field: wf, equals: eq } };
+    const rawEquals = when.equals;
+    const list = (Array.isArray(rawEquals) ? rawEquals : [rawEquals])
+      .filter((x: any) => x !== undefined && x !== null)
+      .map((x: any) => String(x))
+      .filter((x: string) => x !== '');
+    if (!wf || !has(wf) || !list.length) return { field };
+    return { field, when: { field: wf, equals: list } };
   }
   return { field };
 }

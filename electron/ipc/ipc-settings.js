@@ -31,9 +31,22 @@ function register(deps) {
 
   handle('settings:set', async (e, patch) => {
     const settings = getSettings();
-    const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'closeAction', 'workspaceDir', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'allureDir', 'kbDir', 'notesDir', 'projectDir', 'javaHome', 'pythonPath', 'mvnPath', 'themeColor', 'bgImage', 'bgOpacity', 'bgTextMode', 'bgOverlay', 'bgOverlayColor'];
+    const allowed = ['autoLockMinutes', 'clipboardClearSeconds', 'openCopyPassword', 'closeAction', 'workspaceDir', 'casesDir', 'jmxDir', 'jmeterPath', 'reportDir', 'allureDir', 'kbDir', 'notesDir', 'projectDir', 'javaHome', 'pythonPath', 'mvnPath', 'themeColor', 'bgImage', 'bgOpacity', 'bgTextMode', 'bgOverlay', 'bgOverlayColor', 'backupKeep'];
     for (const key of allowed) {
       if (patch && patch[key] !== undefined) settings[key] = patch[key];
+    }
+
+    /**
+     * 备份保留份数：收成 1..100 的整数并**立刻生效**。
+     *
+     * 为什么要在这里落一次，而不是只在启动时读：
+     *   数据层的 pruneBackups() 读的是 store 里的模块级变量，jmx 写回读的是
+     *   getSettings().backupKeep —— 用户刚改完就点「立即备份」或写回 jmx，
+     *   必须用新值，不能等下一次启动。
+     * 顺便把规范化后的值写回 settings，界面上显示的就是真正生效的数。
+     */
+    if (patch && patch.backupKeep !== undefined) {
+      settings.backupKeep = store.setBackupKeep(settings.backupKeep);
     }
 
     /**

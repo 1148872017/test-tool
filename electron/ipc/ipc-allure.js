@@ -6,16 +6,33 @@
  * 解析 allure-results → 失败聚类 + Flaky 追踪。
  */
 const allure = require('../allure');
+const { acceptScanRoot } = require('../shared-helpers');
 
 /**
- * 归档进 runs 时用的 kind。
+ * 归档进 runs 时用的 kind（调用方传什么就用什么，只认 api / ui）。
  *
- * runs 的 kind 只有 api（接口测试）/ perf（压测）两个选项，Allure 跑的多半是
- * 接口（REST Assured / pytest）或 UI 用例，两边都能归到「接口测试」这一档。
- * 刻意**不新增 'ui'**：加一个值要同步改 RUN_KIND_OPTIONS + 列表筛选 + 字段裁剪，
- * 而收益只是标签更准；等真有一批纯 UI 报告要分开统计时再加（见交付 notes）。
+ * 原实现把 'api' 写死，理由是「runs 只有 api / perf 两档」。但 Allure 报告本来就
+ * 既可能是接口（REST Assured / pytest）也可能是 UI（Playwright / Selenium），
+ * 一律记成「接口测试」就是账本口径错了 —— 「压测能记、UI 不能记」的不对称
+ * 只是从「能不能记」换成了「记成哪一档」。
+ *
+ * 现在的口径：
+ *   - payload.kind 是 api / ui 就用它（空 / 不认识的值一律回落到 api，老调用方不变）；
+ *   - 不传 kind 时行为与之前完全一致（api），老记录、老调用方零影响。
+ *
+ * 加一个 kind 值要同步对齐**三处**，这次一次性做完：
+ *   1. RUN_KIND_OPTIONS（shared/collections.js）—— 下拉和列表筛选的唯一选项源；
+ *   2. 字段裁剪：passCount / failCount 用 onlyFor.alsoKinds 让 api、ui 共用；
+ *   3. 关联报告筛选：capabilities.linkedReport.when 里 api / ui 都能回报告分析页。
  */
-const ARCHIVE_KIND = 'api';
+const DEFAULT_ARCHIVE_KIND = 'api';
+const ARCHIVE_KINDS = ['api', 'ui'];
+
+/** 归一化归档类型：只认白名单，其余一律回落到默认值 */
+function resolveArchiveKind(v) {
+  const k = String(v === undefined || v === null ? '' : v).trim().toLowerCase();
+  return ARCHIVE_KINDS.indexOf(k) >= 0 ? k : DEFAULT_ARCHIVE_KIND;
+}
 
 /** 两位补零（默认名称里用） */
 function pad2(n) {
@@ -60,6 +77,9 @@ function register(deps) {
     // 优先级：显式传的 root > 设置里的 allureDir > 项目目录
     const dir =
       (root && String(root).trim()) || settings.allureDir || settings.projectDir || '';
+    // 扫描根守卫 + 记进会话白名单（v0.50.0 的 P0 修复，见 ipc-knowledge.js kb:scan）
+    const badSeed = acceptScanRoot(dir);
+    if (badSeed) return badSeed;
     return allure.scanAllureRoots(dir);
   });
 
@@ -137,6 +157,7 @@ function register(deps) {
    * payload:
    *   dir        报告目录（必填，必须在白名单内）
    *   name       标题，空 = 自动生成「Allure 归档-11-25 09:40」
+   *   kind       类型：api / ui（空或不认识 = api），见 resolveArchiveKind
    *   env        环境，空 = test
    *   passCount  通过数（前端解析结果）
    *   failCount  失败数（failed + broken；前端解析结果）
@@ -207,13 +228,14 @@ function register(deps) {
       }, 0) || Date.now();
 
     const name = String(p.name || '').trim() || defaultArchiveName(new Date());
+    const kind = resolveArchiveKind(p.kind);
     const env = String(p.env || '').trim() || 'test';
     // runs 里没有独立的「备注」字段，人话备注就落进「结论」
     const conclusion = String(p.note || '').trim();
 
     const data = {
       name,
-      kind: ARCHIVE_KIND,
+      kind,
       result,
       ranAt,
       env,
@@ -245,7 +267,7 @@ function register(deps) {
       ok: true,
       id: saved.id,
       name,
-      kind: ARCHIVE_KIND,
+      kind,
       result,
       dir,
       duplicated: duplicates > 0,

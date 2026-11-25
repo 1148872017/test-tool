@@ -18,7 +18,15 @@ import { Alert, Button, Input, Modal, Select, Space } from 'antd';
 import { FileDoneOutlined } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
-import { ENV_OPTIONS } from '../../shared/collections';
+import { ENV_OPTIONS, RUN_KIND_OPTIONS } from '../../shared/collections';
+
+/**
+ * 归档时可以选的类型：Allure 报告既可能是接口（REST Assured / pytest），
+ * 也可能是 UI（Playwright / Selenium）。以前主进程写死 api，UI 报告就记错账
+ * （见 electron/ipc/ipc-allure.js 的 resolveArchiveKind）。
+ * 压测（perf）不在这里：压测走「导入压测报告」，指标字段完全不同。
+ */
+const ARCHIVE_KINDS = RUN_KIND_OPTIONS.filter((o: any) => o.value !== 'perf');
 
 type Props = {
   /** 当前解析的报告目录；空 = 还没选目录，按钮不可用 */
@@ -58,6 +66,8 @@ export default function AllureArchive({ dir, summary, onNavigate }: Props) {
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState('');
   const [env, setEnv] = useState('test');
+  /** 账本类型：接口测试 / UI 测试（默认 api，和旧行为一致） */
+  const [kind, setKind] = useState('api');
   const [note, setNote] = useState('');
   /** 归档成功后的结果（非空 = 弹窗切成「已完成」状态，显示去测试执行的链接） */
   const [done, setDone] = useState<any>(null);
@@ -84,6 +94,7 @@ export default function AllureArchive({ dir, summary, onNavigate }: Props) {
     }
     setName(defaultName(new Date()));
     setEnv('test');
+    setKind('api');
     setNote('');
     setDone(null);
     setOpen(true);
@@ -95,6 +106,7 @@ export default function AllureArchive({ dir, summary, onNavigate }: Props) {
       const res = await api.allureArchive({
         dir,
         name: name.trim(),
+        kind,
         env,
         note: note.trim(),
         passCount: counts.passed,
@@ -199,16 +211,29 @@ export default function AllureArchive({ dir, summary, onNavigate }: Props) {
               </div>
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：登录回归-1125" maxLength={80} />
             </div>
-            <div style={{ marginBottom: 10 }}>
-              <div className="muted" style={{ marginBottom: 4 }}>
-                环境
+            <div style={{ marginBottom: 10, display: 'flex', gap: 10 }}>
+              <div style={{ flex: '1 1 0' }}>
+                <div className="muted" style={{ marginBottom: 4 }}>
+                  类型
+                </div>
+                <Select
+                  style={{ width: '100%' }}
+                  value={kind}
+                  onChange={setKind}
+                  options={ARCHIVE_KINDS.map((o: any) => ({ value: o.value, label: o.label }))}
+                />
               </div>
-              <Select
-                style={{ width: '100%' }}
-                value={env}
-                onChange={setEnv}
-                options={ENV_OPTIONS.map((o: any) => ({ value: o.value, label: o.label }))}
-              />
+              <div style={{ flex: '1 1 0' }}>
+                <div className="muted" style={{ marginBottom: 4 }}>
+                  环境
+                </div>
+                <Select
+                  style={{ width: '100%' }}
+                  value={env}
+                  onChange={setEnv}
+                  options={ENV_OPTIONS.map((o: any) => ({ value: o.value, label: o.label }))}
+                />
+              </div>
             </div>
             <div>
               <div className="muted" style={{ marginBottom: 4 }}>

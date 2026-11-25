@@ -43,6 +43,17 @@ const DEFAULT_SETTINGS = {
   clipboardClearSeconds: 30,
   openCopyPassword: true,
   /**
+   * 备份保留份数（默认 10）。
+   *
+   * **一个数管两处**（v0.52.1 收口，用户明确要求「改一个数，全局生效」）：
+   *   1. backups/ 下每日自动备份（data-YYYY-MM-DD-...）；
+   *   2. jmx 局部编辑写回时同目录生成的 <文件>.bak-<时间戳>。
+   *
+   * 以前两个模块各写死一个 10，用户改不了；现在在设置页「数据与备份」里改。
+   * 迁移前 / 恢复前的安全副本不参与轮转（那是救命的，不能自动删）。
+   */
+  backupKeep: 10,
+  /**
    * 点 X 时的行为：'tray' 缩到托盘（默认）/ 'quit' 直接退出。
    *
    * 为什么默认是 tray：
@@ -168,6 +179,12 @@ function loadSettings() {
    * 用户在设置页改工作区时立即重算 + 建目录（见 ipc-settings.js 的 settings:set）。
    */
   workspaceDerive.applyStartupDefaults(settings, defaultWorkspaceDir());
+
+  /**
+   * 备份保留份数生效（数据层 + jmx 写回共用一个数）。
+   * 这里收一次：设置里存了脏值（比如手改 settings 成 0）也不能变成「一份都不留」。
+   */
+  settings.backupKeep = store.setBackupKeep(settings.backupKeep);
 
   // 代码项目目录：默认 {文档}\Project（和「文档\测试工作台」同级）
   if (!settings.projectDir) {
@@ -454,11 +471,73 @@ function registerIpc() {
   }
 }
 
+/**
+ * 把 store.init() 的返回值整理成一行写进 startup.log（P1-3）。
+ *
+ * 为什么值得单独写：init 会告诉我们三件「启动时发生过但界面上看不见」的事
+ *   - 结构版本从几升到几、跑了哪些迁移脚本、迁移前的备份在哪
+ *   - integrity_check 的结果（库是不是烂了）
+ *   - 是不是回落到了备份（主库坏了才会发生）
+ * 以前这些信息全丢（`await store.init(DATA_DIR)` 的返回值没人接），
+ * 出问题时只能瞎猜「用户那台机器到底升级过没有」。
+ */
+function storeInitSummary(info) {
+  if (!info) return 'store init 没有返回信息';
+  const parts = ['db=' + store.dbPath];
+  const m = info.migration;
+  if (m) {
+    parts.push(`schema v${m.from} → v${m.to}`);
+    parts.push(m.ran.length ? '跑了迁移 ' + m.ran.join('/') : '无脚本需要跑');
+    if (m.backupFile) parts.push('迁移前备份=' + m.backupFile);
+  } else {
+    parts.push('schema 未迁移（新库或版本已是最新）');
+  }
+  if (info.backupFile) parts.push('每日备份=' + info.backupFile);
+  if (info.integrity && !info.integrity.ok) parts.push('完整性检查失败=' + info.integrity.messages.join('; '));
+  if (info.recovered) parts.push('已回落到备份=' + info.recoveredFrom + (info.quarantined ? '（坏库已隔离到 ' + info.quarantined + '）' : ''));
+  return parts.join(' | ');
+}
+
+/**
+ * 启动问题提示（P1-3）：主库坏了、这一轮跑的是备份，必须让用户知道。
+ * 不弹之类的「默默用备份」是最不能接受的那种降级。
+ */
+function notifyStoreInit(info) {
+  if (!info || !info.recovered) return;
+  const detail = [
+    '主数据库打不开或没通过完整性检查（' + ((info.integrity && info.integrity.messages) || []).join('; ') + '）。',
+    '已经自动回落到最近的可用备份：' + path.basename(info.recoveredFrom || ''),
+    '坏掉的库文件已保留在备份目录，没有删除。',
+    '',
+    '备份目录：' + store.backupDir
+  ].join('\n');
+  logStartup('recovered from backup: ' + info.recoveredFrom);
+  if (typeof dialog.showMessageBox !== 'function') return;
+  Promise.resolve(
+    dialog.showMessageBox(win || undefined, {
+      type: 'warning',
+      title: '数据库已从备份恢复',
+      message: '主数据库有问题，本次使用的是备份数据',
+      detail,
+      buttons: ['知道了', '打开备份目录'],
+      defaultId: 0,
+      cancelId: 0
+    })
+  )
+    .then((res) => {
+      if (res && res.response === 1) shell.openPath(store.backupDir).catch(() => {});
+    })
+    .catch(() => {
+      /* 提示失败不能影响启动 */
+    });
+}
+
 app.whenReady().then(async () => {
   logStartup('=== app ready, version=' + app.getVersion() + ' ===');
+  let initInfo = null;
   try {
-    await store.init(DATA_DIR);
-    logStartup('store init ok, db=' + store.dbPath);
+    initInfo = await store.init(DATA_DIR);
+    logStartup('store init ok | ' + storeInitSummary(initInfo));
     loadSettings();
     logStartup('settings loaded, casesDir=' + settings.casesDir);
 
@@ -492,6 +571,8 @@ app.whenReady().then(async () => {
     logStartup('ipc registered');
     createWindow();
     logStartup('window created');
+    // 主库坏了才提示（要用备份、坏文件在哪），正常启动不打扰
+    notifyStoreInit(initInfo);
     createTray();
     logStartup('tray created');
     try {

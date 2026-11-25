@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const initSqlJs = require('sql.js');
-const { encrypt, decrypt } = require('./security');
+const { encrypt, decrypt, decryptResult } = require('./security');
 const { COLLECTION_MAP, SECRET_KEYS, OPTION_SETS } = require('../shared/collections');
 const { apiKey, diffApi: apiDiff } = require('./openapi');
 const migrations = require('./migrations');
@@ -14,12 +14,56 @@ let dbPath = '';
 let backupDir = '';
 let saveTimer = null;
 let lastMigration = null;
+/**
+ * 写盘闸门（restoreFrom 用）。
+ *
+ * 恢复外来库时，迁移是在「候选库」上跑的。迁移内部会 persist()，
+ * 那一写就会把半迁移的外来库盖到 data.db 上 —— 这正是 P0-2 的现场。
+ * 所以候选库阶段把写盘整个关掉，只有确定成功、切完库才打开。
+ */
+let persistMuted = false;
 
 /**
  * 回收站保留天数：软删除的记录超过这么多天自动清掉。
  * 界面上的「N 天后自动清除」也用这个数，改这里就够了。
  */
 const TRASH_RETENTION_DAYS = 30;
+
+/**
+ * 备份保留份数（默认 10）。
+ *
+ * **两处备份共用这一个数**（v0.52.1 收口）：
+ *   1. backups/ 下的每日备份（data-YYYY-MM-DD-...）；
+ *   2. jmx 写回时同目录生成的 <文件>.bak-<时间戳>（由 ipc-jmx 把这个值传过去）。
+ *
+ * 为什么收成一个：以前两个模块各写死一个 10，用户改不了，而且「都是备份保留」
+ * 却要记两个地方。现在设置页改一个数、全局生效。
+ *
+ * **不参与这个数的备份**（是安全副本，不是轮转）：
+ *   data-before-v{from}-*（迁移前）、data-before-restore-*（恢复前）。
+ *   这两种一份都不能自动删，出事了要靠它们救。
+ */
+const DEFAULT_BACKUP_KEEP = 10;
+const BACKUP_KEEP_MIN = 1;
+const BACKUP_KEEP_MAX = 100;
+let backupKeep = DEFAULT_BACKUP_KEEP;
+
+/** 把任意输入收成 1..100 的整数；非法值回默认（不让脏配置导致「一份都不留」） */
+function clampBackupKeep(value) {
+  const n = Math.floor(Number(value));
+  if (!isFinite(n) || n <= 0) return DEFAULT_BACKUP_KEEP;
+  return Math.max(BACKUP_KEEP_MIN, Math.min(BACKUP_KEEP_MAX, n));
+}
+
+/** 设置备份保留份数（main.js 启动与 settings:set 各调一次） */
+function setBackupKeep(value) {
+  backupKeep = clampBackupKeep(value);
+  return backupKeep;
+}
+
+function getBackupKeep() {
+  return backupKeep;
+}
 
 /**
  * records 的 deleted_at 是「软删除时间戳」，0 = 未删除。
@@ -81,6 +125,7 @@ function setMeta(key, value) {
 
 function persist() {
   if (!db || !dbPath) return;
+  if (persistMuted) return;
   const bytes = Buffer.from(db.export());
   const tmp = dbPath + '.tmp';
   const fd = fs.openSync(tmp, 'w');
@@ -124,6 +169,65 @@ function ensureTrashSchema() {
   }
 }
 
+/**
+ * 打开主库（P1-3）。
+ *
+ * 原来的问题是：只做了一次 `new SQL.Database(bytes)`，坏文件不会在这里报错
+ * （sql.js 是懒解析，真正读的时候才炸），异常一路冒到 whenReady 的 catch，
+ * 用户看到的就是「启动失败」——没有任何回落，数据只能靠手动拷备份。
+ * 现在：先做 integrity_check + 关键列校验，不合格就隔离坏文件、
+ * 回落最新可用备份，并且**把「用了备份」这件事告诉调用方**（返回值里的 recovered / integrity）。
+ *
+ * @returns {{integrity: {ok: boolean, messages: string[]}, recoveredFrom: string, quarantined: string}}
+ */
+function openMainDb(existed) {
+  const integrity = { ok: true, messages: [] };
+  if (!existed) {
+    db = new SQL.Database();
+    return { integrity, recoveredFrom: '', quarantined: '' };
+  }
+
+  let opened = null;
+  try {
+    opened = new SQL.Database(new Uint8Array(fs.readFileSync(dbPath)));
+    const check = checkIntegrity(opened);
+    if (check.ok) {
+      // 结构也要过一遍：能打开但缺关键列同样用不了
+      validateDbHandle(opened);
+      db = opened;
+      return { integrity: check, recoveredFrom: '', quarantined: '' };
+    }
+    integrity.ok = false;
+    integrity.messages = check.messages;
+    opened.close();
+    opened = null;
+  } catch (e) {
+    integrity.ok = false;
+    integrity.messages = integrity.messages.length ? integrity.messages : [String((e && e.message) || e)];
+    if (opened) {
+      try {
+        opened.close();
+      } catch (e2) {
+        /* 关不掉也不影响后面的回落 */
+      }
+    }
+  }
+
+  // 坏库先挪进 backups/ 留证据，再回落（不挪的话 persist 会把它覆盖掉）
+  const quarantined = quarantineCorruptDb();
+  const why = integrity.messages.join('; ') || '完整性检查没通过';
+  const fallback = usableBackup();
+  if (!fallback) {
+    throw errWithCode(
+      'DB_CORRUPT_NO_BACKUP',
+      '主数据库已损坏（' + why + '），备份目录里也没有可用备份。原文件：' + dbPath
+    );
+  }
+  db = fallback.handle;
+  console.error('[store] 主库不可用，已回落到备份', fallback.file, why);
+  return { integrity, recoveredFrom: fallback.file, quarantined };
+}
+
 async function init(dataDir) {
   fs.mkdirSync(dataDir, { recursive: true });
   dbPath = path.join(dataDir, 'data.db');
@@ -135,12 +239,7 @@ async function init(dataDir) {
   });
 
   const existed = fs.existsSync(dbPath);
-  if (existed) {
-    const buf = fs.readFileSync(dbPath);
-    db = new SQL.Database(new Uint8Array(buf));
-  } else {
-    db = new SQL.Database();
-  }
+  const opened = openMainDb(existed);
   db.run(SCHEMA);
   // 关联表：新库直接建好；老库由迁移 v3 建（同一条 DDL，幂等）
   db.run(migrations.LINK_DDL);
@@ -155,14 +254,30 @@ async function init(dataDir) {
   ensureTrashSchema();
   persist();
 
+  /**
+   * 返回给装配层（main.js）的启动信息：
+   *   migration   从哪个版本升到哪个版本、跑了哪些脚本、迁移前备份在哪
+   *   integrity   integrity_check 的结果
+   *   recovered   true = 主库坏了，这一轮跑的是备份（界面上要告诉用户）
+   */
+  const common = {
+    dbPath,
+    backupDir,
+    migration: lastMigration,
+    integrity: opened.integrity,
+    recovered: !!opened.recoveredFrom,
+    recoveredFrom: opened.recoveredFrom,
+    quarantined: opened.quarantined
+  };
+
   const today = new Date().toISOString().slice(0, 10);
   if (getMeta('lastBackup') !== today) {
     const file = backup();
     setMeta('lastBackup', today);
     persist();
-    return { dbPath, backupDir, backupFile: file, migration: lastMigration };
+    return Object.assign(common, { backupFile: file });
   }
-  return { dbPath, backupDir, backupFile: '', migration: lastMigration };
+  return Object.assign(common, { backupFile: '' });
 }
 
 function backupWithName(prefix) {
@@ -185,7 +300,8 @@ function pruneBackups() {
       .readdirSync(backupDir)
       .filter((f) => /^data-\d{4}-\d{2}-\d{2}/.test(f) && f.endsWith('.db'))
       .sort();
-    while (files.length > 10) {
+    // 保留份数来自设置（backupKeep，默认 10），jmx 写回备份用同一个数
+    while (files.length > backupKeep) {
       const old = files.shift();
       fs.unlinkSync(path.join(backupDir, old));
     }
@@ -278,9 +394,15 @@ function makeMigrationApi() {
       const data = rec.data || {};
       const title = String(data[conf.titleField] || '').trim() || rec.title || '(未命名)';
       const tags = Array.isArray(rec.tags) ? rec.tags.join(',') : String(rec.tags || '');
+      /**
+       * 走 serializeSafely（不是 serialize）：迁移读到的 data 里，
+       * 「本机解不开」的密码字段已经被 hydrate 移除了，直接 serialize
+       * 会把原密文一起抹掉（P0-1 在迁移路径上的同一个坑）。
+       */
+      const rawExisting = rec.raw ? parseRawData(rec.raw.data) : null;
       run('UPDATE records SET title = ?, data = ?, tags = ?, favorite = ? WHERE id = ?', [
         title,
-        JSON.stringify(serialize(rec.collection, data)),
+        JSON.stringify(serializeSafely(rec.collection, data, rawExisting)),
         tags,
         rec.favorite ? 1 : 0,
         rec.id
@@ -312,8 +434,13 @@ function makeMigrationApi() {
 /**
  * 把老版本数据结构升级到当前版本。
  * 只加字段/加集合时版本号不变，这里什么都不做。
+ *
+ * @param {{backup?: boolean}} [opts] backup:false 时不做「迁移前备份」。
+ *   restoreFrom 用 false：那一份备份是**当前库**的，对外来库没有意义；
+ *   恢复本身已经留了 data-before-restore。
  */
-function migrate() {
+function migrate(opts) {
+  const doBackup = !opts || opts.backup !== false;
   const from = Number(getMeta('schemaVersion', 1)) || 1;
   const target = migrations.SCHEMA_VERSION;
   const result = { from, to: from, ran: [], backupFile: '' };
@@ -328,7 +455,7 @@ function migrate() {
   }
 
   // 迁移前先单独备份一份，出问题可以直接拿回来
-  result.backupFile = backupWithName(`data-before-v${from}`);
+  if (doBackup) result.backupFile = backupWithName(`data-before-v${from}`);
   const api = makeMigrationApi();
   for (const m of pending) {
     try {
@@ -413,6 +540,186 @@ function deserialize(collection, data) {
   return out;
 }
 
+/**
+ * 遍历某条 secret 路径上的**每一个叶子**，把容器和键名一起交给 fn。
+ *
+ * 为什么不复用 applySecretPath：要让「这个值解不开」的那一个叶子被**单独删掉**
+ * （同一条记录里别的账号密码是好的，不能跟着清），applySecretPath 只给值不给容器。
+ */
+function eachSecretLeaf(obj, secretPath, fn) {
+  if (!obj || typeof obj !== 'object') return;
+  const arrMatch = /^(\w+)\[\]\.(\w+)$/.exec(secretPath);
+  if (arrMatch) {
+    const arr = obj[arrMatch[1]];
+    if (!Array.isArray(arr)) return;
+    for (const item of arr) {
+      if (item && typeof item === 'object' && item[arrMatch[2]] !== undefined) fn(item, arrMatch[2]);
+    }
+    return;
+  }
+  if (obj[secretPath] !== undefined) fn(obj, secretPath);
+}
+
+/**
+ * 解密，并把「本机解不开」的叶子从 data 里移除（P0-1）。
+ *
+ * 和 deserialize 的区别（两个都留着，别合并）：
+ *   deserialize          —— 尽力解密，解不开就是 ''（迁移脚本 api.deserialize 还在用）
+ *   deserializeTracked   —— 解不开的叶子**删掉**并报出路径，hydrate 用这个
+ *
+ * 为什么不能只返回 ''：hydrate 的 data 会被表单原样提交回来，
+ * 空串一旦写回就是「把密文抹成空」，这就是 P0-1。
+ *
+ * @returns {{data: object, unreadable: string[]}} unreadable = 解不开的 secret 路径
+ */
+function deserializeTracked(collection, data) {
+  const out = JSON.parse(JSON.stringify(data || {}));
+  const secrets = SECRET_KEYS[collection] || [];
+  const unreadable = [];
+  for (const path of secrets) {
+    eachSecretLeaf(out, path, (holder, key) => {
+      const res = decryptResult(holder[key]);
+      if (res.ok) {
+        holder[key] = res.value;
+        return;
+      }
+      delete holder[key];
+      if (unreadable.indexOf(path) < 0) unreadable.push(path);
+    });
+  }
+  return { data: out, unreadable };
+}
+
+function parseRawData(raw) {
+  if (!raw) return null;
+  try {
+    const v = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return v && typeof v === 'object' ? v : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** 读磁盘上的原始 data（密文形态），保存时用来「沿用原密文」 */
+function rawDataById(id) {
+  if (!id) return null;
+  const rows = all('SELECT data FROM records WHERE id = ?', [id]);
+  return rows.length ? parseRawData(rows[0].data) : null;
+}
+
+/** 前端/详情页可能把 __secretUnreadable 之类的内部标记带回来，一律不落库 */
+function stripInternalKeys(data) {
+  const out = {};
+  for (const key of Object.keys(data || {})) {
+    if (key.slice(0, 2) === '__') continue;
+    out[key] = data[key];
+  }
+  return out;
+}
+
+/**
+ * 在「原库数组」里找和 incoming 项对应的那一条，用来取回原始密文。
+ *
+ * 为什么不能只按索引：表单会丢掉空行 / 迁移会 unshift 一条默认账号，
+ * 索引一错位，密码就会被安到别的账号上（或者干脆丢掉）。
+ * 顺序：唯一 id → 唯一锚点（账号名等） → 按位置兜底。
+ */
+function matchRawItem(item, rawArr, index) {
+  if (!Array.isArray(rawArr) || !item || typeof item !== 'object') return null;
+  const findUnique = (key, strict) => {
+    const want = item[key];
+    if (want === undefined || want === null) return null;
+    const w = strict ? String(want) : String(want).trim();
+    if (!w) return null;
+    const hits = rawArr.filter((r) => {
+      if (!r || typeof r !== 'object') return false;
+      const have = strict ? (r[key] === undefined || r[key] === null ? '' : String(r[key])) : String(r[key] || '').trim();
+      return have === w;
+    });
+    return hits.length === 1 ? hits[0] : null;
+  };
+  for (const key of ['id', 'uid', 'key']) {
+    const hit = findUnique(key, true);
+    if (hit) return hit;
+  }
+  for (const key of ['account', 'user', 'username', 'name', 'label']) {
+    const hit = findUnique(key, false);
+    if (hit) return hit;
+  }
+  return rawArr[index] || null;
+}
+
+/** 某个值是不是「本机解不开的密文」（空值不算） */
+function isUnreadableSecret(value) {
+  if (value === undefined || value === null || value === '') return false;
+  return decryptResult(value).ok === false;
+}
+
+/**
+ * 把「快照（已加密的新值）」和「磁盘原文」合并成最终写库的 data（P0-1 的核心）。
+ *
+ * 契约（**改之前先问用户**）：
+ *   - 传 undefined / null → 沿用磁盘原始密文（前端没带这个键）
+ *   - 传 ''               → 只有该字段「本机解不开」时才沿用原密文；能解开就允许清空
+ *   - 传新值              → 用新值重新加密（serialize 已经做完了）
+ *
+ * 只在「编辑已有记录」时有意义：新记录没有原密文可沿用。
+ */
+function mergeSecretPath(out, incoming, raw, secretPath) {
+  const arrMatch = /^(\w+)\[\]\.(\w+)$/.exec(secretPath);
+
+  if (!arrMatch) {
+    const rawVal = raw ? raw[secretPath] : undefined;
+    if (rawVal === undefined || rawVal === null || rawVal === '') return;
+    const hasIn = incoming && Object.prototype.hasOwnProperty.call(incoming, secretPath);
+    const inVal = hasIn ? incoming[secretPath] : undefined;
+    if (!hasIn || inVal === undefined || inVal === null) {
+      out[secretPath] = rawVal;
+      return;
+    }
+    if (String(inVal) === '' && isUnreadableSecret(rawVal)) out[secretPath] = rawVal;
+    return;
+  }
+
+  const [, arrKey, subKey] = arrMatch;
+  const inArr = incoming ? incoming[arrKey] : null;
+  const rawArr = raw ? raw[arrKey] : null;
+  const outArr = out[arrKey];
+  if (!Array.isArray(inArr) || !Array.isArray(rawArr) || !Array.isArray(outArr)) return;
+
+  for (let i = 0; i < inArr.length; i++) {
+    const item = inArr[i];
+    const outItem = outArr[i];
+    if (!item || typeof item !== 'object' || !outItem || typeof outItem !== 'object') continue;
+    const rawItem = matchRawItem(item, rawArr, i);
+    if (!rawItem || typeof rawItem !== 'object') continue;
+    const rawVal = rawItem[subKey];
+    if (rawVal === undefined || rawVal === null || rawVal === '') continue;
+    const hasIn = Object.prototype.hasOwnProperty.call(item, subKey);
+    const inVal = hasIn ? item[subKey] : undefined;
+    if (!hasIn || inVal === undefined || inVal === null) {
+      outItem[subKey] = rawVal;
+      continue;
+    }
+    if (String(inVal) === '' && isUnreadableSecret(rawVal)) outItem[subKey] = rawVal;
+  }
+}
+
+/**
+ * 生成「可以安全写库」的 data：先按 SECRET_KEYS 加密，再按上面的契约合并原密文。
+ *
+ * save() 和迁移 Api.write() 都必须走这里 —— 直接 serialize 会丢掉解不开的密文。
+ */
+function serializeSafely(collection, incoming, rawExisting) {
+  const out = serialize(collection, incoming);
+  const secrets = SECRET_KEYS[collection] || [];
+  if (!secrets.length) return out;
+  const raw = rawExisting || null;
+  if (!raw) return out;
+  for (const path of secrets) mergeSecretPath(out, incoming, raw, path);
+  return out;
+}
+
 function hydrate(row) {
   let data = {};
   try {
@@ -420,11 +727,18 @@ function hydrate(row) {
   } catch (e) {
     data = {};
   }
-  return {
+  /**
+   * 解不开的密码字段**从 data 里移除**，并在记录上标 __secretUnreadable（不落库）。
+   *
+   * 为什么不返回空串：data 会被表单提交回来，空串写回 = 密文被永久抹掉（P0-1）。
+   * 前端拿到这个标记后：输入框提示「本机无法解密，留空保持不变」，提交时不带该键。
+   */
+  const dec = deserializeTracked(row.collection, data);
+  const rec = {
     id: row.id,
     collection: row.collection,
     title: row.title,
-    data: deserialize(row.collection, data),
+    data: dec.data,
     tags: row.tags ? String(row.tags).split(',').filter(Boolean) : [],
     favorite: !!row.favorite,
     // 0 = 未删除；非 0 = 移入回收站的时间戳（老库由迁移 v6 补成 0）
@@ -432,6 +746,8 @@ function hydrate(row) {
     created_at: row.created_at,
     updated_at: row.updated_at
   };
+  if (dec.unreadable.length) rec.__secretUnreadable = dec.unreadable;
+  return rec;
 }
 
 
@@ -527,7 +843,9 @@ function keepUnknownFields(collection, incoming, existingData) {
 }
 
 function save(input) {
-  const { id, collection, data = {}, tags = [], favorite = false } = input;
+  const { id, collection, tags = [], favorite = false } = input || {};
+  // 内部标记（__secretUnreadable 等）只在内存里用，绝不落库
+  const data = stripInternalKeys(input && input.data);
   const conf = COLLECTION_MAP[collection];
   if (!conf) throw new Error('未知集合: ' + collection);
   const now = Date.now();
@@ -542,7 +860,13 @@ function save(input) {
   const finalData = existing ? keepUnknownFields(collection, data, existing.data) : data;
 
   const title = String(finalData[conf.titleField] || '').trim() || '(未命名)';
-  const payload = JSON.stringify(serialize(collection, finalData));
+  /**
+   * P0-1：写库前按「原密文沿用」契约合并（见 serializeSafely 的注释）。
+   * 解不开的密码字段在 hydrate 时已被移除，如果这里直接 serialize，
+   * 空值会被重新加密成 ''，磁盘上的密文就永久没了。
+   */
+  const rawExisting = existing ? rawDataById(recordId) : null;
+  const payload = JSON.stringify(serializeSafely(collection, finalData, rawExisting));
   const tagStr = Array.isArray(tags) ? tags.join(',') : String(tags || '');
   if (Array.isArray(tags) && tags.length) mergeTags(tags);
 
@@ -1035,36 +1359,200 @@ function mergeTags(tags) {
  * 恢复 = 覆盖当前库，所以必须先给当前库留一份安全备份。
  * ------------------------------------------------------------------ */
 
-/** 校验一个 .db：能打开、有 records 表、读出记录数与结构版本 */
+/** 带 code 的错误：IPC 层只回 message，我们自己看 code 判断是哪一步挂的 */
+function errWithCode(code, message, cause) {
+  const err = new Error(message);
+  err.code = code;
+  if (cause) err.cause = cause;
+  return err;
+}
+
+/** records 表必须有的列（deleted_at 由迁移 v6 补，不在必填集合里） */
+const REQUIRED_RECORD_COLUMNS = [
+  'id',
+  'collection',
+  'title',
+  'data',
+  'tags',
+  'favorite',
+  'created_at',
+  'updated_at'
+];
+
+/** case_api_links 存在时它也必须有的列 */
+const REQUIRED_LINK_COLUMNS = ['file_path', 'case_title', 'api_id'];
+
+function tableNamesOf(handle) {
+  const tables = handle.exec("SELECT name FROM sqlite_master WHERE type='table'") || [];
+  return tables.length ? tables[0].values.map((r) => String(r[0])) : [];
+}
+
+function columnsOf(handle, table) {
+  const res = handle.exec(`PRAGMA table_info(${table})`) || [];
+  if (!res.length) return [];
+  const nameIdx = res[0].columns.indexOf('name');
+  return res[0].values.map((r) => String(r[nameIdx >= 0 ? nameIdx : 1]));
+}
+
+/**
+ * `PRAGMA integrity_check`（P1-3）。
+ *
+ * 为什么不用 try/catch 打开来判定：SQLite 对坏文件经常是「能打开、读得出来、
+ * 内容已经错了」，只有 integrity_check 会在结构层面报出来。
+ */
+function checkIntegrity(handle) {
+  try {
+    const res = handle.exec('PRAGMA integrity_check') || [];
+    const msgs = res.length ? res[0].values.map((r) => String(r[0])) : [];
+    const ok = msgs.length === 1 && msgs[0].toLowerCase() === 'ok';
+    return { ok, messages: ok ? [] : msgs.length ? msgs : ['integrity_check 没有返回结果'] };
+  } catch (e) {
+    return { ok: false, messages: [String((e && e.message) || e)] };
+  }
+}
+
+/**
+ * 关键列集合校验（P0-2）。
+ *
+ * 只判断「能不能打开」是不够的：把 records 表结构完全不同的 .db 恢复进来，
+ * 打开、迁移都不会报错，之后每条记录都读不出来 —— 这才是最难查的那种坏。
+ * 所以恢复前就要确认：records / meta 在、关键列齐、links 表结构对。
+ *
+ * @returns {{version: number, recordCount: number}}
+ */
+function validateDbHandle(handle) {
+  const names = tableNamesOf(handle);
+  if (names.indexOf('records') < 0) {
+    throw errWithCode('DB_NOT_WORKBENCH', '这个文件里没有 records 表，不像是本工具的备份');
+  }
+  if (names.indexOf('meta') < 0) {
+    throw errWithCode('DB_SCHEMA_INVALID', '这个文件里没有 meta 表（缺少结构版本信息），不像是本工具的备份');
+  }
+
+  const cols = columnsOf(handle, 'records');
+  const missing = REQUIRED_RECORD_COLUMNS.filter((c) => cols.indexOf(c) < 0);
+  if (missing.length) {
+    throw errWithCode(
+      'DB_SCHEMA_INVALID',
+      'records 表缺少关键列（' + missing.join('、') + '），这个文件不是本工具的数据或已损坏'
+    );
+  }
+
+  if (names.indexOf('case_api_links') >= 0) {
+    const linkCols = columnsOf(handle, 'case_api_links');
+    const linkMissing = REQUIRED_LINK_COLUMNS.filter((c) => linkCols.indexOf(c) < 0);
+    if (linkMissing.length) {
+      throw errWithCode(
+        'DB_SCHEMA_INVALID',
+        'case_api_links 表缺少关键列（' + linkMissing.join('、') + '），这个文件不是本工具的数据或已损坏'
+      );
+    }
+  }
+
+  let version = 0;
+  try {
+    const v = handle.exec("SELECT v FROM meta WHERE k = 'schemaVersion'");
+    if (v && v.length && v[0].values.length) version = Number(JSON.parse(v[0].values[0][0])) || 0;
+  } catch (e) {
+    version = 0;
+  }
+  let recordCount = 0;
+  try {
+    const c = handle.exec('SELECT COUNT(*) FROM records');
+    if (c && c.length) recordCount = Number(c[0].values[0][0]) || 0;
+  } catch (e) {
+    recordCount = 0;
+  }
+  return { version, recordCount };
+}
+
+/** 备份目录里的 .db，按修改时间倒序（最新的在前） */
+function backupFilesByMtime() {
+  try {
+    return fs
+      .readdirSync(backupDir)
+      .filter((f) => f.endsWith('.db'))
+      .map((f) => {
+        const p = path.join(backupDir, f);
+        let mtime = 0;
+        try {
+          mtime = fs.statSync(p).mtimeMs;
+        } catch (e) {
+          mtime = 0;
+        }
+        return { name: f, path: p, mtime };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * 找「最新一个真能用」的备份：integrity_check + 关键列都要过。
+ * 只是文件最新不代表能用（可能正好是坏的那份），所以逐个开。
+ */
+function usableBackup() {
+  for (const item of backupFilesByMtime()) {
+    let handle = null;
+    try {
+      handle = new SQL.Database(new Uint8Array(fs.readFileSync(item.path)));
+      if (!checkIntegrity(handle).ok) {
+        handle.close();
+        continue;
+      }
+      validateDbHandle(handle);
+      return { file: item.path, handle };
+    } catch (e) {
+      if (handle) {
+        try {
+          handle.close();
+        } catch (e2) {
+          /* ignore */
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** 把坏掉的 data.db 挪进 backups/（留证据，同时让主库路径能重新写） */
+function quarantineCorruptDb() {
+  try {
+    if (!fs.existsSync(dbPath)) return '';
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').replace(/\..+/, '');
+    const target = path.join(backupDir, `data-corrupt-${stamp}.db`);
+    fs.renameSync(dbPath, target);
+    return target;
+  } catch (e) {
+    console.error('[store] 隔离坏库失败', e);
+    return '';
+  }
+}
+
+/**
+ * 校验一个 .db：能打开、结构对（关键列齐）、读出记录数与结构版本。
+ * 错误都带 code：DB_NOT_FOUND / DB_UNREADABLE / DB_NOT_WORKBENCH / DB_SCHEMA_INVALID
+ */
 function inspectDbFile(filePath) {
-  if (!filePath || !fs.existsSync(filePath)) throw new Error('文件不存在');
+  if (!filePath || !fs.existsSync(filePath)) throw errWithCode('DB_NOT_FOUND', '文件不存在');
   const bytes = fs.readFileSync(filePath);
   let probe = null;
   try {
     probe = new SQL.Database(new Uint8Array(bytes));
   } catch (e) {
-    throw new Error('不是可用的数据库文件（可能已损坏或不是 .db）');
+    throw errWithCode('DB_UNREADABLE', '不是可用的数据库文件（可能已损坏或不是 .db）', e);
   }
   try {
-    const tables = probe.exec("SELECT name FROM sqlite_master WHERE type='table'") || [];
-    const names = tables.length ? tables[0].values.map((r) => String(r[0])) : [];
-    if (names.indexOf('records') < 0) throw new Error('这个文件里没有 records 表，不像是本工具的备份');
-
-    let version = 0;
+    let meta;
     try {
-      const v = probe.exec("SELECT v FROM meta WHERE k = 'schemaVersion'");
-      if (v && v.length && v[0].values.length) version = Number(JSON.parse(v[0].values[0][0])) || 0;
+      meta = validateDbHandle(probe);
     } catch (e) {
-      version = 0;
+      // validateDbHandle 自己抛的错误带 code（结构不对）；其余是「压根不是 sqlite」
+      if (e && e.code) throw e;
+      throw errWithCode('DB_UNREADABLE', '不是可用的数据库文件（可能已损坏或不是 .db）', e);
     }
-    let recordCount = 0;
-    try {
-      const c = probe.exec('SELECT COUNT(*) FROM records');
-      if (c && c.length) recordCount = Number(c[0].values[0][0]) || 0;
-    } catch (e) {
-      recordCount = 0;
-    }
-    return { bytes, version, recordCount, size: bytes.length };
+    return { bytes, version: meta.version, recordCount: meta.recordCount, size: bytes.length };
   } finally {
     if (probe) probe.close();
   }
@@ -1083,12 +1571,22 @@ function exportDbTo(target) {
 
 /**
  * 用 .db 覆盖当前库。
- * 顺序很重要：先校验、先把当前库落盘并留安全备份，再换库；换库失败也不会丢当前数据。
+ *
+ * 顺序（P0-2，改之前先看这段）：
+ *   1. 校验文件（能打开 + integrity_check + 关键列）
+ *   2. 当前库落盘 + 留 data-before-restore 安全备份
+ *   3. 在**局部候选库**上跑完 SCHEMA / LINK_DDL / migrate / ensureTrashSchema
+ *      —— 这一步期间 persist 被关掉（persistMuted），data.db 一个字节都不动
+ *   4. 全部成功才切 db 并写盘；任何一步失败：close(next)、原库继续用、抛带 code 的错误
+ *
+ * 原来的写法是「先 db = next 再迁移」，迁移一失败，后面任何一次
+ * schedulePersist（400ms 防抖）都会把半迁移的外来库写成 data.db —— 原库就没了。
  */
 function restoreFrom(filePath) {
   const info = inspectDbFile(filePath);
   if (info.version > migrations.SCHEMA_VERSION) {
-    throw new Error(
+    throw errWithCode(
+      'DB_VERSION_TOO_NEW',
       `这个备份的结构是 v${info.version}，当前程序只支持到 v${migrations.SCHEMA_VERSION}，请先升级程序再恢复`
     );
   }
@@ -1102,20 +1600,72 @@ function restoreFrom(filePath) {
   // 先做安全备份：恢复错了还能退回来
   const safety = backupWithName('data-before-restore');
 
-  const next = new SQL.Database(new Uint8Array(info.bytes));
-  db.close();
+  let next = null;
+  try {
+    next = new SQL.Database(new Uint8Array(info.bytes));
+  } catch (e) {
+    throw errWithCode('DB_UNREADABLE', '这个 .db 打不开（可能已损坏）：' + ((e && e.message) || e), e);
+  }
+
+  const prevDb = db;
+  let migrated = null;
+  try {
+    const check = checkIntegrity(next);
+    if (!check.ok) {
+      throw errWithCode('DB_CORRUPT', '备份文件没通过完整性检查：' + check.messages.join('; '));
+    }
+
+    // 候选库阶段：db 临时指向 next（迁移脚本读写它），但写盘闸门关死
+    db = next;
+    persistMuted = true;
+    try {
+      next.run(SCHEMA);
+      next.run(migrations.LINK_DDL);
+      migrated = migrate({ backup: false });
+      ensureTrashSchema();
+      // 迁移之后再校验一次：迁移把结构改坏也要在这里拦住
+      validateDbHandle(next);
+    } finally {
+      persistMuted = false;
+      db = prevDb;
+    }
+  } catch (e) {
+    try {
+      next.close();
+    } catch (e2) {
+      /* 关不掉也不影响「原库没动」这个结论 */
+    }
+    db = prevDb;
+    persistMuted = false;
+    if (e && e.code) throw e;
+    throw errWithCode('RESTORE_FAILED', '恢复失败（当前数据库没有被改动）：' + ((e && e.message) || e), e);
+  }
+
+  // 到这里候选库已经完全可用，才真正切库
+  try {
+    prevDb.close();
+  } catch (e) {
+    /* 关旧库失败不影响新库接管 */
+  }
   db = next;
-  db.run(SCHEMA);
-  db.run(migrations.LINK_DDL);
-  lastMigration = migrate();
-  ensureTrashSchema();
-  persist();
+  lastMigration = migrated;
+
+  try {
+    persist();
+  } catch (e) {
+    throw errWithCode(
+      'RESTORE_PERSIST_FAILED',
+      '备份已经装上但写盘失败：' + ((e && e.message) || e) + '；恢复前的数据在 ' + safety,
+      e
+    );
+  }
 
   return {
     backupFile: safety,
     fromVersion: info.version,
     recordCount: info.recordCount,
     migration: lastMigration,
+    integrity: checkIntegrity(db),
     counts: counts()
   };
 }
@@ -1279,6 +1829,12 @@ module.exports = {
   clearTrash,
   purgeExpired,
   TRASH_RETENTION_DAYS,
+  DEFAULT_BACKUP_KEEP,
+  BACKUP_KEEP_MIN,
+  BACKUP_KEEP_MAX,
+  setBackupKeep,
+  getBackupKeep,
+  clampBackupKeep,
   counts,
   links,
   syncApis,

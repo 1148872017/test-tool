@@ -6,9 +6,10 @@
  * 通道前缀是 report:（历史原因，前端一直这么调），不是 jtl:。
  */
 const jtlReport = require('../jtl');
+const { acceptScanRoot } = require('../shared-helpers');
 
 function register(deps) {
-  const { handle, dialog, getWindow, getSettings, saveSettings, assertUnlocked, assertPathIn } = deps;
+  const { handle, dialog, getWindow, getSettings, saveSettings, assertUnlocked, assertPathIn, rememberPicked } = deps;
 
   // ---- 压测报告导入（jtl / statistics.json）----
 
@@ -17,6 +18,9 @@ function register(deps) {
     assertUnlocked();
     const settings = getSettings();
     const dir = (root && String(root).trim()) || settings.reportDir;
+    // 扫描根守卫 + 记进会话白名单（v0.50.0 的 P0 修复，见 ipc-knowledge.js kb:scan）
+    const badSeed = acceptScanRoot(dir);
+    if (badSeed) return badSeed;
     return jtlReport.scanReportRoot(dir);
   });
 
@@ -31,6 +35,8 @@ function register(deps) {
     });
     if (result.canceled || !result.filePaths.length) return { ok: false };
     const dir = result.filePaths[0];
+    // 用户明确选过的目录 → 本会话可信根（随后 report:parse 拿同一个目录才不会被拦）
+    rememberPicked(dir);
     try {
       const parsed = jtlReport.parseReportDir(dir);
       return { ok: true, report: parsed };

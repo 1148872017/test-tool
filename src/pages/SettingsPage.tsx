@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Select, Input, Modal, Tag, Popconfirm, Space, Alert, Switch, Segmented, Progress, Tooltip } from 'antd';
+import { Button, Select, Input, InputNumber, Modal, Tag, Popconfirm, Space, Alert, Switch, Segmented, Progress, Tooltip } from 'antd';
 import {
   LockOutlined,
   FolderOpenOutlined,
@@ -1133,8 +1133,28 @@ export default function SettingsPage({ boot, onChanged }: Props) {
           <div style={{ width: 120 }} className="muted">
             备份
           </div>
-          <div style={{ flex: 1 }} className="muted">
-            每天启动时自动备份一次，保留最近 10 份
+          {/*
+            备份保留份数：**一个数管两处** ——
+              1. 这里每日自动备份的轮转；
+              2. jmx 局部编辑写回时同目录的 .bak 轮转。
+            所以文案要写明两处都生效，否则用户改完不知道影响面。
+          */}
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }} className="muted">
+            <span>每天启动时自动备份一次，保留最近</span>
+            <InputNumber
+              size="small"
+              min={1}
+              max={100}
+              step={1}
+              precision={0}
+              value={settings.backupKeep === undefined ? 10 : settings.backupKeep}
+              onChange={(v) => {
+                if (v === null || v === undefined) return;
+                saveSettings({ backupKeep: v });
+              }}
+              style={{ width: 70 }}
+            />
+            <span>份（jmx 写回备份同样按这个数保留）</span>
           </div>
           <Button size="small" onClick={doBackup}>
             立即备份

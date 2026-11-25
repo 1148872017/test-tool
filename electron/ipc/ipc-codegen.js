@@ -10,7 +10,7 @@ const codegen = require('../../shared/codegen');
 const sqlgen = require('../../shared/sqlgen');
 
 function register(deps) {
-  const { handle, dialog, store, fs, path, getWindow, assertUnlocked } = deps;
+  const { handle, dialog, store, fs, path, getWindow, assertUnlocked, assertPathIn, rememberPicked } = deps;
 
   /* ==================== 代码骨架生成 ==================== *
    * 从接口记录 / JSON / 页面元素生成 Java/Python 代码骨架。
@@ -65,6 +65,16 @@ function register(deps) {
    */
   handle('codegen:save', async (e, payload = {}) => {
     assertUnlocked();
+    /**
+     * 入参守卫（v0.50.0）：dir 是「往哪写」的入参，不校验就等于
+     * 「渲染进程指定目录 → 主进程写文件」。放在生成之前：越界入参不该先跑生成。
+     * 不传 dir 时走 dialog（用户明确选的目录，记进会话白名单）。
+     */
+    const wantDir = String(payload.dir || '').trim();
+    if (wantDir) {
+      const bad = assertPathIn(wantDir);
+      if (bad) return bad;
+    }
     const targetKey = String(payload.targetKey || '').trim();
     if (!targetKey) return { ok: false, message: '缺少生成目标' };
 
@@ -86,7 +96,7 @@ function register(deps) {
     if (!gen.ok) return gen;
 
     // 选目录
-    let dir = String(payload.dir || '').trim();
+    let dir = wantDir;
     if (!dir) {
       const picked = await dialog.showOpenDialog(getWindow(), {
         title: '选择保存目录',
@@ -94,6 +104,8 @@ function register(deps) {
       });
       if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
       dir = picked.filePaths[0];
+      // 用户明确选过的目录 → 本会话可信根
+      rememberPicked(dir);
     }
 
     try {

@@ -66,7 +66,7 @@ const SEED: Record<string, any[]> = {
           { label: '管理员', account: 'admin', password: 'Admin@123', role: ['admin'], isDefault: true, note: '能改配置' },
           { label: '普通用户', account: 'user01', password: 'User@123', role: ['user'], isDefault: false, note: '只读权限' }
         ],
-        note: '入口 /login，测试环境 10.0.0.1'
+        note: '入口 /login，测试环境见站点地址'
       },
       tags: ['核心'],
       favorite: true,
@@ -444,6 +444,8 @@ export function installMockIfNeeded() {
     clipboardClearSeconds: 30,
     openCopyPassword: true,
     closeAction: 'tray',
+    // 备份保留份数：每日备份与 jmx 写回共用一个数（真机默认也是 10）
+    backupKeep: 10,
     hasPin: false,
     pin: '',
     casesDir: 'D:\\demo\\cases',
@@ -497,6 +499,56 @@ const isTrashed = (id: string) => {
   return true;
 };
 
+  /**
+   * 预览模式的「局部编辑」状态（L2 写回）。
+   *
+   * 真机里 editable 来自 jmx:detail、写回由主进程改文件；浏览器里没有文件系统，
+   * 就把这份基线放在内存，让两条主路径都能真跑：
+   *   · 写回成功 → 改内存值 + stamp 前移，界面重新拉详情能看到新值；
+   *   · STALE   → 任意输入框填 `stale`（大小写不限）模拟「文件被外部改动」；
+   *   · BAD_VALUE → 线程组三个数字字段填非整数会被逐条拒绝；
+   *   · NOT_EDITABLE → loops / 断言值留空（文件里没有这一项）的输入框是禁用的。
+   */
+  let jmxStampSeq = 1;
+  /**
+   * 写回成功后的 pruned（本次清理掉的旧备份份数）在预览里**交替**给 0 / 2：
+   * 第 1 次写回 0（工作区还干净）、第 2 次 2（假装已经攒了 10 份以上旧 .bak 被清掉），
+   * 这样两种 toast 文案在浏览器里各点一次保存就能各看到一次。
+   */
+  let jmxWriteSeq = 0;
+  /**
+   * 线程组基线：type 跟真后端一致（thread / setup / teardown），
+   * index 是全文顺序下三类合起来的序号 —— 和 jmxScan 里那一行的 threadGroups 顺序对齐，
+   * 预览里写回后才能就地更新左侧列表（不用靠重扫）。
+   */
+  const jmxEdit: { stamp: string; groups: any[]; assertions: any[] } = {
+    stamp: 'mock-stamp-' + jmxStampSeq,
+    groups: [
+      { index: 0, name: 'setUp 登录准备', type: 'setup', numThreads: '1', rampUp: '0', loops: '' },
+      { index: 1, name: '用户模块', type: 'thread', numThreads: '10', rampUp: '2', loops: '1' },
+      { index: 2, name: '门店模块', type: 'thread', numThreads: '5', rampUp: '1', loops: '3' }
+    ],
+    assertions: [
+      { index: 0, name: '响应断言-状态码200', testField: 'resp_code', value: '200' },
+      { index: 1, name: '断言-返回体成功', testField: 'success', value: '' }
+    ]
+  };
+  /** 每次返回新快照（真 IPC 也是深拷贝回来，界面拿这份基线算 from→to） */
+  const jmxEditable = () => clone({ stamp: jmxEdit.stamp, groups: jmxEdit.groups, assertions: jmxEdit.assertions });
+
+  /**
+   * 扫描行里的线程组（预览用）。
+   *
+   * 数值优先取内存 editable：真机「写回 → 重扫」是重读文件，能看到刚写进去的值；
+   * 预览里没有文件系统，不同步的话走静默重扫兜底时列表会看起来回退到旧值。
+   * fallback 只给 editable 里没有的组（支付模块 / 模块B业务）用。
+   */
+  const jmxScanGroup = (name: string, type: string, enabled: boolean, fallback: any) => {
+    const hit = jmxEdit.groups.find((g: any) => g.name === name && String(g.type || 'thread') === type);
+    const src = hit || fallback;
+    return { type, name, enabled, numThreads: src.numThreads, rampUp: src.rampUp, duration: '', loops: src.loops, scheduler: false };
+  };
+
   const api = {
     init: async () => ({
       locked,
@@ -507,6 +559,7 @@ const isTrashed = (id: string) => {
         autoLockMinutes: settings.autoLockMinutes,
         clipboardClearSeconds: settings.clipboardClearSeconds,
         openCopyPassword: settings.openCopyPassword, closeAction: settings.closeAction,
+        backupKeep: settings.backupKeep,
         hasPin: settings.hasPin,
         workspaceDir: settings.workspaceDir,
         casesDir: settings.casesDir,
@@ -559,6 +612,13 @@ const isTrashed = (id: string) => {
     settings: async () => ({ ...settings }),
     saveSettings: async (patch: any) => {
       settings = { ...settings, ...patch };
+      /**
+       * 和真机一致：backupKeep 会被收成 1..100 的整数，非法值回默认 10。
+       * 预览里不模拟这一步的话，用户会看到「填 0 也存进去了」，
+       * 而真机上会被悄悄纠正 —— 那种差异最难查。
+       */
+      const n = Math.floor(Number(settings.backupKeep));
+      settings.backupKeep = isFinite(n) && n > 0 ? Math.max(1, Math.min(100, n)) : 10;
       return { ...settings };
     },
     records: async (collection: string) =>
@@ -721,6 +781,30 @@ const isTrashed = (id: string) => {
       ]
     }),
     projectsTestClasses: async () => ({ ok: true, classes: ['LoginApiTest', 'RefundApiTest'] }),
+    // 「在项目中定位」：预览里给一份固定的假映射，够把按钮点通；
+    // 真机的映射由 electron/projects.js 的 locateTestClass 扫 src/test/java 得出
+    projectsLocateTest: async (payload: any) => {
+      const cls = String((payload && payload.testClass) || '').trim() || 'LoginApiTest';
+      const simple = cls.split('.').filter(Boolean).pop() || cls;
+      const dir = 'D:/mock/Project/example';
+      return {
+        ok: true,
+        root: 'D:/mock/Project',
+        testClass: cls,
+        scanned: [dir],
+        truncated: [],
+        matches: [
+          {
+            className: simple,
+            fqcn: 'com.example.' + simple,
+            package: 'com.example',
+            lang: 'java',
+            file: dir + '/src/test/java/com/example/' + simple + '.java'
+          }
+        ]
+      };
+    },
+    projectsReveal: async (file: string) => ({ ok: true, file: String(file || '') }),
     projectsPickDir: async () => ({ ok: false, canceled: true }),
     runnerOpenBrowserDir: async () => ({ ok: true, dir: 'C:/mock/ms-playwright' }),
     pickFile: async () => ({ ok: false, canceled: true }),
@@ -810,7 +894,7 @@ const isTrashed = (id: string) => {
       dir: 'D:/mock/Project/example/allure-results',
       tests: [
         { id: '1', name: '正确用户名和密码登录成功', fullName: 't1', status: 'passed', message: '', trace: '', suite: '登录', testClass: 'LoginApiTest', testMethod: 'testLogin', feature: '登录', severity: 'normal', duration: 1200, attachments: [], steps: [{ name: '构造登录请求体', status: 'passed', duration: 300, steps: [], attachments: [] }, { name: 'POST /api/login', status: 'passed', duration: 620, steps: [], attachments: [] }, { name: '断言 code=0 且 token 非空', status: 'passed', duration: 280, steps: [], attachments: [] }], stepSummary: { total: 3, passed: 3, failed: 0, skipped: 0, broken: 0 }, firstFailedStep: '' },
-        { id: '2', name: '空用户名登录失败', fullName: 't2', status: 'broken', message: 'Cannot invoke "Response.getStatusCode()" because "response" is null', trace: '', suite: '登录', testClass: 'LoginApiTest', testMethod: 'testEmpty', feature: '登录', severity: 'normal', duration: 3000, attachments: [], steps: [{ name: '构造 username="" 的请求体', status: 'passed', duration: 240, steps: [], attachments: [] }, { name: 'POST /api/login', status: 'passed', duration: 900, steps: [], attachments: [] }, { name: '断言 HTTP 400', status: 'broken', duration: 1860, steps: [{ name: '读取响应状态码', status: 'broken', duration: 1800, steps: [], attachments: [{ name: '接口响应', source: 'mock-attach-1', type: 'text/plain' }] }], attachments: [] }], stepSummary: { total: 4, passed: 2, failed: 0, skipped: 0, broken: 2 }, firstFailedStep: '断言 HTTP 400' },
+        { id: '2', name: '空用户名登录失败', fullName: 't2', status: 'broken', message: 'Cannot invoke "Response.getStatusCode()" because "response" is null', trace: 'java.lang.NullPointerException: Cannot invoke "Response.getStatusCode()" because "response" is null\n\tat com.example.LoginApiTest.testEmpty(LoginApiTest.java:42)\n\tat java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)', suite: '登录', testClass: 'LoginApiTest', testMethod: 'testEmpty', feature: '登录', severity: 'normal', duration: 3000, attachments: [], steps: [{ name: '构造 username="" 的请求体', status: 'passed', duration: 240, steps: [], attachments: [] }, { name: 'POST /api/login', status: 'passed', duration: 900, steps: [], attachments: [] }, { name: '断言 HTTP 400', status: 'broken', duration: 1860, steps: [{ name: '读取响应状态码', status: 'broken', duration: 1800, steps: [], attachments: [{ name: '接口响应', source: 'mock-attach-1', type: 'text/plain' }] }], attachments: [] }], stepSummary: { total: 4, passed: 2, failed: 0, skipped: 0, broken: 2 }, firstFailedStep: '断言 HTTP 400' },
         { id: '3', name: '错误密码登录失败', fullName: 't3', status: 'broken', message: 'Cannot invoke "Response.getStatusCode()" because "response" is null', trace: '', suite: '登录', testClass: 'LoginApiTest', testMethod: 'testWrong', feature: '登录', severity: 'normal', duration: 2800, attachments: [], steps: [{ name: '构造错误密码请求体', status: 'passed', duration: 220, steps: [], attachments: [] }, { name: 'POST /api/login', status: 'passed', duration: 780, steps: [], attachments: [] }, { name: '断言 HTTP 401', status: 'broken', duration: 1800, steps: [], attachments: [] }], stepSummary: { total: 3, passed: 2, failed: 0, skipped: 0, broken: 1 }, firstFailedStep: '断言 HTTP 401' }
       ],
       summary: { total: 3, passed: 1, failed: 0, broken: 2, skipped: 0, unknown: 0, duration: 7000 },
@@ -824,7 +908,7 @@ const isTrashed = (id: string) => {
       // 预览里不落库，给个假 id 让「去测试执行看看」的跳转能跑通
       id: 'r_mock_allure_archive',
       name: (payload && payload.name) || 'Allure 归档-11-25 09:40',
-      kind: 'api',
+      kind: (payload && payload.kind) || 'api',
       result: payload && Number(payload.failCount) > 0 ? 'bad' : 'ok',
       dir: (payload && payload.dir) || 'D:/mock/Project/example/allure-results',
       duplicated: false,
@@ -1386,11 +1470,13 @@ const isTrashed = (id: string) => {
           mtime: Date.now() - 86400000 * 280,
           size: 49439,
           parseError: '',
+          // 顺序和 jmxEdit.groups 对齐（index 0 是 setup）；数值每次现取，写回后重扫也不会回退
           threadGroups: [
-            { type: 'thread', name: '用户模块', enabled: true, numThreads: '10', rampUp: '2', duration: '', loops: '', scheduler: false },
-            { type: 'thread', name: '门店模块', enabled: false, numThreads: '1', rampUp: '1', duration: '', loops: '', scheduler: false },
-            { type: 'thread', name: '支付模块', enabled: false, numThreads: '1', rampUp: '1', duration: '', loops: '', scheduler: false },
-            { type: 'thread', name: '模块B业务', enabled: false, numThreads: '1', rampUp: '1', duration: '', loops: '', scheduler: false }
+            jmxScanGroup('setUp 登录准备', 'setup', true, { numThreads: '1', rampUp: '0', loops: '' }),
+            jmxScanGroup('用户模块', 'thread', true, { numThreads: '10', rampUp: '2', loops: '1' }),
+            jmxScanGroup('门店模块', 'thread', false, { numThreads: '5', rampUp: '1', loops: '3' }),
+            jmxScanGroup('支付模块', 'thread', false, { numThreads: '1', rampUp: '1', loops: '' }),
+            jmxScanGroup('模块B业务', 'thread', false, { numThreads: '1', rampUp: '1', loops: '' })
           ],
           samplers: [
             { name: '查询用户余额', enabled: true, method: 'GET', path: '/api/v1/user/info', domain: '', port: '', protocol: '', args: [] },
@@ -1442,7 +1528,7 @@ const isTrashed = (id: string) => {
                   '当前机器上能找到（D:/demo/压测数据/user.csv），但换机器/换人必挂。建议改成相对路径（相对 jmx 所在目录）或 ${__P(user.dir)}，让脚本和数据一起搬'
               },
               { level: 'info', code: 'sampler-inherit', title: '1 个采样器 path 为空（继承 HTTP 请求默认值）', detail: '默认值 domain=${test_environment}' },
-              { level: 'info', code: 'partial-groups', title: '4 个线程组只启用了 1 个', detail: '用户模块' }
+              { level: 'info', code: 'partial-groups', title: '5 个线程组只启用了 2 个', detail: 'setUp 登录准备、用户模块' }
             ]
           }
         },
@@ -1493,7 +1579,17 @@ const isTrashed = (id: string) => {
       modifiedAt: Date.now() - 86400000 * 280,
       jmeterVersion: '5.4.3',
       testPlan: { name: '测试计划' },
-      threadGroups: [{ name: '用户模块', type: 'thread', enabled: true, numThreads: 10, rampUp: 2, loops: 1, duration: 0, scheduler: false }],
+      threadGroups: jmxEdit.groups.map((g: any, i: number) => ({
+        name: g.name,
+        // type 三类都可能有（setup / teardown 现在也进 editable，详情表按它显示「前置 / 后置」）
+        type: g.type || 'thread',
+        enabled: g.type === 'setup' || g.name === '用户模块',
+        numThreads: g.numThreads,
+        rampUp: g.rampUp,
+        loops: g.loops,
+        duration: 0,
+        scheduler: false
+      })),
       samplers: [
         {
           name: '小程序登录',
@@ -1545,8 +1641,111 @@ const isTrashed = (id: string) => {
       ],
       variables: ['test_environment', 'token_file', 'mail', 'pwd'],
       assertionCount: 2,
-      summary: { threadGroups: 1, samplers: 2, assertions: 2, configs: 2 }
+      summary: { threadGroups: jmxEdit.groups.length, samplers: 2, assertions: 2, configs: 2 },
+      // L2 局部编辑：stamp + 可改字段清单（值为空串 = 文件里没有这一项，界面会禁用输入框）
+      editable: jmxEditable()
     }),
+    /**
+     * 预览模式的写回（L2）：没有文件系统，只改内存里的 editable 快照。
+     * 返回结构和真 IPC 完全同形，错误分支在浏览器里也能真跑（见上面 jmxEdit 的注释）。
+     */
+    jmxWriteback: async (payload?: any) => {
+      const req = payload || {};
+      const file = String(req.file || '');
+      const edits: any[] = Array.isArray(req.edits) ? req.edits : [];
+      if (!file) return { ok: false, code: 'BAD_PATH', message: '没拿到文件路径' };
+      if (!/[\\/]jmx[\\/]/i.test(file)) {
+        return { ok: false, code: 'OUTSIDE_ROOT', message: '预览模式只接受 jmx 目录下的文件：' + file };
+      }
+      if (String(req.stamp || '') !== jmxEdit.stamp) {
+        return { ok: false, code: 'STALE', message: '预览模式模拟：文件已被外部改动（stamp 已过期）' };
+      }
+      if (!edits.length) return { ok: false, code: 'NOT_EDITABLE', message: '这次没有任何要改的字段' };
+      // 特殊开关：任意一处填 stale 就模拟「打开详情后文件被外部改过」
+      if (edits.some((e) => String(e && e.value).trim().toLowerCase() === 'stale')) {
+        return { ok: false, code: 'STALE', message: '预览模式模拟：文件已被外部改动（填 stale 触发）' };
+      }
+
+      const noTarget: string[] = [];
+      const notEditable: string[] = [];
+      const badValues: string[] = [];
+      const changes: any[] = [];
+      for (const e of edits) {
+        const kind = e && e.kind === 'assertion' ? 'assertion' : 'thread';
+        const index = Number(e && e.index);
+        const field = String((e && e.field) || '');
+        const to = String(e && e.value !== undefined && e.value !== null ? e.value : '').trim();
+        const list = kind === 'thread' ? jmxEdit.groups : jmxEdit.assertions;
+        const hit = list.find((x: any) => Number(x.index) === index);
+        const owner = kind === 'thread' ? '线程组' : '断言';
+        if (!hit) {
+          noTarget.push(owner + ' #' + (index + 1) + ' 在文件里找不到');
+          continue;
+        }
+        // 和真后端一样核对可选 name / type：详情打开后索引漂移时宁可直接拒绝
+        if (e && e.name !== undefined && e.name !== null && String(e.name) !== String(hit.name)) {
+          noTarget.push(owner + ' #' + (index + 1) + ' 的名字对不上（文件里是「' + hit.name + '」，请求是「' + String(e.name) + '」）');
+          continue;
+        }
+        if (kind === 'thread' && e && e.type !== undefined && e.type !== null) {
+          const hitType = String(hit.type || 'thread');
+          if (String(e.type) !== hitType) {
+            noTarget.push(owner + ' #' + (index + 1) + ' 的类型对不上（文件里是「' + hitType + '」，请求是「' + String(e.type) + '」）');
+            continue;
+          }
+        }
+        const from = String(hit[field] === undefined || hit[field] === null ? '' : hit[field]);
+        if (from === '') {
+          notEditable.push(owner + '「' + hit.name + '」的「' + (field === 'value' ? '值' : field) + '」在文件里没有这一项');
+          continue;
+        }
+        if (kind === 'assertion' && !to) {
+          badValues.push('断言「' + hit.name + '」的值不能为空');
+          continue;
+        }
+        if (kind === 'thread') {
+          // 值区间和真后端一致：numThreads 1..1e6、rampUp 0..1e6、loops -1 或 1..1e6
+          const n = Number(to);
+          const intOk = /^-?\d+$/.test(to);
+          const label = field === 'numThreads' ? '线程数' : field === 'rampUp' ? '爬坡秒' : field === 'loops' ? '循环次数' : field;
+          let err = '';
+          if (!intOk) err = '「' + to + '」不是整数';
+          else if (field === 'loops' && !(n === -1 || (n >= 1 && n <= 1000000))) err = '必须是 -1（永久循环）或 1..1000000';
+          else if (field === 'rampUp' && (n < 0 || n > 1000000)) err = '必须在 0..1000000 之间';
+          else if (field === 'numThreads' && (n < 1 || n > 1000000)) err = '必须在 1..1000000 之间';
+          if (err) {
+            badValues.push('线程组「' + hit.name + '」的' + label + err);
+            continue;
+          }
+        }
+        if (to === from) continue;
+        changes.push({ kind, index, field, from, to });
+      }
+
+      if (noTarget.length) return { ok: false, code: 'NO_SUCH_TARGET', message: noTarget.join('\n') };
+      if (notEditable.length) return { ok: false, code: 'NOT_EDITABLE', message: notEditable.join('\n') };
+      if (badValues.length) return { ok: false, code: 'BAD_VALUE', message: badValues.join('\n') };
+      if (!changes.length) return { ok: false, code: 'NOT_EDITABLE', message: '这些值和文件里的一样，不需要写回' };
+
+      for (const c of changes) {
+        const list = c.kind === 'thread' ? jmxEdit.groups : jmxEdit.assertions;
+        const hit = list.find((x: any) => Number(x.index) === c.index);
+        if (hit) hit[c.field] = c.to;
+      }
+      jmxStampSeq += 1;
+      jmxEdit.stamp = 'mock-stamp-' + jmxStampSeq;
+      jmxWriteSeq += 1;
+      // 交替 0 / 2：两种 pruned 文案（不追加 / 追加「已清理 N 份旧备份」）都能在预览里点到
+      const pruned = jmxWriteSeq % 2 === 1 ? 0 : 2;
+      return {
+        ok: true,
+        file,
+        backup: 'D:\\demo\\jmx\\demo-plan.jmx.bak',
+        pruned,
+        changes,
+        editable: jmxEditable()
+      };
+    },
     jmxOpenFile: async () => ({ ok: true }),
     jmxReveal: async () => ({ ok: true }),
     jmxOpenGui: async () => ({ ok: false, message: '预览模式不能启动 JMeter' }),
@@ -1675,8 +1874,8 @@ const isTrashed = (id: string) => {
           lines: 10,
           mtime: Date.now() - 86400000 * 8,
           size: 800,
-          body: '## 联调环境\n- 测试环境 10.0.0.1\n\n## 问题\n- 返回 500',
-          sections: [{ title: '联调环境', line: 3, text: '- 测试环境 10.0.0.1', children: [] }]
+          body: '## 联调环境\n- 测试环境地址见配置\n\n## 问题\n- 返回 500',
+          sections: [{ title: '联调环境', line: 3, text: '- 测试环境地址见配置', children: [] }]
         }
       ]
     }),

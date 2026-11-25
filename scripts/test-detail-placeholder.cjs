@@ -222,6 +222,16 @@ const detail = loadTsxModule(DETAIL, {
   './AccountsEditor': () => ({ __esModule: true, default: noopComp }),
   './VarFillModal': () => ({ __esModule: true, default: noopComp }),
   './CaseLinkModal': () => ({ __esModule: true, default: noopComp }),
+  /*
+   * RecordDetail 现在自带一层错误边界（一条脏数据不该顶掉整页）和 failed 空状态。
+   * 桩：错误边界直接透传 children —— 本套件要断言的是「正常渲染出来的结构」，
+   * 真实边界在没有异常时也确实只返回 children。
+   */
+  './feedback/ErrorBoundary': () => ({ __esModule: true, default: (props) => (props ? props.children : null) }),
+  './states/StateEmpty': () => ({ __esModule: true, default: noopComp }),
+  /* 执行类型标签改从 shared/collections 的 RUN_KIND_OPTIONS 取（加了 ui 之后不能再二分），
+     直接要真模块 —— 标签文案变了这条断言才跟着变。 */
+  '../../shared/collections': () => require('../shared/collections.js'),
   '../caseIndex': () => ({ __esModule: true, caseKey: () => '', knownCaseKeys: () => new Set(), loadCaseIndex: async () => [] }),
   '../../shared/runs': () => ({ __esModule: true, matchOnlyFor: () => true, recentForApi: () => [], resultTone: () => '', runLine: () => '' }),
   '../options': () => ({
