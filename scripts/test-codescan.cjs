@@ -184,7 +184,9 @@ check('有「开始扫描」按钮', /开始扫描/.test(pageSrc), 'no scan butt
   const seg = i >= 0 && j > i ? pageSrc.slice(i, j) : '';
   check('切类型不触发扫描', seg.length > 0 && !/doCoverage\(|doHardcoded\(|doDeps\(/.test(seg), seg.slice(0, 140));
 }
-check('只有 doScan 一个执行入口', /const doScan = \(\) => \{[\s\S]{0,200}?doCoverage/.test(pageSrc), 'no doScan');
+// v0.46.0：doScan 改成 async（扫之前要先 await loadModules 取范围清单），
+// 语义不变 —— 仍然是唯一的执行入口，仍然直接进 doCoverage。
+check('只有 doScan 一个执行入口', /const doScan = async \(\) => \{[\s\S]{0,260}?doCoverage/.test(pageSrc), 'no doScan');
 check('规则面板改成右侧 Drawer', /<Drawer[\s\S]{0,200}?open=\{rulesOpen\}/.test(pageSrc) && /placement="right"/.test(pageSrc), 'no drawer');
 
 /* ---------- 9.2 摘要条 / rail / issue 行 ---------- */

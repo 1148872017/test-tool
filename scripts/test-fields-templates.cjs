@@ -164,7 +164,14 @@ check('未知类型退回 field', defaultNameOf('not-a-type') === 'field', defau
   check('DataTool 从 shared/faker 引入 createFieldNamer', /createFieldNamer/.test(src) && /from '\.\.\/\.\.\/shared\/faker'/.test(src), 'not imported');
   check('计数器放在 useRef 里（跨渲染连续）', /useRef<ReturnType<typeof createFieldNamer> \| null>/.test(src), 'not in ref');
   check('有 nextNameFor 取号函数', /const nextNameFor = \(type: string\) => namerRef\.current!\.next\(type\)/.test(src), 'no nextNameFor');
-  check('添加字段用 nextNameFor 自动填名', /addField[\s\S]{0,220}nextNameFor\(type\)/.test(src), 'addField not auto named');
+  // v0.46.0：用户反馈「类型跟随上一行 + 名字自动填」让新行看起来像已填好的，
+  // 改成空白待填行；用户选类型后 setFieldType 会自动补默认名（下面那条断言守着）。
+  check(
+    '添加字段给空白待填行（类型回默认、不跟随上一行）',
+    /const addField = \(\) => \{\s*setFields\(\(prev\) => prev\.concat\(\[makeField\(\)\]\)\);\s*\};/.test(src),
+    'addField 还在跟随上一行类型'
+  );
+  check('makeField 默认是空的 name + name 类型', /name: '',\s*type: 'name'/.test(src), 'makeField 默认值变了');
   check('字段名 placeholder 改为「默认按类型自动命名」', /placeholder="默认按类型自动命名"/.test(src), 'placeholder not updated');
   check(
     '切换类型时不覆盖已有名字，只有名字为空才补默认名',

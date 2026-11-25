@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Input, Select, DatePicker, Switch, Tooltip, Button } from 'antd';
+import { Modal, Input, Select, DatePicker, Switch, Tooltip, Button, AutoComplete } from 'antd';
 import { ImportOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../api';
@@ -10,7 +10,17 @@ import ScenePicker from './ScenePicker';
 import AccountsEditor, { dropEmptyAccounts } from './AccountsEditor';
 import PageElementsEditor, { dropEmptyElements } from './PageElementsEditor';
 import { visibleFields } from '../../shared/runs';
-import { asArray, fieldOptions, getOptionsSync, labelOf, loadOptions, OptionsMap } from '../options';
+import {
+  appendOptionValue,
+  asArray,
+  fieldOptions,
+  getOptionsSync,
+  labelOf,
+  loadOptions,
+  mergeOptionCache,
+  withCurrentOption,
+  OptionsMap
+} from '../options';
 import { convertSelectionToVar, VAR_NAME_PATTERN } from '../utils';
 
 type Props = {
@@ -240,6 +250,38 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
 
   const set = (key: string, value: any) => setData((prev: any) => ({ ...prev, [key]: value }));
 
+  /** 正在保存选项集的 key：同一个选项集同时只留一次写盘，避免连点 / 连续失焦打架 */
+  const optSaveRef = useRef<Record<string, boolean>>({});
+
+  /**
+   * 「可选择 + 可新建」字段：值不在选项集里就把它补进去。
+   *
+   * 为什么放到失焦 / 保存时才做：AutoComplete 的 onChange 每敲一个字符触发一次，
+   * 在这儿直接写盘会把「资产管理系统」拆成「资」「资产」「资产管」… 一串碎词。
+   * 老记录里的自由文本（导入的模块 / 项目）也走这条路，编辑一次就自动收进选项集。
+   *
+   * 失败只静默跳过：记录本身该存还是存，候选没记住不影响这条数据。
+   */
+  const rememberOption = async (f: any, value: any) => {
+    const key = f && f.optionsKey;
+    if (!key) return;
+    const next = appendOptionValue((opts as any)[key], value);
+    if (!next) return; // 空值或已经在选项集里
+    if (optSaveRef.current[key]) return;
+    optSaveRef.current[key] = true;
+    try {
+      const saved: any = await api.saveOptions(key, next);
+      const list = saved && Array.isArray(saved[key]) ? saved[key] : next;
+      setOpts((prev) => ({ ...prev, [key]: list }) as OptionsMap);
+      // 同步进进程内缓存：别的表单 / 详情页下次打开就能选到这个新值
+      mergeOptionCache(key, list);
+    } catch (e) {
+      /* 忽略：只是候选没记住 */
+    } finally {
+      optSaveRef.current[key] = false;
+    }
+  };
+
   const save = async () => {
     for (const f of conf.fields) {
       if (f.required && !String(data[f.key] === undefined ? '' : data[f.key]).trim()) {
@@ -259,6 +301,10 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
         if (f.type === 'elements' && payload[f.key]) {
           payload[f.key] = dropEmptyElements(payload[f.key]);
         }
+      }
+      // 「可选择 + 可新建」：用户输入完直接点保存、没触发失焦时，这里补一次
+      for (const f of conf.fields) {
+        if (f.type === 'selectOrCreate') await rememberOption(f, payload[f.key]);
       }
       const saved = await api.saveRecord({
         id: record && record.id,
@@ -291,6 +337,31 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
             style={{ width: '100%' }}
           />
         );
+      case 'selectOrCreate': {
+        // 候选里补上「当前值」：老数据的自由文本不在选项集里，也要能正常显示 / 保存
+        const candidates = withCurrentOption(fieldOptions(f, opts), v).map((o: any) => ({
+          value: o.value,
+          label: o.label
+        }));
+        return (
+          <AutoComplete
+            value={v}
+            options={candidates}
+            placeholder={f.placeholder}
+            // 打字只改本地值，不写盘（见 rememberOption 的说明）
+            onChange={(val) => set(f.key, val)}
+            // 失焦才把新值收进选项集：下次就能从下拉里直接选
+            onBlur={() => rememberOption(f, data[f.key])}
+            allowClear
+            style={{ width: '100%' }}
+            filterOption={(input, opt) =>
+              String((opt && (opt as any).value) || '')
+                .toLowerCase()
+                .includes(String(input || '').toLowerCase())
+            }
+          />
+        );
+      }
       case 'multiselect':
         return (
           <Select

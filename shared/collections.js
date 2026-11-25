@@ -18,14 +18,26 @@ const ROLE_OPTIONS = [];
 /** 标签：默认留空，新增记录时手输的标签会自动加入这里 */
 const TAG_OPTIONS = [];
 
+/** 接口模块 / 目录：默认留空，由用户在设置里维护；表单里手输的新模块会自动收进来 */
+const MODULE_OPTIONS = [];
+
+/** 页面所属项目：默认留空，同上 */
+const PROJECT_OPTIONS = [];
+
 /**
  * 可配置选项集（设置页能增删改）。
  * value 就是存进记录里的值：环境的 value 一旦被记录引用就别改（改的是 label）。
+ *
+ * kind:
+ *   env  —— 选项是 { value, label, color } 对象
+ *   text —— 选项就是一个字符串（值即显示名）
  */
 const OPTION_SETS = {
   env: { key: 'env', name: '环境', kind: 'env', defaults: ENV_OPTIONS },
   role: { key: 'role', name: '角色 / 权限', kind: 'text', defaults: ROLE_OPTIONS },
-  tags: { key: 'tags', name: '标签', kind: 'text', defaults: TAG_OPTIONS }
+  tags: { key: 'tags', name: '标签', kind: 'text', defaults: TAG_OPTIONS },
+  module: { key: 'module', name: '接口模块', kind: 'text', defaults: MODULE_OPTIONS },
+  project: { key: 'project', name: '页面项目', kind: 'text', defaults: PROJECT_OPTIONS }
 };
 
 const METHOD_OPTIONS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((v) => ({
@@ -170,27 +182,36 @@ const COLLECTIONS = [
       { key: 'name', label: '名称', type: 'text', required: true, placeholder: '如：创建退款单' },
       { key: 'method', label: '方法', type: 'select', options: METHOD_OPTIONS, default: 'POST' },
       { key: 'url', label: 'URL', type: 'url', required: true, placeholder: 'https://test.example.com/api/refund' },
+      // 模块 / 目录：Apifox 同步会写，用户也可以自己选或直接输入新名字（选项集 module）
+      {
+        key: 'module',
+        label: '模块 / 目录',
+        type: 'selectOrCreate',
+        optionsKey: 'module',
+        placeholder: '选一个模块，或直接输入新模块名'
+      },
       // ---- 以下为同步镜像字段：详情里只读展示，编辑表单里不出现（formHidden） ----
-      { key: 'module', label: '模块 / 目录', type: 'text', formHidden: true },
-      { key: 'summary', label: '接口描述', type: 'textarea', formHidden: true },
-      { key: 'params', label: '参数摘要', type: 'code', rows: 4, formHidden: true },
+      // 每个 formHidden 都写明原因（formHiddenReason）：没有原因的 formHidden 会被
+      // scripts/test-module-field.cjs 的「详情/表单一致性」检查拦下来 —— 用户报的 bug 正是这个
+      { key: 'summary', label: '接口描述', type: 'textarea', formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
+      { key: 'params', label: '参数摘要', type: 'code', rows: 4, formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
       // 参数的结构化快照：只给「变更 diff」用，界面上不出现
       { key: 'paramSpec', label: '参数快照', type: 'code', formHidden: true, hideInDetail: true },
-      { key: 'paramTable', label: '参数', type: 'code', formHidden: true },
-      { key: 'reqSchema', label: '请求 Schema', type: 'code', rows: 8, formHidden: true },
-      { key: 'respSchema', label: '响应 Schema', type: 'code', rows: 8, formHidden: true },
-      { key: 'respExample', label: '响应示例', type: 'code', rows: 8, formHidden: true },
-      { key: 'completeness', label: '完整度', type: 'select', options: COMPLETENESS_OPTIONS, formHidden: true },
-      { key: 'source', label: '来源', type: 'select', options: SOURCE_OPTIONS, default: 'manual', formHidden: true },
-      { key: 'syncedAt', label: '同步于', type: 'datetime', formHidden: true },
+      { key: 'paramTable', label: '参数', type: 'code', formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
+      { key: 'reqSchema', label: '请求 Schema', type: 'code', rows: 8, formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
+      { key: 'respSchema', label: '响应 Schema', type: 'code', rows: 8, formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
+      { key: 'respExample', label: '响应示例', type: 'code', rows: 8, formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
+      { key: 'completeness', label: '完整度', type: 'select', options: COMPLETENESS_OPTIONS, formHidden: true, formHiddenReason: '按导入内容自动判定，表单里不给改' },
+      { key: 'source', label: '来源', type: 'select', options: SOURCE_OPTIONS, default: 'manual', formHidden: true, formHiddenReason: '导入 / 同步时自动标记，表单里不给改' },
+      { key: 'syncedAt', label: '同步于', type: 'datetime', formHidden: true, formHiddenReason: '同步时自动记录时间，表单里不给改' },
       // 上次同步的变更（只有真变过才有这行，空了整行不显示）
-      { key: 'lastChange', label: '上次同步变更', type: 'change', formHidden: true, hideEmpty: true },
+      { key: 'lastChange', label: '上次同步变更', type: 'change', formHidden: true, hideEmpty: true, formHiddenReason: '同步时自动生成的 diff，表单里不给改' },
       // ---- 以下是你自己的，同步永不覆盖 ----
       { key: 'myNote', label: '我的备注', type: 'textarea', placeholder: '能不能测、坑在哪、要哪个账号 —— 这些 Apifox 里没有' },
       { key: 'headers', label: 'Headers', type: 'code', rows: 5, placeholder: 'Content-Type: application/json\nAuthorization: Bearer {{token}}' },
       { key: 'body', label: 'Body', type: 'code', rows: 8, placeholder: '{"orderNo": "{{orderNo}}"}' },
       // body 的媒体类型（和 Apifox 的 Body 页签一致）
-      { key: 'bodyType', label: 'Body 类型', type: 'select', options: BODY_TYPE_OPTIONS, formHidden: true },
+      { key: 'bodyType', label: 'Body 类型', type: 'select', options: BODY_TYPE_OPTIONS, formHidden: true, formHiddenReason: '导入 / 同步时自动判定，表单里不给改' },
       { key: 'note', label: '其他备注', type: 'textarea', placeholder: '前置条件、返回字段…' }
     ]
   },
@@ -243,9 +264,9 @@ const COLLECTIONS = [
       { key: 'p99', label: 'P99 (ms)', type: 'number', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '99% 请求的响应时间' },
       { key: 'errRate', label: '错误率 (%)', type: 'number', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '如：0.2' },
       { key: 'samples', label: '样本数', type: 'number', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '总请求数（导入报告自动填）' },
-      { key: 'reportDir', label: '报告目录', type: 'text', onlyFor: { kind: 'perf' }, formHidden: true },
+      { key: 'reportDir', label: '报告目录', type: 'text', onlyFor: { kind: 'perf' }, formHidden: true, formHiddenReason: '导入压测报告时自动写入，表单里不给改' },
       // 压测指标汇总（详情页渲染成表格，字段本身不单独展示）
-      { key: 'perfMetrics', label: '压测指标', type: 'metrics', onlyFor: { kind: 'perf' }, formHidden: true, hideEmpty: true },
+      { key: 'perfMetrics', label: '压测指标', type: 'metrics', onlyFor: { kind: 'perf' }, formHidden: true, hideEmpty: true, formHiddenReason: '详情页渲染成指标表格，表单里不给改' },
       { key: 'conclusion', label: '结论', type: 'textarea', placeholder: '达标没达标、瓶颈在哪、要不要跟进' }
     ]
   }
@@ -295,8 +316,9 @@ const COLLECTIONS = [
       {
         key: 'project',
         label: '所属项目',
-        type: 'text',
-        placeholder: '如：OTA-automation（可留空）'
+        type: 'selectOrCreate',
+        optionsKey: 'project',
+        placeholder: '选一个项目，或直接输入新项目名（可留空）'
       },
       {
         key: 'elements',
@@ -367,6 +389,8 @@ module.exports = {
   ENV_OPTIONS,
   ROLE_OPTIONS,
   TAG_OPTIONS,
+  MODULE_OPTIONS,
+  PROJECT_OPTIONS,
   OPTION_SETS,
   METHOD_OPTIONS,
   COMPLETENESS_OPTIONS,

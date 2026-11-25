@@ -27,8 +27,65 @@ import { matchOnlyFor, recentForApi, resultTone, runLine } from '../../shared/ru
 import VarFillModal from './VarFillModal';
 import CaseLinkModal from './CaseLinkModal';
 import { asArray, fieldOptions, getOptionsSync, loadOptions, OptionsMap } from '../options';
+import { parseElements, normalizeMode, type PageElement } from './PageElementsEditor';
 
 marked.setOptions({ gfm: true, breaks: true });
+
+/**
+ * 「定位方式」的短标签。
+ *
+ * css 是老记录的缺省值（serialize 时根本不写进 JSON），用户看定位值就能认出来，
+ * 所以不显示标签；其余 8 种是 Playwright 的语义化定位（getByRole / getByTestId …），
+ * 必须给个标签，否则 `button:登录` 这种值在表格里看起来像写错的 CSS。
+ */
+const MODE_SHORT_LABEL: Record<string, string> = {
+  xpath: 'XPath',
+  role: 'Role',
+  label: 'Label',
+  placeholder: 'Placeholder',
+  text: 'Text',
+  alttext: 'AltText',
+  title: 'Title',
+  testid: 'TestId'
+};
+
+/**
+ * 一行的定位方式标签：css → 空串（不显示），其余 → Role / TestId 这种短名。
+ * 认不出的脏 mode 走 normalizeMode 兜底成 css，也就是不显示标签。
+ */
+export function elementModeTag(mode: any): string {
+  const m = normalizeMode(mode);
+  return m === 'css' ? '' : MODE_SHORT_LABEL[m] || m;
+}
+
+/** 定位值 + 方式标签（复制成文本时写成 `[Role] button:登录`，不然方式丢了就认不出是语义化定位） */
+export function elementLocatorText(el: PageElement): string {
+  const tag = elementModeTag(el.mode);
+  const sel = String(el.selector || '').trim() || '-';
+  return tag ? `[${tag}] ${sel}` : sel;
+}
+
+/**
+ * 元素定位器 → 可粘贴的纯文本。
+ *
+ * 用制表符分隔（不是 markdown 表格）：用户要的是能直接粘进用例文档 / Excel / 聊天窗口的文本，
+ * 粘到哪里都不会变形，也不是给程序解析的 JSON。
+ */
+export function elementsToText(raw: any): string {
+  const rows = parseElements(raw);
+  if (!rows.length) return '';
+  return [['名称', '定位值', '说明'].join('\t')]
+    .concat(
+      rows.map((el) =>
+        [
+          String(el.name || '').trim() || '-',
+          elementLocatorText(el),
+          String(el.desc || '').trim() || '-'
+        ].join('\t')
+      )
+    )
+    .join('\n');
+}
 
 type Props = {
   record: any;
@@ -321,6 +378,90 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
     }
   };
 
+  /**
+   * 「元素定位器」字段：只读的 3 列表格（名称 / 定位值 / 说明）。
+   *
+   * 原来走 default 分支的 `String(raw)`，把整个 JSON 数组甩成一行：
+   * `[{"name":"usernameInput","selector":"#username","desc":"用户名输入框"},…]`
+   * 名字和定位值挤在一起，对不上号。现在按元素一行渲染。
+   *
+   * 用原生 table + 已有的 .jmx-table 样式，不上 antd Table：
+   *   抽屉只有 560px，antd Table 自带的边框 / 分页 / 空态插图在这里纯属占地方；
+   *   而且 .field-value 是 pre-wrap（会把单元格的空白撑开），原生 table 更好控。
+   */
+  const renderElements = (f: any, raw: any) => {
+    // 复用 PageElementsEditor 的 parseElements：JSON 数组 / 老的「name = selector」多行文本都认
+    const rows = parseElements(raw);
+    const head = (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: rows.length ? 6 : 0 }}>
+        <span className="field-label" style={{ flex: 'none', paddingTop: 0 }}>
+          {f.label}
+          {rows.length ? `（${rows.length} 个）` : ''}
+        </span>
+        <span style={{ flex: 1 }} />
+        {/* 表格上方的复制：复制的是可粘贴的纯文本（制表符分隔），不是 markdown 表格 */}
+        {rows.length ? (
+          <Button
+            type="text"
+            size="small"
+            icon={<CopyOutlined />}
+            title="复制成可直接粘贴的文本（制表符分隔）"
+            onClick={() => copy(elementsToText(raw), false, '元素定位器已复制')}
+          >
+            复制
+          </Button>
+        ) : null}
+      </div>
+    );
+
+    // 没有元素时只给一个「无」，不渲染空表格（用户明确要求）
+    if (!rows.length) {
+      return (
+        <div className="field-row" key={f.key} style={{ display: 'block' }}>
+          {head}
+          <span className="muted">无</span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="field-row" key={f.key} style={{ display: 'block' }}>
+        {head}
+        <table className="jmx-table elements-table" style={{ tableLayout: 'fixed' }}>
+          <thead>
+            <tr>
+              <th style={{ width: '32%' }}>名称</th>
+              <th style={{ width: '40%' }}>定位值</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((el, i) => {
+              const tag = elementModeTag(el.mode);
+              return (
+                <tr key={i}>
+                  <td className="mono" style={{ wordBreak: 'break-all' }}>
+                    {String(el.name || '').trim() || <span className="muted">-</span>}
+                  </td>
+                  <td className="mono" style={{ wordBreak: 'break-all' }}>
+                    {/* 语义化定位（mode ≠ css）给个小标签，一眼看出不是 CSS 选择器 */}
+                    {tag ? (
+                      <Tag bordered={false} color="blue" style={{ marginInlineEnd: 4, fontSize: 11 }} title="语义化定位（不是 CSS 选择器）">
+                        {tag}
+                      </Tag>
+                    ) : null}
+                    {String(el.selector || '').trim() || <span className="muted">-</span>}
+                  </td>
+                  <td style={{ wordBreak: 'break-all' }}>{String(el.desc || '').trim() || <span className="muted">-</span>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
   return (
     <Drawer
       open={!!record}
@@ -398,12 +539,17 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
           if (f.type === 'metrics') return true;
           return !(f.hideEmpty && (data[f.key] === undefined || data[f.key] === null || data[f.key] === ''));
         })
-        .map((f: any) => (
-          <div className="field-row" key={f.key}>
-            <div className="field-label">{f.label}</div>
-            <div className="field-value">{renderValue(f)}</div>
-          </div>
-        ))}
+        .map((f: any) =>
+          // 元素定位器自己撑满整行（3 列表格塞进 74px 标签右边会挤成一条），其余的照常左标签右值
+          f.type === 'elements' ? (
+            renderElements(f, data[f.key])
+          ) : (
+            <div className="field-row" key={f.key}>
+              <div className="field-label">{f.label}</div>
+              <div className="field-value">{renderValue(f)}</div>
+            </div>
+          )
+        )}
 
       <div className="field-row">
         <div className="field-label">更新于</div>

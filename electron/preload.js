@@ -86,7 +86,8 @@ contextBridge.exposeInMainWorld('api', {
 
   // ---- 代码扫描 ----
   codescanRules: () => invoke('codescan:rules'),
-  codescanCoverage: (root, kind, modules, ruleIds) => invoke('codescan:coverage', { root, kind, modules, ruleIds }),
+  // ids：按单条记录筛（v0.46.0 追加的**第 5 个**可选参数，前四个不动，老调用照旧）
+  codescanCoverage: (root, kind, modules, ruleIds, ids) => invoke('codescan:coverage', { root, kind, modules, ruleIds, ids }),
   codescanModules: (kind) => invoke('codescan:modules', { kind }),
   codescanHardcoded: (root, ruleIds) => invoke('codescan:hardcoded', { root, ruleIds }),
   codescanPickDir: () => invoke('codescan:pickDir'),

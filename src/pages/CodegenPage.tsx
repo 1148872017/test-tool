@@ -316,6 +316,7 @@ export default function CodegenPage() {
               setCode('');
             }}
             style={{ width: 240 }}
+            placeholder="选一个生成目标"
             options={targetOptions}
           />
           <span className="muted">类名</span>
@@ -365,10 +366,17 @@ export default function CodegenPage() {
 
               {apiSource === 'record' ? (
                 <>
+                  {/*
+                    接口记录下拉的 placeholder 提示 v0.44 就写了，但**一直没显示出来**：
+                    antd v5 的 Select 把受控的 `value=""` 当成「已选中一个空值」，placeholder 不渲染
+                    （react-dom/server 实测：value="" 不出 placeholder，value=undefined 才出）。
+                    apiId 的初值就是 ''，所以这里必须 `apiId || undefined`，否则用户看到的是个空白下拉，
+                    正是「接口记录缺少 Placeholder 提示」的来源。
+                  */}
                   <Select
                     size="small"
                     style={{ width: '100%' }}
-                    value={apiId}
+                    value={apiId || undefined}
                     onChange={setApiId}
                     placeholder={apis.length ? '选一个接口记录（会用它生成测试类）' : '还没有接口记录'}
                     showSearch
@@ -417,11 +425,13 @@ export default function CodegenPage() {
                   ) : null}
                   {openapiItems.length ? (
                     <>
+                      {/* 文件分支同样要有提示：-1 也是「没选」，用 undefined 才能让 placeholder 出来 */}
                       <Select
                         size="small"
                         style={{ width: '100%' }}
-                        value={openapiIdx}
+                        value={openapiIdx >= 0 ? openapiIdx : undefined}
                         onChange={setOpenapiIdx}
+                        placeholder="选一个文件里的接口（会用它生成测试类）"
                         showSearch
                         optionFilterProp="label"
                         options={openapiItems.map((it, i) => ({
@@ -533,6 +543,7 @@ export default function CodegenPage() {
                               style={{ width: '100%' }}
                               value={mode}
                               options={LOCATOR_MODE_OPTIONS}
+                              placeholder="定位方式"
                               onChange={(v) => setElement(i, 'mode', v as LocatorMode)}
                             />
                           </td>

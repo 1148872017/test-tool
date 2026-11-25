@@ -673,7 +673,8 @@ const API_SYNCED_KEYS = [
   'name',
   'method',
   'url',
-  'module',
+  // module **不在此列**：它是用户资产（v0.46.0 起可在表单里手选/手建），
+  // 同步时不覆盖。首次导入仍会写入（见下面 USER_OWNED_FILL_KEYS）。
   'summary',
   'params',
   'paramSpec',
@@ -687,6 +688,18 @@ const API_SYNCED_KEYS = [
   'completeness',
   'source'
 ];
+
+/**
+ * 「同步时只填空值」的字段（用户资产类）。
+ *
+ * 为什么单独列一份：
+ *   module（接口模块）从 v0.46.0 起可以在表单里手选/手建，是**用户的分类**，
+ *   不属于 openapi 的接口定义。如果跟着同步覆盖，用户改完一同步就白改。
+ *   但首次导入时又该有值（从 Apifox 的 tags 来），所以：
+ *     - 新增记录：有就填
+ *     - 已有记录：**只在原值为空时**才填，非空一律保留用户的
+ */
+const USER_OWNED_FILL_KEYS = ['module'];
 
 /** 最近一次同步里「有实质变更」的接口（附关联用例），供界面重新打开影响面清单 */
 function lastSyncChanges() {
@@ -736,6 +749,8 @@ function syncApis(input) {
       if (!hit) {
         const data = {};
         for (const k of API_SYNCED_KEYS) if (item[k] !== undefined) data[k] = item[k];
+        // 用户资产类字段：新增时照常填（首次导入要有值）
+        for (const k of USER_OWNED_FILL_KEYS) if (item[k] !== undefined) data[k] = item[k];
         data.source = 'openapi';
         data.syncedAt = now;
         data.lastChange = '';
@@ -762,6 +777,12 @@ function syncApis(input) {
 
       const next = Object.assign({}, hit.data, { syncedAt: now, source: 'openapi' });
       for (const k of API_SYNCED_KEYS) if (item[k] !== undefined) next[k] = item[k];
+      // 用户资产类字段：**只在原值为空时**才填，非空保留用户手改的
+      for (const k of USER_OWNED_FILL_KEYS) {
+        const cur = hit.data[k];
+        const empty = cur === undefined || cur === null || String(cur).trim() === '';
+        if (empty && item[k] !== undefined) next[k] = item[k];
+      }
       // 变更 diff：只挑「会让已写用例失效」的结构变化，描述文案改了不算
       const changes = apiDiff(hit.data, next);
       next.lastChange = changes.length ? JSON.stringify({ at: now, changes }) : '';

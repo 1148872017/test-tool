@@ -15,6 +15,7 @@ import {
 import {
   FolderOpenOutlined,
   ReloadOutlined,
+  SyncOutlined,
   SafetyOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -37,6 +38,21 @@ type CoverageItem = {
   module: string;
   hits: number;
   files: string[];
+};
+
+/**
+ * 范围下拉里「按单个接口 / 按单个页面」的选项（codescan:modules 的 records）。
+ *
+ * label 由后端拼好（方法 + 路径 / 页面名 + 路径），前端只负责显示：
+ * 同一个东西两处拼格式，迟早会拼出两种样子。
+ */
+type ScopeRecord = {
+  id: string;
+  name: string;
+  method: string;
+  url: string;
+  module: string;
+  label: string;
 };
 
 type Issue = {
@@ -198,6 +214,16 @@ const fmtClock = (ts: number) => {
 const lastLabel = (ts: number) => (ts ? '上次 ' + fmtClock(ts) : '还没扫过');
 
 /**
+ * 范围指纹：把「哪一类 + 选了哪些模块 + 选了哪些记录」压成一个字符串。
+ *
+ * 只做一件事：比对「现在选的范围」和「上次扫描实际用的范围」是不是同一个。
+ * 不一样就说明屏幕上的结果属于上一次的范围 —— 得提示用户再扫一次，
+ * 不然改了筛选却没变结果，用户会以为筛选功能坏了。
+ */
+const scopeKeyOf = (kind: 'api' | 'page', mods: string[], ids: string[]) =>
+  kind + '|' + mods.join(',') + '|' + ids.join(',');
+
+/**
  * 摘要条：一行 36px 说清「多少条 + 覆盖率 + 什么时候扫的」。
  *
  * 改造前是 4 张 cov-stat 大卡（每张约 80px 高），把结果区挤掉一半高度：
@@ -239,10 +265,26 @@ export default function CodeScanPage() {
   const [view, setView] = useState<'coverage' | 'hardcoded' | 'deps'>('coverage');
   /** 覆盖矩阵的对象：接口 / 页面 */
   const [covKind, setCovKind] = useState<'api' | 'page'>('api');
-  /** 覆盖矩阵的范围筛选：只对比选中的模块（空 = 全部） */
+  /**
+   * 覆盖矩阵的范围（v0.46.0 起两种粒度，共用一个多选框）：
+   *   modules / pickedModules —— 按模块（接口）或项目（页面）筛，空 = 全部
+   *   records / pickedIds     —— 按单条接口 / 单页筛，空 = 全部
+   * 两个都空 = 不筛选（全量对比）；两个都有 = 后端取并集（见 ipc-scan.js 的注释）。
+   */
   const [modules, setModules] = useState<{ name: string; count: number }[]>([]);
   const [pickedModules, setPickedModules] = useState<string[]>([]);
+  const [records, setRecords] = useState<ScopeRecord[]>([]);
+  const [pickedIds, setPickedIds] = useState<string[]>([]);
   const [noModuleCount, setNoModuleCount] = useState(0);
+  /** 手动刷新范围清单时的转圈（自动刷新不转，理由见 loadModules 注释） */
+  const [refreshing, setRefreshing] = useState(false);
+  /** 「开始扫描」在刷范围清单那几毫秒的转圈（防连点发出两次扫描） */
+  const [preparing, setPreparing] = useState(false);
+  /**
+   * 上一次覆盖扫描实际用的范围指纹。
+   * 用来提示「范围改过了，但屏幕上的结果还是上一次的」—— 改完不看这个就会以为筛选没生效。
+   */
+  const [scannedScope, setScannedScope] = useState('');
 
   /** 正在跑的类型（'' = 空闲）：只让当前类型转圈，不牵连其它类型的按钮 */
   const [running, setRunning] = useState<ScanType | ''>('');
@@ -317,17 +359,38 @@ export default function CodeScanPage() {
       .sort((a, b) => a.order - b.order);
   }, [rules]);
 
-  /* ---------- 模块列表（给范围筛选用）---------- */
+  /* ---------- 范围清单（模块/项目聚合 + 单条记录）---------- */
+  /**
+   * 取范围清单。**只取清单，不扫描** ——
+   * 所以切类型时、开始扫描前、点刷新时都能随便调，不会顺带跑一次扫描。
+   *
+   * 取不到时退化成「只有全部」：范围下拉空着、扫描照旧按全量走，
+   * 不能因为清单读失败就把整页顶成错误态（覆盖矩阵本身还是能用的）。
+   *
+   * @param kind 'api' 接口 / 'page' 页面（两边的聚合字段不同：module vs project）
+   * @returns 后端原始结果；读不到返回 null（调用方据此区分「刷新失败」和「没有记录」）
+   */
   const loadModules = async (kind: 'api' | 'page') => {
     try {
       const res = await api.codescanModules(kind);
       if (res && res.ok) {
         setModules(res.modules || []);
+        // 老 preload 没有 records 字段：退化成只有「按模块」一组，不报错
+        setRecords(Array.isArray(res.records) ? res.records : []);
         setNoModuleCount(Number(res.noModule) || 0);
+        return res;
       }
     } catch (e) {
       setModules([]);
+      setRecords([]);
     }
+    return null;
+  };
+
+  /** 清空范围选择：换 kind 时两种粒度的选项整套都变了，旧的选中项全部失效 */
+  const resetScope = () => {
+    setPickedModules([]);
+    setPickedIds([]);
   };
 
   /* ---------- 只切视图，不扫描 ---------- */
@@ -335,8 +398,9 @@ export default function CodeScanPage() {
     if (t === 'cov-api' || t === 'cov-page') {
       const k = t === 'cov-page' ? 'page' : 'api';
       if (k !== covKind) {
-        // 接口和页面的模块清单不同，换 kind 要重新取一次（这只是取清单，不是扫描）
-        setPickedModules([]);
+        // 接口和页面的范围清单不是一套（module vs project），换 kind 要重新取一次
+        // —— 这只是取清单，不是扫描；切类型仍然不触发任何扫描
+        resetScope();
         loadModules(k);
       }
       setCovKind(k);
@@ -354,8 +418,9 @@ export default function CodeScanPage() {
   const doCoverage = async (kind?: 'api' | 'page') => {
     const k = kind || covKind;
     if (k !== covKind) {
-      setPickedModules([]);
-      loadModules(k);
+      // 换 kind 时范围选项整套都换（模块↔项目），旧选中项必须清掉再重取清单
+      resetScope();
+      await loadModules(k);
     }
     setCovKind(k);
 
@@ -381,7 +446,11 @@ export default function CodeScanPage() {
 
     setRunning(k === 'page' ? 'cov-page' : 'cov-api');
     try {
-      const res = await api.codescanCoverage(root || undefined, k, pickedModules, covIds);
+      /**
+       * 范围两种粒度一起交给后端（modules + ids），后端取并集：
+       * 只选模块 = 老行为；只选几条记录 = 精确盯；两个都选 = 都要。
+       */
+      const res = await api.codescanCoverage(root || undefined, k, pickedModules, covIds, pickedIds);
       if (!res || !res.ok) {
         const msg = (res && res.message) || '扫描失败';
         toast(msg, 'error');
@@ -390,8 +459,11 @@ export default function CodeScanPage() {
         return;
       }
       okSlot(setSlot, res);
+      // 记下这次用的范围：范围一改，屏幕上就是「上一次的范围」，要提示出来
+      setScannedScope(scopeKeyOf(k, pickedModules, pickedIds));
       const label = k === 'page' ? '页面' : '接口';
-      toast(`${label}覆盖：${res.covered}/${res.total}（扫描 ${res.scannedFiles} 个文件）`);
+      const scopeNote = res.filtered ? `，范围 ${res.scopeCount} 条` : '';
+      toast(`${label}覆盖：${res.covered}/${res.total}（扫描 ${res.scannedFiles} 个文件${scopeNote}）`);
     } catch (e: any) {
       const msg = '扫描失败：' + (e && e.message ? e.message : e);
       toast(msg, 'error');
@@ -455,14 +527,136 @@ export default function CodeScanPage() {
     }
   };
 
-  /** 「开始扫描」：按当前选中的类型执行 —— 只有这个动作会真的扫 */
-  const doScan = () => {
-    if (view === 'coverage') return doCoverage(covKind);
+  /**
+   * 「开始扫描」：按当前选中的类型执行 —— 只有这个动作会真的扫。
+   *
+   * 覆盖类**扫之前先重取一次范围清单**，这就是「新增接口后模块范围下拉不更新」的另一半修法：
+   * 以前 loadModules 只挂在 useEffect([]) 上，页面不重挂就永远看不到新模块
+   * （接口表单里刚填的模块、刚同步进来的接口，下拉里都没有）。
+   * 现在每次点扫描都先刷一遍清单，再扫 —— 顺序反了就还是拿旧清单去筛。
+   *
+   * 这里是 async 的：等清单回来再发扫描请求，不能并发（否则扫描用的还是旧 modules）。
+   */
+  const doScan = async () => {
+    if (view === 'coverage') {
+      /**
+       * 刷清单这一段也挂到按钮的转圈上（preparing）：
+       * 否则这段几毫秒里按钮看着能点，连点会发出两次扫描。
+       * 单独用一个状态而不是复用 running —— doCoverage 里「一条取数规则都没勾」
+       * 是提前 return 的，running 在那儿不会被清掉，会把按钮卡在转圈上。
+       */
+      setPreparing(true);
+      try {
+        await loadModules(covKind);
+      } finally {
+        setPreparing(false);
+      }
+      await doCoverage(covKind);
+      return;
+    }
     if (view === 'hardcoded') return doHardcoded();
     return doDeps();
   };
 
-  /* 首次进入加载接口模块列表 + 规则表 */
+  /* ---------- 范围行（工具条第三行，扫描前就能设）---------- */
+  /** 范围标签：接口按「模块」聚合，页面按「项目」聚合（两个集合的字段不一样） */
+  const scopeLabel = covKind === 'page' ? '项目范围' : '模块范围';
+  /** 「按模块」这一组的组名 */
+  const scopeGroupModule = covKind === 'page' ? '按项目' : '按模块';
+  /** 「按记录」这一组的组名 */
+  const scopeGroupRecord = covKind === 'page' ? '按单个页面' : '按单个接口';
+  /** 空选时的占位文案：把「能选什么」直接写出来，不让人猜 */
+  const scopePlaceholder =
+    '全部（不筛选）— 可选' + (covKind === 'page' ? '项目或单个页面' : '模块或单个接口');
+
+  /**
+   * Select 的值：两种粒度拼成一个数组，用前缀区分。
+   *   m:模块名   模块/项目组
+   *   r:记录id   单条接口/页面组
+   * 为什么共用一个多选框而不是两个下拉：两个下拉就得回答「两个都选时谁说了算」，
+   * 而这个答案在界面上永远解释不清；一个多选框里「我勾了什么就是什么」没有歧义。
+   */
+  const scopeValues = useMemo(
+    () => [...pickedModules.map((m) => 'm:' + m), ...pickedIds.map((id) => 'r:' + id)],
+    [pickedModules, pickedIds]
+  );
+
+  /** Select → 两个 state：按前缀拆回去，两组各自独立 */
+  const onScopeChange = (vals: string[]) => {
+    setPickedModules(vals.filter((v) => v.startsWith('m:')).map((v) => v.slice(2)));
+    setPickedIds(vals.filter((v) => v.startsWith('r:')).map((v) => v.slice(2)));
+  };
+
+  /** 下拉选项：分组（按模块 / 按记录），模块带计数、记录带方法+路径，都为了好认 */
+  const scopeOptions = useMemo(() => {
+    const groups: { label: string; options: { value: string; label: string }[] }[] = [];
+    if (modules.length) {
+      groups.push({
+        label: scopeGroupModule,
+        options: modules.map((m) => ({ value: 'm:' + m.name, label: m.name + '（' + m.count + ' 条）' }))
+      });
+    }
+    if (records.length) {
+      groups.push({
+        label: scopeGroupRecord,
+        options: records.map((r) => ({ value: 'r:' + r.id, label: r.label }))
+      });
+    }
+    return groups;
+  }, [modules, records, scopeGroupModule, scopeGroupRecord]);
+
+  /** 当前范围会参与对比多少条：清单在手上，扫之前就能算出来，不用先扫一遍看结果 */
+  const scopeCount = useMemo(() => {
+    const mods = new Set(pickedModules);
+    const ids = new Set(pickedIds);
+    if (!mods.size && !ids.size) return records.length;
+    return records.filter((r) => ids.has(r.id) || mods.has(r.module)).length;
+  }, [records, pickedModules, pickedIds]);
+
+  /**
+   * 范围行右侧的一句话：这次到底对比几条。
+   * 一定写出条数 —— 选了个空模块时会显示「参与对比 0 条」，
+   * 否则用户看到空列表会以为「代码里一条都没调用」。
+   */
+  const scopeHint = (() => {
+    if (!modules.length && !records.length) return '还没有接口/页面记录：先去补记录，再回来扫覆盖';
+    /**
+     * 拿不到 records（老 preload / 浏览器预览的假数据）时**不报条数**：
+     * 本地算出来的「0 条」是假的，说错了比不说更糟。
+     */
+    const counted = records.length > 0;
+    if (!pickedModules.length && !pickedIds.length) {
+      if (!counted) return '不选 = 全部参与对比';
+      const noMark = noModuleCount
+        ? '，另有 ' + noModuleCount + ' 条没标' + (covKind === 'page' ? '项目' : '模块')
+        : '';
+      return '不选 = 全部参与对比（' + scopeCount + ' 条' + noMark + '）';
+    }
+    const parts: string[] = [];
+    if (pickedModules.length) parts.push(pickedModules.length + ' 个' + (covKind === 'page' ? '项目' : '模块'));
+    if (pickedIds.length) parts.push(pickedIds.length + ' 条记录');
+    return '已选 ' + parts.join(' + ') + (counted ? '，参与对比 ' + scopeCount + ' 条' : '');
+  })();
+
+  /** 手动刷新范围清单：给「不想重进页面、也不想先扫一遍」的人一个明确入口 */
+  const refreshScope = async () => {
+    setRefreshing(true);
+    const label = covKind === 'page' ? '页面' : '接口';
+    try {
+      const res = await loadModules(covKind);
+      if (res) {
+        const n = Array.isArray(res.records) ? res.records.length : 0;
+        const m = Array.isArray(res.modules) ? res.modules.length : 0;
+        toast('范围选项已刷新：' + m + ' 个' + (covKind === 'page' ? '项目' : '模块') + ' / ' + n + ' 条' + label);
+      } else {
+        toast('范围选项读取失败，扫描时按全部对比', 'error');
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  /* 首次进入加载接口范围清单 + 规则表 */
   useEffect(() => {
     loadModules('api');
     loadRules();
@@ -498,6 +692,12 @@ export default function CodeScanPage() {
 
   /** 旧结果提示：失败时说明「看到的不是本次结果」 */
   const staleNote = slot.data && slot.at ? '下面还是 ' + fmtClock(slot.at) + ' 的结果' : '';
+
+  /**
+   * 范围改过但还没重扫：屏幕上的覆盖结果是**上一次范围**跑出来的。
+   * 必须放在 cov 声明之后（在它之前读 cov 会撞上 TDZ，整页白屏 —— 已经踩过一次）。
+   */
+  const scopeChanged = view === 'coverage' && !!cov && scannedScope !== scopeKeyOf(covKind, pickedModules, pickedIds);
 
   /* ---------- 过滤问题 ---------- */
   const filteredIssues = useMemo(() => {
@@ -705,8 +905,8 @@ export default function CodeScanPage() {
       </div>
 
       {/*
-        第二行：看哪类（Segmented，**只切视图**）+ 开始扫描（唯一触发扫描的按钮）
-        规则入口挪到最右，点开是右侧抽屉，不再占结果区的高度。
+        第二行：看哪类（Segmented，**只切视图**）+ 规则入口（右侧抽屉）
+        这一行只放「看着哪一类」和「按哪些规则」，不放执行按钮。
       */}
       <div className="codescan-bar">
         <Segmented
@@ -724,13 +924,79 @@ export default function CodeScanPage() {
             )
           }))}
         />
-        <Button type="primary" icon={<ReloadOutlined />} loading={!!running} onClick={doScan}>
-          开始扫描
-        </Button>
         <span style={{ flex: 1, minWidth: 8 }} />
         <Button size="small" icon={<FilterOutlined />} onClick={() => setRulesOpen(true)}>
           规则{rules.length ? ` ${ruleIds.length}/${rules.length}` : ''}
         </Button>
+      </div>
+
+      {/*
+        第三行：范围 → 开始扫描。
+
+        为什么范围要挪到这里（v0.46.0）：
+          用户的心智顺序是「选定项目 → 选定范围（不填=全部）→ 开始扫描」。
+          改造前 .cov-scope 长在结果区里，只有**扫过一次**才出现 ——
+          想「先缩范围再扫」根本做不到，只能先全量扫一遍（慢、还可能被上百条
+          无关未覆盖刷屏），再回头点筛选。范围本来就是扫描的输入，不该藏在输出里。
+
+        为什么单独占一行、不挤进第二行：
+          Segmented 四类约 390px；范围是多选框，选中两个模块后 tag 会把宽度撑开；
+          再加规则 + 开始扫描 ≈ 940px，在 980px 内容宽下随便一选就换行，
+          换行后「开始扫描」会被挤到范围下面 —— 顺序反而更乱。
+          独立一行后范围能独占剩余宽度，扫描按钮也固定在最右（肌肉记忆不用改）。
+
+        为什么复用 .cov-scope 这个类名：
+          它就是「范围那一行」的样式（浅底 + 细边 + 可换行），正好是工具条条块的观感；
+          沿用旧类名，styles.css 一行都不用改（并行改造时少一个冲突点）。
+      */}
+      <div className="cov-scope" style={{ marginBottom: 0 }}>
+        {view === 'coverage' ? (
+          <>
+            <span className="muted" style={{ fontSize: 12 }}>
+              {scopeLabel}
+            </span>
+            <Select
+              mode="multiple"
+              size="small"
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              style={{ minWidth: 280, maxWidth: 640 }}
+              value={scopeValues}
+              onChange={(v) => onScopeChange(v as string[])}
+              placeholder={scopePlaceholder}
+              options={scopeOptions}
+              maxTagCount="responsive"
+              disabled={!scopeOptions.length}
+            />
+            <Tooltip title="重新读取接口/页面记录：别的页面刚加的接口，点一下就出现在选项里（每次点「开始扫描」前也会自动刷一次）">
+              <Button
+                size="small"
+                icon={<SyncOutlined />}
+                loading={refreshing}
+                onClick={refreshScope}
+                aria-label="刷新范围选项"
+              >
+                刷新
+              </Button>
+            </Tooltip>
+            {/* 改过范围还没重扫时换成警示色：不改色的话这句话会被当成普通说明读过去 */}
+            <span className="muted" style={{ fontSize: 12, color: scopeChanged ? '#A15C00' : undefined }}>
+              {scopeChanged ? scopeHint + '；范围改过了，点「开始扫描」才生效' : scopeHint}
+            </span>
+          </>
+        ) : (
+          <span className="muted" style={{ fontSize: 12 }}>
+            {view === 'hardcoded' ? '代码体检' : '依赖检查'}按整个代码目录扫，不按范围筛选
+            {modules.length || records.length ? '；要缩范围请切到「接口覆盖 / 页面覆盖」' : ''}
+          </span>
+        )}
+        <span style={{ flex: 1, minWidth: 8 }} />
+        <Tooltip title={view === 'coverage' ? '按上面选的范围扫一次' : '扫一次当前类型'}>
+          <Button type="primary" icon={<ReloadOutlined />} loading={!!running || preparing} onClick={doScan}>
+            开始扫描
+          </Button>
+        </Tooltip>
       </div>
 
       {rulesDrawer}
@@ -798,46 +1064,6 @@ export default function CodeScanPage() {
               )
             ) : (
               <div className="codescan-content codescan-content-scroll">
-                {/* 范围筛选：只对比「本项目相关」的模块，避免全公司文档混进来 */}
-                {modules.length ? (
-                  <div className="cov-scope">
-                    <span className="muted" style={{ fontSize: 12 }}>
-                      {covKind === 'page' ? '项目' : '模块'}范围
-                    </span>
-                    <Select
-                      mode="multiple"
-                      size="small"
-                      allowClear
-                      style={{ minWidth: 260, maxWidth: 560 }}
-                      value={pickedModules}
-                      onChange={setPickedModules}
-                      placeholder="全部（不筛选）— 选几个只对比这些"
-                      options={modules.map((m) => ({
-                        value: m.name,
-                        label: `${m.name}（${m.count}）`
-                      }))}
-                      maxTagCount="responsive"
-                    />
-                    {pickedModules.length ? (
-                      <Button
-                        size="small"
-                        type="link"
-                        onClick={() => {
-                          setPickedModules([]);
-                          doCoverage(covKind);
-                        }}
-                      >
-                        清除筛选并重扫
-                      </Button>
-                    ) : (
-                      <span className="muted" style={{ fontSize: 12 }}>
-                        接口记录里可能包含全公司文档，只选本项目负责的模块更准
-                        {noModuleCount ? `（另有 ${noModuleCount} 条没标模块）` : ''}
-                      </span>
-                    )}
-                  </div>
-                ) : null}
-
                 {!cov.total && !cov.uncovered.length && !cov.coveredList.length ? (
                   <StateEmpty
                     size="page"

@@ -228,12 +228,16 @@ export default function DataTool() {
    *
    * 字段名不再让用户手打：按「上一个字段的类型」（没有就 name）自动命名，
    * 同类型自动带递增序号（userName → userName_2 → userName_3）。
-   * 类型跟随上一个字段是为了「连着加 5 个手机号」不用每次都改下拉。
+   *
+   * **新字段是空白待填的**（用户反馈：原来「类型跟随上一行 + 名字自动填」
+   * 让新行看起来像「已经填好的」，反而不知道该改什么）。
+   *
+   * 现在：点「添加字段」→ 一行空白（类型回默认、名字留空、placeholder 提示）；
+   * 用户**选了类型之后**，setFieldType 会自动补默认名（它只在 name 为空时补）。
+   * 所以「连着加 5 个手机号」仍然只需要点 5 次下拉，名字自动递增。
    */
   const addField = () => {
-    const type = fields.length ? fields[fields.length - 1].type : 'name';
-    const name = nextNameFor(type);
-    setFields((prev) => prev.concat([makeField({ name, type })]));
+    setFields((prev) => prev.concat([makeField()]));
   };
   const removeField = (id: number) => setFields((prev) => prev.filter((f) => f.id !== id));
   const setField = (id: number, key: 'name' | 'type' | 'fixed', v: string) => {
