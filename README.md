@@ -818,7 +818,12 @@ npm run package:docs
 # 5. 验证包内内容 = 当前源码（退出码 2 = 无法验证，别当成功）
 $env:ELECTRON_RUN_AS_NODE="1"
 & ".\node_modules\electron\dist\electron.exe" scripts\verify-asar.cjs
-# 6. 提交 + 打 tag + 上传 Release
+# 6. 提交 + 打 tag
+# 7. 上传 Release —— 三个文件缺一不可：
+#      test-tool-Setup-<ver>-x64.exe   （安装包）
+#      latest.yml                       （electron-builder 生成，含安装包 sha512）
+#      test-tool-docs-<ver>.zip         （文档包）
+#    ⚠️ 漏了 latest.yml，应用内「检查更新」能查到新版本，但下载会被完整性校验拒绝
 ```
 
 ### 加一个集合 / 工具
