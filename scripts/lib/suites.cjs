@@ -19,8 +19,15 @@ const path = require('path');
 
 const SCRIPTS_DIR = path.resolve(__dirname, '..');
 
-/** 前置检查自身不是套件，不参与登记与校验 */
-const NOT_A_SUITE = ['test-preflight.cjs'];
+/**
+ * 不是「业务测试套件」的脚本，不参与登记与校验：
+ *   test-preflight.cjs      —— 环境变量前置检查（跑 env 档前用）
+ *   test-selfcheck.cjs      —— 自检工具本身的自测（跑 npm run check:selftest）
+ *
+ * 为什么自测不放 unit 档：它每次 spawn 70+ 次 node --check + 1 次 tsc，
+ * 单跑要 70 秒。工具不常改，没必要每次 npm test 都跑。
+ */
+const NOT_A_SUITE = ['test-preflight.cjs', 'test-selfcheck.cjs'];
 
 /** unit 档：纯函数 + 临时目录，任何机器都能跑（npm test 只跑这一档） */
 const unit = [

@@ -306,7 +306,12 @@ const walkStepsAll = (list, fn) => {
   return true;
 };
 
-const realDir = 'D:/AI_Workspace/allure-results';
+/*
+ * 可选：如果本机有真实的 allure-results（我生成的演示数据），顺带验证一遍。
+ * 路径不写死 —— 用环境变量或「工作区下默认位置」两种来源，
+ * 找不到就整段跳过（不报错），这样换机器也不会红。
+ */
+const realDir = process.env.ALLURE_REAL_DIR || path.resolve(__dirname, '..', '..', '..', 'allure-results');
 if (fs.existsSync(realDir)) {
   const real = allure.parseAllureDir(realDir);
   check('真实目录解析成功', real.ok === true, real.message);

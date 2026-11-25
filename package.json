@@ -1,7 +1,7 @@
 {
   "name": "test-tool",
   "productName": "测试工作台",
-  "version": "0.49.0",
+  "version": "0.50.0",
   "description": "本地测试工作台：密码库 / 测试账号 / SQL 片段 / 接口记录 / 测试笔记",
   "author": "",
   "license": "MIT",
@@ -60,7 +60,11 @@
     "test-recycle": "node scripts/test-recycle.cjs",
     "test-codelab": "node scripts/test-codelab.cjs",
     "test-faker": "node scripts/test-faker.cjs",
-    "test:debounce": "node scripts/test-debounce.cjs"
+    "test:debounce": "node scripts/test-debounce.cjs",
+    "check": "node scripts/selfcheck.cjs",
+    "check:hint": "node scripts/selfcheck.cjs --fix-hint",
+    "check:selftest": "node scripts/test-selfcheck.cjs",
+    "check:all": "node scripts/selfcheck.cjs && node scripts/test-selfcheck.cjs"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.8.15",
@@ -70,6 +74,8 @@
   },
   "devDependencies": {
     "@ant-design/icons": "^5.5.2",
+    "@types/react": "^19.3.1",
+    "@types/react-dom": "^19.3.0",
     "antd": "^5.29.3",
     "dayjs": "^1.11.13",
     "dompurify": "^3.4.17",
@@ -79,7 +85,8 @@
     "marked": "^18.1.2",
     "playwright-core": "^1.64.1",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "typescript": "^7.0.2"
   },
   "build": {
     "appId": "com.testtool.workbench",
