@@ -185,7 +185,29 @@ const editor = loadTsxModule(path.join(ROOT, 'src', 'components', 'PageElementsE
   'react/jsx-runtime': () => jsxRuntime,
   antd: () => antdProxy,
   '@ant-design/icons': () => iconsProxy,
-  '../../shared/locatorModes': () => require('../shared/locatorModes.js')
+  '../../shared/locatorModes': () => require('../shared/locatorModes.js'),
+  /**
+   * v0.54：编辑器多了「实时校验」入口（走 api.sniff* + SniffPanel）。
+   * 本套件只验解析与占位符，用不到真校验，给最小桩即可；
+   * 不补这两行会直接抛「测试没有为这个依赖准备桩」。
+   */
+  '../api': () => ({
+    __esModule: true,
+    default: {
+      sniffStatus: async () => ({ ok: true, running: false }),
+      sniffStart: async () => ({ ok: false }),
+      sniffHighlight: async () => ({ ok: false }),
+      sniffReopen: async () => ({ ok: false }),
+      sniffStop: async () => ({ ok: true })
+    }
+  }),
+  './SniffPanel': () => ({
+    __esModule: true,
+    default: () => null,
+    describeResult: () => ({ lines: [], tone: 'muted' }),
+    phaseLabel: () => '',
+    browserLabel: () => ''
+  })
 });
 
 const noopComp = () => null;

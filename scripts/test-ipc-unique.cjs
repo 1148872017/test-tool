@@ -21,11 +21,13 @@ const ELECTRON_DIR = path.join(__dirname, '..', 'electron');
  *   +2 失败用例定位源码（v0.51.0 P1-1，新域 electron/ipc/ipc-projects.js）：
  *       projects:locateTest / projects:reveal → 当前实际 114
  *   +1 jmx 局部编辑写回（v0.52.0 L2）：jmx:writeback → 当前实际 115
+ *   +5 页面元素实时校验（v0.54.0，新域 electron/ipc/ipc-sniff.js）：
+ *       sniff:status / -start / -highlight / -reopen / -stop → 当前实际 120
  *
  * 注意：这个数字是**整个 electron/ 目录的通道总数**，多人并行改不同域时
  * 以最后一次实测为准（合并后跑一遍 node scripts/test-ipc-unique.cjs 对一下）。
  */
-const EXPECTED_CHANNELS = 115;
+const EXPECTED_CHANNELS = 120;
 
 /**
  * 递归列出 electron/ 下所有 .js。

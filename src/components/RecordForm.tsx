@@ -490,7 +490,15 @@ export default function RecordForm({ open, conf, record, prefill, warnings, onCl
       case 'accounts':
         return <AccountsEditor value={v} onChange={(next) => set(f.key, next)} />;
       case 'elements':
-        return <PageElementsEditor value={v} onChange={(next) => set(f.key, next)} placeholder={f.placeholder} />;
+        return (
+          <PageElementsEditor
+            value={v}
+            onChange={(next) => set(f.key, next)}
+            placeholder={f.placeholder}
+            // 实时校验要用页面地址起浏览器；url 就是这条记录自己的字段（改一处两处同时生效）
+            pageUrl={String((data || {}).url || '')}
+          />
+        );
       case 'scene':
         return <ScenePicker value={v} onChange={(next) => set(f.key, next)} placeholder={f.placeholder} />;
       case 'vars':

@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Button, Input, Select, Space, Tag } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { LOCATOR_MODES, previewLocatorCode } from '../../shared/locatorModes';
+import api from '../api';
+import SniffPanel, { type SniffPhase, type SniffTarget } from './SniffPanel';
 
 /**
  * 定位方式。
@@ -205,10 +207,91 @@ const XPATH_HINT_STYLE: React.CSSProperties = {
   color: '#d46b08'
 };
 
+/** 顶部工具条（「按顺序校验」）的排版；样式内联，不动 styles.css */
+const SNIFF_BAR_STYLE: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  flexWrap: 'wrap',
+  marginBottom: 6
+};
+
+/**
+ * 实时校验的会话状态。
+ *
+ * **只活在组件内存里**：不写回 elements、不 saveRecord、不改台账。
+ * 关掉面板或者组件卸载（关表单）这一轮就结束 —— 这是产品口径，
+ * 不要「顺手」把它持久化，否则下一轮会看到上次的残留进度。
+ */
+type SniffSession = {
+  open: boolean;
+  phase: SniffPhase;
+  busy: boolean;
+  /** 后端最近一次的统一返回体（面板只照它说事实） */
+  resp: any;
+  /** ok:false 时的 message 原文 */
+  error: string;
+  /** true = 「按顺序校验」这一轮 */
+  seq: boolean;
+  /** 当前盯着的元素 */
+  target: SniffTarget | null;
+  /** 顺序模式下的第几个（1 起） */
+  index: number;
+  total: number;
+  /** 这一轮跳过的元素名（内存里，用于结束时给个交代） */
+  skipped: string[];
+};
+
+const SNIFF_IDLE: SniffSession = {
+  open: false,
+  phase: 'idle',
+  busy: false,
+  resp: null,
+  error: '',
+  seq: false,
+  target: null,
+  index: 0,
+  total: 0,
+  skipped: []
+};
+
+/**
+ * 统一返回体 → 面板该处在哪个状态。规则只写这一处（纯函数，好断言）：
+ *
+ *   ok:false 且浏览器没跑（启动失败：找不到浏览器 / url 不是 http(s)、预览模式不支持）
+ *     → 未启动 + message 原文；
+ *   ok:false 但浏览器还在跑（比如这一次高亮没成功）
+ *     → 保持已就绪 + message 原文；
+ *   ok:true 且 running:false（用户把浏览器窗口关了 / 重启了应用）
+ *     → 会话已结束，可重新开始；
+ *   其余 → 已就绪。
+ *
+ * 注意这里**不改写 message**：后端说什么就显示什么。
+ */
+export function settleSniff(res: any, prev: SniffPhase): { phase: SniffPhase; resp: any; error: string } {
+  const r = res && typeof res === 'object' ? res : {};
+  const failed = r.ok === false;
+  const running = !!r.running;
+  const message = failed ? String(r.message || '（后端没有给出原因）') : '';
+
+  if (failed) {
+    if (running) return { phase: prev === 'starting' ? 'ready' : prev === 'idle' ? 'idle' : 'ready', resp: r, error: message };
+    // 起不来就是没起来；高亮阶段回来说「没在跑」说明窗口已经被关了
+    return { phase: prev === 'starting' || prev === 'idle' ? 'idle' : 'ended', resp: r, error: message };
+  }
+  if (!running) return { phase: prev === 'starting' ? 'idle' : 'ended', resp: r, error: '' };
+  return { phase: 'ready', resp: r, error: '' };
+}
+
 type Props = {
   value: any;
   onChange: (next: string) => void;
   placeholder?: string;
+  /**
+   * 当前记录的页面地址（页面记录里的 url 字段）。
+   * 实时校验要用它起浏览器；没传就说明调用方没接进来，面板会明说「还没有页面地址」。
+   */
+  pageUrl?: string;
 };
 
 /**
@@ -217,7 +300,7 @@ type Props = {
  * 规划要求「在平台里**可视化**维护页面元素名称和定位器」，
  * 所以不能用 textarea 让用户手写，得是表格。
  */
-export default function PageElementsEditor({ value, onChange, placeholder }: Props) {
+export default function PageElementsEditor({ value, onChange, placeholder, pageUrl }: Props) {
   /**
    * 内部维护草稿，避免「边输边序列化」导致光标跳动。
    * 每次改动：更新草稿 + 通知上层（序列化后的字符串）。
@@ -237,6 +320,219 @@ export default function PageElementsEditor({ value, onChange, placeholder }: Pro
 
   /** 最近一次自己 commit 出去的字符串，用来识别父组件的回声 */
   const lastEmitted = useRef<string>('');
+
+  /* ============================================================
+   * 实时校验（sniff:start / sniff:highlight / sniff:reopen / sniff:stop）
+   *
+   * 五个通道的统一返回体：
+   *   { ok, running, browser:'edge'|'chrome', url, name, mode, selector,
+   *     found, total, visible, inIframe, reason:'not-found'|'in-iframe'|'shadow-dom'|'', message }
+   *
+   * 面板只报事实（「已在页面上高亮：xxx」「当前没找到这个元素」…），
+   * 不说成功/失败 —— 判断权在人的眼睛上。
+   * ============================================================ */
+  const [sniff, setSniff] = useState<SniffSession>(() => SNIFF_IDLE);
+
+  /** 卸载时要不要顺手关浏览器：面板开着就说明这一轮还没收尾 */
+  const sniffOpen = useRef<boolean>(false);
+
+  useEffect(() => {
+    sniffOpen.current = sniff.open;
+  }, [sniff.open]);
+
+  const patchSniff = (patch: Partial<SniffSession>) => {
+    setSniff((prev) => Object.assign({}, prev, patch));
+  };
+
+  /**
+   * 统一调用入口：后端契约是「永远 resolve 一个统一返回体」。
+   * 万一通道不存在 / 主进程抛错，这里也折成同形状的 { ok:false, message }，
+   * 面板就不会因为一个 TypeError 白屏。
+   */
+  const request = async (method: string, payload?: any): Promise<any> => {
+    try {
+      const fn = (api as any)[method];
+      if (typeof fn !== 'function') return { ok: false, message: '当前环境没有 ' + method + '（浏览器预览不支持实时校验）' };
+      const raw = await fn(payload);
+      return raw && typeof raw === 'object' ? raw : {};
+    } catch (e: any) {
+      return { ok: false, message: (e && e.message) || String(e) };
+    }
+  };
+
+  /** 拿回包后统一落状态（用函数式更新，免得 await 期间面板已经切到别的阶段） */
+  const applyResponse = (res: any, extra?: Partial<SniffSession>) => {
+    setSniff((prev) => Object.assign({}, prev, { busy: false }, extra || {}, settleSniff(res, prev.phase)));
+  };
+
+  /**
+   * 「这一页的元素行」= 有名字的行（和保存口径一致：serializeElements 也是按名字过滤）。
+   * 每次点击都重新算：用户可能正在改名字/加行，进度不该跟错位。
+   */
+  const sniffQueue = (): SniffTarget[] =>
+    rows
+      .map((r) => ({
+        name: String(r.name || '').trim(),
+        mode: normalizeMode(r.mode) as string,
+        selector: String(r.selector || '').trim()
+      }))
+      .filter((x) => x.name);
+
+  /** 起一次校验（单行「▶ 校验」和顺序模式的每一行都走这里） */
+  const startAt = async (target: SniffTarget, next: Partial<SniffSession>) => {
+    const url = String(pageUrl || '').trim();
+    patchSniff(Object.assign({ open: true, target, busy: false, resp: null, error: '' }, next));
+    if (!url) {
+      patchSniff({ phase: 'idle', error: '这条记录还没有页面地址（url），先填上再校验' });
+      return;
+    }
+    if (!target.name) {
+      patchSniff({ phase: 'idle', error: '这一行还没有元素名称，先补上再校验' });
+      return;
+    }
+    if (!target.selector) {
+      patchSniff({ phase: 'idle', error: '这一行还没有定位值，先补上再校验' });
+      return;
+    }
+    patchSniff({ phase: 'starting', busy: true });
+    const res = await request('sniffStart', { url, name: target.name, mode: target.mode, selector: target.selector });
+    applyResponse(res);
+  };
+
+  /** 单行「▶ 校验」：只校验这一行，不进入顺序模式 */
+  const verifyRow = (i: number) => {
+    const r = rows[i];
+    if (!r) return;
+    const name = String(r.name || '').trim();
+    const selector = String(r.selector || '').trim();
+    const q = sniffQueue();
+    const at = q.findIndex((x) => x.name === name && x.selector === selector);
+    startAt({ name, mode: normalizeMode(r.mode) as string, selector }, {
+      seq: false,
+      index: at >= 0 ? at + 1 : 1,
+      total: q.length,
+      skipped: []
+    });
+  };
+
+  /** 顶部工具条：「按顺序校验」——从第一行开始逐行高亮 */
+  const startSequence = () => {
+    const q = sniffQueue();
+    if (!q.length) {
+      patchSniff(Object.assign({}, SNIFF_IDLE, { open: true, error: '这一页还没有填名称的元素行，没法按顺序校验' }));
+      return;
+    }
+    startAt(q[0], { seq: true, index: 1, total: q.length, skipped: [] });
+  };
+
+  /** 下一个：高亮下一行（index 是 1 起，正好等于下一行的 0 起下标） */
+  const seqNext = () => {
+    const q = sniffQueue();
+    if (sniff.index >= q.length) return;
+    startAt(q[sniff.index], { seq: true, index: sniff.index + 1, total: q.length });
+  };
+
+  /** 重复当前：对当前这一行再发一次 highlight（不重新导航，只看它还在不在） */
+  const seqRepeat = () => {
+    const t = sniff.target;
+    if (!t) return;
+    patchSniff({ busy: true, error: '' });
+    request('sniffHighlight', { name: t.name, mode: t.mode, selector: t.selector }).then((res) => applyResponse(res));
+  };
+
+  /** 跳过：这一行不看，记进「已跳过」并直接高亮下一行 */
+  const seqSkip = () => {
+    const q = sniffQueue();
+    const name = sniff.target ? sniff.target.name : '';
+    const skipped = name ? sniff.skipped.concat([name]) : sniff.skipped;
+    if (sniff.index >= q.length) {
+      patchSniff({ skipped });
+      return;
+    }
+    startAt(q[sniff.index], { seq: true, index: sniff.index + 1, total: q.length, skipped });
+  };
+
+  /** 停止：结束「按顺序」这一轮，浏览器不关（还留着「重新高亮 / 关闭浏览器」） */
+  const seqStop = () => patchSniff({ seq: false });
+
+  const reopenPage = async () => {
+    const url = String(pageUrl || '').trim();
+    if (!url) {
+      patchSniff({ error: '这条记录还没有页面地址（url），没法重新打开' });
+      return;
+    }
+    patchSniff({ busy: true, error: '' });
+    const res = await request('sniffReopen', url);
+    applyResponse(res);
+  };
+
+  const stopBrowser = async () => {
+    patchSniff({ busy: true, error: '' });
+    const res = await request('sniffStop');
+    const stillRunning = !!(res && res.ok !== false && res.running);
+    patchSniff({
+      busy: false,
+      phase: 'idle',
+      seq: false,
+      resp: res,
+      error: stillRunning ? String(res.message || '浏览器没有关掉') : ''
+    });
+  };
+
+  /** 浏览器被关掉 / 应用重启后再来一次 */
+  const sniffRestart = () => {
+    if (!sniff.target) {
+      startSequence();
+      return;
+    }
+    startAt(sniff.target, {
+      seq: sniff.seq,
+      index: sniff.index || 1,
+      total: sniff.total || 1,
+      skipped: sniff.skipped
+    });
+  };
+
+  /** 关面板 = 结束这一轮；面板没了就没有控制入口，浏览器一并关掉 */
+  const closeSniff = () => {
+    sniffOpen.current = false;
+    patchSniff(Object.assign({}, SNIFF_IDLE));
+    request('sniffStop');
+  };
+
+  // 面板开着且已就绪时定期问一次：用户把浏览器窗口关了 / 重启了应用会回 running:false，
+  // 面板要切到「会话已结束，可重新开始」。
+  useEffect(() => {
+    if (!sniff.open || sniff.phase !== 'ready') return undefined;
+    let alive = true;
+    const timer = setInterval(() => {
+      request('sniffStatus').then((res) => {
+        if (!alive) return;
+        if (res && res.ok !== false && res.running === false) {
+          setSniff((prev) => (prev.phase === 'ready' ? Object.assign({}, prev, { phase: 'ended', busy: false }) : prev));
+        }
+      });
+    }, 2500);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [sniff.open, sniff.phase]);
+
+  // 卸载（关表单 / 关详情）也算这一轮结束，别把浏览器窗口留在那儿没人管
+  useEffect(
+    () => () => {
+      if (!sniffOpen.current) return;
+      sniffOpen.current = false;
+      try {
+        const fn = (api as any).sniffStop;
+        if (typeof fn === 'function') Promise.resolve(fn()).catch(() => {});
+      } catch (e) {
+        /* 预览/测试桩里没有这个方法，忽略 */
+      }
+    },
+    []
+  );
 
   // 外部 value 变了（且不是自己刚发出去的那个值）才回填
   useEffect(() => {
@@ -271,14 +567,31 @@ export default function PageElementsEditor({ value, onChange, placeholder }: Pro
 
   return (
     <div className="page-elements-editor">
+      {/* 顶部工具条：按顺序逐行高亮（进度只在内存里） */}
+      <div className="pe-sniff-bar" style={SNIFF_BAR_STYLE}>
+        <Button size="small" onClick={startSequence} disabled={sniff.busy}>
+          ▶ 按顺序校验
+        </Button>
+        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+          从第一行开始逐行高亮；进度只在界面里，不写进台账
+        </span>
+        {String(pageUrl || '').trim() ? null : (
+          <Tag color="orange" style={{ fontSize: 11 }}>
+            这条记录还没填页面地址（url）
+          </Tag>
+        )}
+      </div>
+
       <table className="jmx-table pe-table">
         <thead>
           <tr>
-            <th style={{ width: '22%' }}>名称</th>
-            <th style={{ width: 130 }}>定位方式</th>
-            <th style={{ width: '30%' }}>定位值</th>
+            <th style={{ width: '20%' }}>名称</th>
+            <th style={{ width: 112 }}>定位方式</th>
+            <th style={{ width: '26%' }}>定位值</th>
             <th>说明</th>
-            <th style={{ width: 34 }} />
+            {/* 行右端的「▶ 校验」；宽度压到最小，免得把说明列挤没 */}
+            <th style={{ width: 42 }} />
+            <th style={{ width: 30 }} />
           </tr>
         </thead>
         <tbody>
@@ -338,7 +651,20 @@ export default function PageElementsEditor({ value, onChange, placeholder }: Pro
                     onChange={(e) => setRow(i, 'desc', e.target.value)}
                   />
                 </td>
-                <td>
+                <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                  {/* 行右端的小按钮：只校验这一行（把这一行的 name / mode / selector 和页面 url 发过去） */}
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ paddingInline: 0, fontSize: 11 }}
+                    disabled={sniff.busy}
+                    onClick={() => verifyRow(i)}
+                    title="在浏览器里高亮这一行的元素"
+                  >
+                    ▶ 校验
+                  </Button>
+                </td>
+                <td style={{ textAlign: 'center' }}>
                   <Button
                     type="text"
                     size="small"
@@ -363,6 +689,35 @@ export default function PageElementsEditor({ value, onChange, placeholder }: Pro
         </span>
         <Tag style={{ fontSize: 11 }}>优先用语义化定位（Role / Label / Text），data-testid 垫底</Tag>
       </Space>
+
+      {/* 校验面板：只报事实，进度不落库 */}
+      {sniff.open ? (
+        <SniffPanel
+          phase={sniff.phase}
+          busy={sniff.busy}
+          resp={sniff.resp}
+          error={sniff.error}
+          sequential={sniff.seq}
+          index={sniff.index}
+          total={sniff.total}
+          currentName={sniff.target ? sniff.target.name : ''}
+          currentModeLabel={sniff.target ? MODE_LABEL[sniff.target.mode] || sniff.target.mode : ''}
+          currentSelector={sniff.target ? sniff.target.selector : ''}
+          skipped={sniff.skipped}
+          url={String(pageUrl || '').trim()}
+          onClose={closeSniff}
+          onHighlight={() => {
+            if (sniff.target) seqRepeat();
+          }}
+          onReopen={reopenPage}
+          onStopBrowser={stopBrowser}
+          onNext={seqNext}
+          onRepeat={seqRepeat}
+          onSkip={seqSkip}
+          onStopSeq={seqStop}
+          onRestart={sniffRestart}
+        />
+      ) : null}
     </div>
   );
 }

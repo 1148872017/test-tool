@@ -197,7 +197,18 @@ function loadTsxModule(file, extraStubs) {
       'react/jsx-runtime': () => jsxRuntime,
       antd: () => antdProxy,
       '@ant-design/icons': () => iconsProxy,
-      '../../shared/locatorModes': () => require('../shared/locatorModes.js')
+      '../../shared/locatorModes': () => require('../shared/locatorModes.js'),
+      // 实时校验的两个依赖：
+      //   ../api        —— 组件里只会在「点按钮 / 面板开着轮询」时调它，这里给空桩（调用会走 request 的兜底）
+      //   ./SniffPanel  —— 面板只做展示，桩成占位组件，断言不碰它
+      '../api': () => ({ __esModule: true, default: {} }),
+      './SniffPanel': () => ({
+        __esModule: true,
+        default: (props) => ({ __comp: 'SniffPanel', props: props || {} }),
+        describeResult: () => ({ lines: [], tone: 'muted' }),
+        phaseLabel: () => '',
+        browserLabel: () => ''
+      })
     },
     extraStubs || {}
   );

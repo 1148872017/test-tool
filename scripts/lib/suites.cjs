@@ -81,6 +81,8 @@ const unit = [
   'test-scriptgen.cjs',
   'test-security.cjs',
   'test-skin.cjs',
+  'test-sniff-browser.cjs',
+  'test-sniff-highlight.cjs',
   'test-startup.cjs',
   'test-templates.cjs',
   'test-theme.cjs',

@@ -549,6 +549,116 @@ const isTrashed = (id: string) => {
     return { type, name, enabled, numThreads: src.numThreads, rampUp: src.rampUp, duration: '', loops: src.loops, scheduler: false };
   };
 
+  /* ============================================================
+   * 页面元素「实时校验」的预览实现
+   *
+   * 浏览器预览里没有 CDP、没有本地进程，**不假装能起浏览器**：
+   * 默认五个通道一律回
+   *   { ok:false, running:false, message:'浏览器预览模式不支持实时校验，请在安装版里使用' }
+   * 界面把这句原文显示出来（错误态本身也就能在浏览器里验到）。
+   *
+   * 但面板还有十来个状态（多个匹配 / 找不到 / 不可见 / iframe / shadow DOM /
+   * 会话被关掉…），只看错误态等于没验过。所以留一个**显式调试开关**：
+   *   · 地址栏 `?sniff=cycle`  → 每调一次 highlight/start 走下一个场景（默认推荐）
+   *   · `?sniff=ready | multi | invisible | missing | iframe | shadow | error | closed`
+   *   · 运行中也可以在控制台敲 `__SNIFF_MODE = 'multi'` 即时切换
+   * 不带开关 = 上面那句「不支持」（绝不自作主张起浏览器）。
+   * ============================================================ */
+
+  /** 统一返回体的「什么都不成立」版本 */
+  const sniffUnsupported = () => ({
+    ok: false,
+    running: false,
+    browser: '',
+    url: '',
+    name: '',
+    mode: '',
+    selector: '',
+    found: 0,
+    total: 0,
+    visible: false,
+    inIframe: false,
+    reason: '',
+    message: '浏览器预览模式不支持实时校验，请在安装版里使用'
+  });
+
+  /** 调试开关：优先看控制台里现敲的 __SNIFF_MODE，其次地址栏 ?sniff= */
+  const sniffModeName = () => {
+    try {
+      const fromWindow = String((window as any).__SNIFF_MODE || '').trim();
+      if (fromWindow) return fromWindow.toLowerCase();
+      const q = new URLSearchParams(window.location.search).get('sniff');
+      return String(q || '').trim().toLowerCase();
+    } catch (e) {
+      return '';
+    }
+  };
+  const sniffDebug = () => !!sniffModeName();
+  /** 装配版里起浏览器要 1~3 秒，预览里给一小段延迟，好让「启动中」这个状态看得见 */
+  const sniffDelay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  let sniffRunning = false;
+  let sniffStep = 0;
+  let sniffUrl = '';
+  let sniffName = '';
+  let sniffMode = 'css';
+  let sniffSelector = '';
+
+  /** 当前这次解析出的统一返回体底稿（真机里 url/name/mode/selector 是回显上次的目标） */
+  const sniffBase = () => ({
+    ok: true,
+    running: sniffRunning,
+    browser: 'edge',
+    url: sniffUrl,
+    name: sniffName,
+    mode: sniffMode,
+    selector: sniffSelector,
+    found: 0,
+    total: 0,
+    visible: true,
+    inIframe: false,
+    reason: '',
+    message: ''
+  });
+
+  /**
+   * cycle 模式的九个场景，和面板文案一一对应，点一次「重新高亮 / 下一个」走一个：
+   *   1 已在页面上高亮 → 2 匹配到 3 个 → 3 元素不可见 → 4 没找到 →
+   *   5 iframe → 6 shadow DOM → 7 ok:false 原文 → 8 恢复正常 → 9 会话已结束
+   */
+  const SNIFF_STEPS: Array<() => any> = [
+    () => Object.assign(sniffBase(), { found: 1, total: 1, visible: true }),
+    () => Object.assign(sniffBase(), { found: 3, total: 3, visible: true }),
+    () => Object.assign(sniffBase(), { found: 1, total: 1, visible: false }),
+    () => Object.assign(sniffBase(), { found: 0, total: 0, visible: true, reason: 'not-found' }),
+    () => Object.assign(sniffBase(), { found: 0, total: 0, visible: true, inIframe: true, reason: 'in-iframe' }),
+    () => Object.assign(sniffBase(), { found: 0, total: 0, visible: true, reason: 'shadow-dom' }),
+    () => Object.assign(sniffBase(), { ok: false, found: 0, message: '没找到浏览器：请先安装 Microsoft Edge' }),
+    () => Object.assign(sniffBase(), { found: 1, total: 1, visible: true }),
+    () => {
+      sniffRunning = false;
+      return Object.assign(sniffBase(), { running: false, message: '浏览器窗口已被关闭' });
+    }
+  ];
+
+  const sniffResult = () => {
+    const mode = sniffModeName();
+    const b = sniffBase();
+    if (mode === 'cycle' || mode === 'all') {
+      const step = SNIFF_STEPS[sniffStep % SNIFF_STEPS.length];
+      sniffStep += 1;
+      return step();
+    }
+    if (mode === 'multi') return Object.assign(b, { found: 3, total: 3, visible: true });
+    if (mode === 'invisible') return Object.assign(b, { found: 1, total: 1, visible: false });
+    if (mode === 'missing' || mode === 'notfound') return Object.assign(b, { found: 0, total: 0, visible: true, reason: 'not-found' });
+    if (mode === 'iframe') return Object.assign(b, { found: 0, total: 0, visible: true, inIframe: true, reason: 'in-iframe' });
+    if (mode === 'shadow') return Object.assign(b, { found: 0, total: 0, visible: true, reason: 'shadow-dom' });
+    if (mode === 'error') return Object.assign(b, { ok: false, found: 0, message: '没找到浏览器：请先安装 Microsoft Edge' });
+    // ready / closed / 其他：正常命中一个
+    return Object.assign(b, { found: 1, total: 1, visible: true });
+  };
+
   const api = {
     init: async () => ({
       locked,
@@ -1752,6 +1862,47 @@ const isTrashed = (id: string) => {
     jmxLaunch: async () => ({ ok: false, message: '预览模式不能启动 JMeter' }),
     jmxPickDir: async () => ({ ok: false, message: '预览模式请直接编辑输入框' }),
     jmxPickJmeter: async () => ({ ok: false, message: '预览模式请直接编辑输入框' }),
+
+    /* ---- 页面元素实时校验（mock）----
+     * 五个通道，返回统一形状；不带调试开关时一律「预览不支持」，见上方说明。
+     */
+    sniffStatus: async () => {
+      if (!sniffDebug()) return sniffUnsupported();
+      // closed 这个场景专门演「用户把浏览器窗口关了」：状态回 running:false，面板切到「会话已结束」
+      if (sniffModeName() === 'closed') return Object.assign(sniffBase(), { running: false, message: '浏览器窗口已被关闭' });
+      return Object.assign(sniffBase(), { found: sniffRunning ? 1 : 0, total: sniffRunning ? 1 : 0 });
+    },
+    sniffStart: async (payload?: any) => {
+      if (!sniffDebug()) return sniffUnsupported();
+      sniffUrl = String((payload && payload.url) || '');
+      sniffName = String((payload && payload.name) || '');
+      sniffMode = String((payload && payload.mode) || 'css');
+      sniffSelector = String((payload && payload.selector) || '');
+      await sniffDelay(600); // 让「正在启动浏览器…」这个状态能被看到
+      sniffRunning = true;
+      return sniffResult();
+    },
+    sniffHighlight: async (payload?: any) => {
+      if (!sniffDebug()) return sniffUnsupported();
+      if (payload && payload.name) sniffName = String(payload.name);
+      if (payload && payload.mode) sniffMode = String(payload.mode);
+      if (payload && payload.selector) sniffSelector = String(payload.selector);
+      // 高亮之前顺手保证会话在（真机里主进程也会负责起浏览器）
+      sniffRunning = true;
+      return sniffResult();
+    },
+    sniffReopen: async (url?: string) => {
+      if (!sniffDebug()) return sniffUnsupported();
+      sniffUrl = String(url || sniffUrl);
+      sniffRunning = true;
+      sniffStep = 0;
+      return Object.assign(sniffBase(), { found: 1, total: 1, visible: true, message: '已重新打开页面' });
+    },
+    sniffStop: async () => {
+      if (!sniffDebug()) return sniffUnsupported();
+      sniffRunning = false;
+      return Object.assign(sniffBase(), { running: false, message: '浏览器已关闭' });
+    },
 
     reportScan: async () => ({
       root: 'D:\\demo\\jmx\\report（预览模式模拟）',

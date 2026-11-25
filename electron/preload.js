@@ -134,6 +134,17 @@ contextBridge.exposeInMainWorld('api', {
   jmxPickDir: () => invoke('jmx:pickDir'),
   jmxPickJmeter: () => invoke('jmx:pickJmeter'),
 
+  // ---- 页面元素实时校验（起 Edge/Chrome，用 CDP 高亮定位到的元素）----
+  // 五个通道返回同一个形状，界面只按事实说话：
+  //   { ok, running, browser:'edge'|'chrome', url, name, mode, selector,
+  //     found, total, visible, inIframe, reason, message }
+  // sniff:start / sniff:highlight 的入参是 { url, name, mode, selector } / { name, mode, selector }
+  sniffStatus: () => invoke('sniff:status'),
+  sniffStart: (payload) => invoke('sniff:start', payload),
+  sniffHighlight: (payload) => invoke('sniff:highlight', payload),
+  sniffReopen: (url) => invoke('sniff:reopen', { url }),
+  sniffStop: () => invoke('sniff:stop'),
+
   reportScan: (root) => invoke('report:scan', { root }),
   reportPick: () => invoke('report:pick'),
   reportParse: (dir) => invoke('report:parse', { dir }),

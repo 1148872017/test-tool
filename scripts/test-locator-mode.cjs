@@ -46,7 +46,14 @@ function loadTsxModule(file, extraStubs) {
       'react/jsx-runtime': () => ({ jsx: () => null, jsxs: () => null, Fragment: 'Fragment' }),
       antd: () => new Proxy({}, { get: () => () => null }),
       '@ant-design/icons': () => new Proxy({}, { get: () => () => null }),
-      '../../shared/locatorModes': () => lm
+      '../../shared/locatorModes': () => lm,
+      /**
+       * v0.54：PageElementsEditor 多了实时校验入口（api.sniff* + SniffPanel）。
+       * 本套件只验定位方式的解析与代码预览，桩给空的就行；
+       * 不补这两行会直接抛「测试没有为这个依赖准备桩」。
+       */
+      '../api': () => ({ __esModule: true, default: { sniffStatus: async () => ({ ok: true, running: false }), sniffStart: async () => ({ ok: false }), sniffHighlight: async () => ({ ok: false }), sniffReopen: async () => ({ ok: false }), sniffStop: async () => ({ ok: true }) } }),
+      './SniffPanel': () => ({ __esModule: true, default: () => null, describeResult: () => ({ lines: [], tone: 'muted' }), phaseLabel: () => '', browserLabel: () => '' })
     },
     extraStubs || {}
   );
@@ -290,7 +297,12 @@ check('mode 不是 css 时不该提示（条件里有 mode === css）', (() => {
 const editorSrc = fs.readFileSync(EDITOR, 'utf8');
 const codegenSrc = fs.readFileSync(CODEGEN_PAGE, 'utf8');
 
-check('PageElementsEditor 有「定位方式」列', /<th style=\{\{ width: 130 \}\}>定位方式<\/th>/.test(editorSrc), 'no mode column');
+/**
+ * v0.54：加了「校验」列之后，定位方式列宽度从 130 收到 112。
+ * 断言不该绑死某个像素值（那不是产品约束），改成「这一列存在 + 顺序正确」——
+ * 顺序那条由下面一句负责，这里只认列头本身。
+ */
+check('PageElementsEditor 有「定位方式」列', /<th[^>]*>定位方式<\/th>/.test(editorSrc), 'no mode column');
 check('PageElementsEditor 的定位方式列在名称和定位值之间', editorSrc.indexOf('>名称</th>') < editorSrc.indexOf('>定位方式</th>') && editorSrc.indexOf('>定位方式</th>') < editorSrc.indexOf('>定位值</th>'), 'column order');
 check('PageElementsEditor 用下拉渲染定位方式', /<Select[\s\S]{0,200}options=\{LOCATOR_MODE_OPTIONS\}/.test(editorSrc), 'no Select');
 check('PageElementsEditor 的定位值 placeholder 跟着 mode 变', /placeholder=\{LOCATOR_MODE_PLACEHOLDER\[mode\]\}/.test(editorSrc), 'static placeholder');
