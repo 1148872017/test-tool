@@ -353,6 +353,96 @@ const COLLECTIONS = [
         placeholder: '可选'
       }
     ]
+  },
+  /**
+   * 流程模板（积木区保存的流程）。
+   *
+   * 用户原话：「积木库功能缺保存按钮」—— 拼好的步骤只能当场复制走，关掉就没了。
+   * 这里存的是**结构化步骤 + POM 配置**，读写都在积木区
+   * （src/components/ui-bricks/BricksPanel.tsx），集合页只负责列出来给人看：
+   *   steps 是 JSON 字符串 [{actionId, params, elementMode, elementSelector}]，
+   *   载入时按当前页面元素重新生成定位器，所以元素改了流程不会跟着烂。
+   *
+   * 表单里只留「流程名 / 备注」：其余字段是积木区自动写的快照，手改会把
+   * 步骤和 POM 配置写乱。每个 formHidden 都写明 formHiddenReason，
+   * 否则 scripts/test-module-field.cjs 的「详情/表单一致性」检查会红
+   * （详情看得见、表单里没有，正是 v0.46 修的那个 bug）。
+   * 注意：真正让表单不渲染的是 `formHidden`（RecordForm 按它过滤），
+   * `hideInForm` 只是「这个字段归 UI 管、不该手填」的声明，两个都要写。
+   */
+  {
+    key: 'flows',
+    name: '流程模板',
+    group: '资产',
+    // 图标沿用 src/icons.tsx 已有的映射（ProfileOutlined = 一页流程卡片），不新增图标资源
+    icon: 'ProfileOutlined',
+    desc: '把积木拼好的步骤存下来，下次直接载入',
+    titleField: 'name',
+    titlePlaceholder: '如：登录页流程-1125',
+    listFields: ['pageName'],
+    noFavorite: true,
+    capabilities: {
+      open: null,
+      copyKinds: ['text'],
+      sync: null,
+      showRunLog: false,
+      favorite: false,
+      // 导入 / 导出 / 刷新都有；流程模板没有外部同步源
+      headerActions: ['importData', 'importTemplate', 'exportData', 'refresh'],
+      titleWidthPct: 50
+    },
+    fields: [
+      { key: 'name', label: '流程名', type: 'text', required: true, placeholder: '如：登录页流程-1125' },
+      {
+        key: 'pageId',
+        label: '关联页面',
+        type: 'text',
+        hideInForm: true,
+        formHidden: true,
+        formHiddenReason: '由积木区自动写入，选页面元素即可'
+      },
+      {
+        key: 'pageName',
+        label: '页面',
+        type: 'text',
+        hideInForm: true,
+        formHidden: true,
+        formHiddenReason: '同上，只读快照'
+      },
+      {
+        key: 'steps',
+        label: '步骤',
+        type: 'textarea',
+        hideInForm: true,
+        formHidden: true,
+        formHiddenReason: '结构化数据，由积木区管理'
+      },
+      {
+        key: 'pomMode',
+        label: 'POM 模式',
+        type: 'text',
+        hideInForm: true,
+        formHidden: true,
+        formHiddenReason: '由积木区管理'
+      },
+      {
+        key: 'pomClass',
+        label: 'POM 类名',
+        type: 'text',
+        hideInForm: true,
+        formHidden: true,
+        formHiddenReason: '由积木区管理'
+      },
+      {
+        key: 'pomVar',
+        label: 'POM 变量名',
+        type: 'text',
+        hideInForm: true,
+        formHidden: true,
+        formHiddenReason: '由积木区管理'
+      },
+      { key: 'note', label: '备注', type: 'textarea', placeholder: '这个流程测什么、前置条件…（选填）' }
+    ]
   }
 ];
 

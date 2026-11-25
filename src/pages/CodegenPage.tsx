@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Select, Button, Input, Tag, Space, Segmented, Empty } from 'antd';
 import {
   CodeOutlined,
@@ -34,6 +34,18 @@ try {
   BricksPanelLazy = require('../components/ui-bricks/BricksPanel').default;
 } catch (e) {
   BricksPanelLazy = null;
+}
+
+/**
+ * 「（N 个元素）」hover 提示的包装组件，同样用受保护的 require：
+ * 理由和上面一样 —— 测试里的白名单 require 桩没有登记它，静态 import 会让
+ * 那些套件在载入阶段就崩；真打包时 esbuild 照样把它打进 dist/app.js。
+ */
+let ElementCountTipLazy: any = null;
+try {
+  ElementCountTipLazy = require('../components/ui-bricks/ElementCountTip').default;
+} catch (e) {
+  ElementCountTipLazy = null;
 }
 
 type Target = {
@@ -98,6 +110,17 @@ export default function CodegenPage() {
   const [pageUrl, setPageUrl] = useState('/login');
   /** 载入提示：「已载入：登录页（4 个元素）」，让用户一眼确认带进来了什么 */
   const [pageHint, setPageHint] = useState('');
+  /** 「流程模板」集合的记录（积木区的「载入流程」下拉从这里出） */
+  const [flows, setFlows] = useState<any[]>([]);
+  /**
+   * 本次会话里已经生成过 POM 类的页面（key 见 pomKeyOf）。
+   *
+   * 平台不存生成的代码，所以「类在不在」只能靠这个记：
+   * 点过「页面对象类」的生成预览 → 认为用户的项目里已经有这个类了。
+   */
+  const [pomReadyKeys, setPomReadyKeys] = useState<string[]>([]);
+  /** 积木区当前拼装状态：切到「页面对象类」再切回来时用它恢复（切换会卸载面板） */
+  const bricksStateRef = useRef<any>(null);
   const [elements, setElements] = useState<PageElement[]>([
     { name: 'usernameInput', selector: '#username', desc: '用户名输入框' }
   ]);
@@ -150,6 +173,13 @@ export default function CodegenPage() {
       } catch (e) {
         /* ignore */
       }
+      try {
+        // 流程模板：积木区「载入流程」用；读不到就给空表（不能因此让页面白屏）
+        const rows = await api.records('flows');
+        setFlows(rows || []);
+      } catch (e) {
+        /* ignore */
+      }
     })();
   }, []);
 
@@ -196,8 +226,17 @@ export default function CodegenPage() {
    */
   const filledElements = () => elements.filter((el) => String(el.name || '').trim());
 
+  /**
+   * 「这个页面」的身份：优先用页面记录 id，没有就用「页面名|路径」。
+   * 只用来记住「这套 POM 类本次会话生成过没有」，不进任何持久化数据。
+   */
+  const pomKeyOf = () =>
+    pageId ? 'id:' + pageId : 'text:' + String(pageName || '') + '|' + String(pageUrl || '');
+
   /* ---------- 生成预览 ---------- */
   const doPreview = async () => {
+    // 生成前就取 key：await 之后 pageId 可能已经被用户改掉了
+    const key = pomKeyOf();
     setBusy(true);
     try {
       const payload: any = { targetKey, className };
@@ -239,6 +278,15 @@ export default function CodegenPage() {
       }
       setCode(res.code);
       setFilename(res.filename);
+      /*
+       * 生成成功 = 用户项目里（应该）已经有这个 POM 类了。
+       * 积木区据此把「⚠ 需要先生成」换成「✅ 已生成过」——
+       * 之前用户选「用本页生成的」只看到 new LoginPage(page)，
+       * 完全不知道那个类得先在这里生成。
+       */
+      if (kind === 'page') {
+        setPomReadyKeys((prev) => (prev.indexOf(key) >= 0 ? prev : prev.concat([key])));
+      }
     } catch (e: any) {
       toast('生成失败：' + (e && e.message ? e.message : e), 'error');
     } finally {
@@ -298,6 +346,50 @@ export default function CodegenPage() {
     } catch (e: any) {
       toast('复制失败：' + (e && e.message ? e.message : e), 'error');
     }
+  };
+
+  /**
+   * 积木区的「保存为流程」：写一条 flows 记录（steps 存 JSON 字符串）。
+   *
+   * 面板本身不碰 api（否则测试要给它准备一堆桩），这里拿到 data 直接落库，
+   * 顺便把 flows 列表刷一遍 —— 保存完立刻能从「载入流程」里看到。
+   */
+  const doSaveFlow = async (data: any) => {
+    try {
+      await api.saveRecord({
+        collection: 'flows',
+        title: String((data && data.name) || '').trim(),
+        data,
+        tags: []
+      });
+      try {
+        const rows = await api.records('flows');
+        setFlows(rows || []);
+      } catch (e) {
+        /* 列表没刷新不影响已经存进去的记录 */
+      }
+      return true;
+    } catch (e: any) {
+      toast('保存流程失败：' + (e && e.message ? e.message : e), 'error');
+      return false;
+    }
+  };
+
+  /** 积木面板的提示（保存 / 载入结果）：面板自己不做副作用，toast 收在这里 */
+  const doNotifyBricks = (message: string, level?: 'success' | 'warning' | 'error') => {
+    toast(message, level === 'error' ? 'error' : level === 'warning' ? 'warning' : 'success');
+  };
+
+  /**
+   * 「去生成页面对象类」：切到「页面对象类」视图并顺手生成。
+   *
+   * 用户选「用本页生成的」时只看到 `new LoginPage(page)`，不知道类在哪 ——
+   * 这个按钮把「先有类、再拼方法体」的顺序直接变成一次点击。
+   * 步骤不会丢：积木区的状态由 bricksStateRef 兜着（切换视图会卸载面板）。
+   */
+  const doGoPom = () => {
+    setPageView('pom');
+    void doPreview();
   };
 
   /**
@@ -416,6 +508,18 @@ export default function CodegenPage() {
             elements={filledElements()}
             lang={previewLang}
             onCopy={doCopyBricks}
+            /* ---- 流程模板：保存 / 载入 ---- */
+            flows={flows}
+            onSaveFlow={doSaveFlow}
+            onNotify={doNotifyBricks}
+            /* ---- 「用本页生成的」：这个页面的 POM 类生成了没 ---- */
+            pomReady={pomReadyKeys.indexOf(pomKeyOf()) >= 0}
+            onGoGeneratePom={doGoPom}
+            /* 切换视图会卸载面板：状态回传给页面，回来时原样恢复 */
+            initialState={bricksStateRef.current}
+            onStateChange={(s: any) => {
+              bricksStateRef.current = s;
+            }}
           />
         ) : (
           <div className="muted" style={{ padding: 12 }}>
@@ -552,7 +656,14 @@ export default function CodegenPage() {
               {/* 选中后明确告诉用户「载入了什么、几个元素」，光靠高亮不够醒目 */}
               {pageHint ? (
                 <div style={{ marginTop: 6 }}>
-                  <Tag color="blue">{pageHint}</Tag>
+                  {/* hover 到「（N 个元素）」上列出是哪几个元素（名称 · 定位方式） */}
+                  {ElementCountTipLazy ? (
+                    <ElementCountTipLazy elements={elements}>
+                      <Tag color="blue">{pageHint}</Tag>
+                    </ElementCountTipLazy>
+                  ) : (
+                    <Tag color="blue">{pageHint}</Tag>
+                  )}
                 </div>
               ) : null}
 

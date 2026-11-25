@@ -275,6 +275,45 @@ const SEED: Record<string, any[]> = {
       },
       tags: []
     }
+  ],
+  /**
+   * 流程模板：积木区「保存为流程」写出来的样子（预览里给一条现成的，方便直接点「载入流程」）。
+   * steps 是 JSON 字符串，和真机一致；pomMode / pomClass / pomVar 是当时的 POM 快照。
+   */
+  flows: [
+    {
+      id: 'fl1',
+      collection: 'flows',
+      title: '登录页流程-1125',
+      data: {
+        name: '登录页流程-1125',
+        pageId: 'pg1',
+        pageName: '登录页',
+        steps: JSON.stringify([
+          { actionId: 'goto', params: { url: '/login' } },
+          {
+            actionId: 'fill',
+            params: { el: 'usernameInput', text: 'admin' },
+            elementMode: 'css',
+            elementSelector: '#username'
+          },
+          {
+            actionId: 'click',
+            params: { el: 'submitBtn' },
+            elementMode: 'css',
+            elementSelector: 'button[type=submit]'
+          }
+        ]),
+        pomMode: 'generated',
+        pomClass: 'LoginPage',
+        pomVar: 'loginPage',
+        note: '演示数据：登录成功链路，POM 用本页生成的'
+      },
+      tags: [],
+      favorite: false,
+      created_at: now() - 3600000,
+      updated_at: now() - 3600000
+    }
   ]
 };
 

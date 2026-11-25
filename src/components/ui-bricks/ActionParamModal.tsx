@@ -1,6 +1,7 @@
 import React from 'react';
 import { Input, InputNumber, Modal, Select, Switch, Tag } from 'antd';
-import { elementOptions } from './brickHelpers';
+import { elementOptions, locatorModeShort } from './brickHelpers';
+import ElementCountTip from './ElementCountTip';
 
 /**
  * 点积木后弹出的小面板：按动作的 params 定义自动出控件。
@@ -63,9 +64,27 @@ export default function ActionParamModal(props: Props) {
         if (p.type === 'element') {
           const pickedName = String(raw || '').trim();
           const picked = (elements || []).find((e) => e && String(e.name || '').trim() === pickedName);
+          const filled = (elements || []).filter((e) => e && String(e.name || '').trim()).length;
           return (
             <div key={p.key} style={{ marginBottom: 10 }}>
-              {label}
+              {/*
+                标签上带元素个数，hover 直接列出「名称 · 定位方式」——
+                和积木区「N 个元素」Tag 同一份提示，用户不用退出去看页面元素页。
+              */}
+              <ElementCountTip elements={elements}>
+                <div style={LABEL}>
+                  {p.label || p.key}
+                  {p.required ? <span style={{ color: '#cf1322' }}> *</span> : null}
+                  {filled ? (
+                    <span
+                      className="muted"
+                      style={{ fontWeight: 400, marginLeft: 6, fontSize: 11.5 }}
+                    >
+                      {'（' + filled + ' 个元素）'}
+                    </span>
+                  ) : null}
+                </div>
+              </ElementCountTip>
               {!pageId ? (
                 <div style={{ fontSize: 12, color: '#d46b08', marginBottom: 4 }}>
                   先在上面选页面，元素下拉才有内容
@@ -89,7 +108,7 @@ export default function ActionParamModal(props: Props) {
               />
               {picked ? (
                 <div style={{ marginTop: 4 }}>
-                  <Tag color="blue">{'定位方式：' + String(picked.mode || 'css')}</Tag>
+                  <Tag color="blue">{'定位方式：' + locatorModeShort(picked.mode)}</Tag>
                   <span className="muted mono" style={{ fontSize: 11 }}>
                     {String(picked.selector || '')}
                   </span>

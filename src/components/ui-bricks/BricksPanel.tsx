@@ -6,19 +6,28 @@ import {
   ArrowDownOutlined,
   DeleteOutlined,
   CopyOutlined,
-  ClearOutlined
+  ClearOutlined,
+  SaveOutlined
 } from '@ant-design/icons';
 import { UI_ACTIONS, UI_ACTION_CATEGORIES, actionById } from '../../../shared/uiActions';
 import { generateSteps, pomClassNameFromPage } from '../../../shared/uiStepGen';
 import {
   POM_MODE_OPTIONS,
+  defaultFlowName,
   elementOptions,
+  flowPom,
+  flowRecordData,
+  normalizePomMode,
+  parseFlowSteps,
   stepDefaults,
   summarizeStep,
   toGeneratorSteps,
-  type BricksStep
+  type BricksStep,
+  type PomMode
 } from './brickHelpers';
 import ActionParamModal from './ActionParamModal';
+import ElementCountTip from './ElementCountTip';
+import SaveFlowModal from './SaveFlowModal';
 
 /**
  * 「积木式动作拼装」面板（三栏：积木库 / 已选步骤 / 生成结果）。
@@ -49,6 +58,31 @@ type Props = {
   lang: 'java' | 'python';
   /** 复制走调用方的剪贴板（渲染进程的 api.copy），组件自己不做副作用 */
   onCopy?: (text: string) => void;
+  /** 「流程模板」集合的记录：工具条「载入流程」下拉从这里出 */
+  flows?: any[];
+  /**
+   * 保存为流程：调用方负责写 flows 记录（组件不碰 api / toast，测试才好跑）。
+   * 返回 false = 没存上，面板据此不关弹窗。
+   */
+  onSaveFlow?: (data: any) => Promise<boolean> | boolean;
+  /** 保存 / 载入的结果提示（调用方接 toast）；组件自己不做副作用 */
+  onNotify?: (message: string, level?: 'success' | 'warning' | 'error') => void;
+  /**
+   * 「用本页生成的」：这个页面的 POM 类在**本次会话**里是否已经生成过。
+   * 平台不存生成的代码，所以只能靠调用方记住「点过页面对象类的生成预览」。
+   */
+  pomReady?: boolean;
+  /** 点「去生成页面对象类」：调用方切到 POM 视图并顺手生成 */
+  onGoGeneratePom?: () => void;
+  /** 切走再切回来时恢复上次的步骤 / POM 配置（切换视图会卸载本面板） */
+  initialState?: any;
+  /** 每次步骤或 POM 配置变化都回报给调用方（配合 initialState 做跨视图保留） */
+  onStateChange?: (state: {
+    steps: BricksStep[];
+    pomMode: PomMode;
+    pomClass: string;
+    pomVar: string;
+  }) => void;
 };
 
 type Draft = {
@@ -74,18 +108,53 @@ const PANE_HEAD: React.CSSProperties = {
 };
 
 export default function BricksPanel(props: Props) {
-  const { pages, pageId, onSelectPage, pageName, pageUrl, className, elements, lang, onCopy } = props;
+  const {
+    pages,
+    pageId,
+    onSelectPage,
+    pageName,
+    pageUrl,
+    className,
+    elements,
+    lang,
+    onCopy,
+    flows,
+    onSaveFlow,
+    onNotify,
+    pomReady,
+    onGoGeneratePom,
+    initialState,
+    onStateChange
+  } = props;
 
-  const [steps, setSteps] = useState<BricksStep[]>([]);
-  const [pomMode, setPomMode] = useState<'none' | 'generated' | 'existing'>('none');
+  /**
+   * 初始状态：默认空，但支持从 initialState 恢复。
+   * 为什么要这个 —— 切到「页面对象类」再切回来会卸载本面板，
+   * 用户辛苦拼的 5 步会当场消失（「去生成页面对象类」按钮正好会触发切换）。
+   */
+  const boot = initialState || {};
+
+  const [steps, setSteps] = useState<BricksStep[]>(() =>
+    Array.isArray(boot.steps) ? boot.steps : []
+  );
+  const [pomMode, setPomMode] = useState<PomMode>(() => normalizePomMode(boot.pomMode));
   /** 「用已有类」时用户填的类名（generated 模式的类名自动推，不落这里） */
-  const [pomClass, setPomClass] = useState('');
-  const [pomVar, setPomVar] = useState('');
+  const [pomClass, setPomClass] = useState(() => String(boot.pomClass || ''));
+  const [pomVar, setPomVar] = useState(() => String(boot.pomVar || ''));
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState('');
   const [dragIdx, setDragIdx] = useState(-1);
   /** null = 跟着生成器走；字符串 = 用户手改过（步骤一变就重置） */
   const [manual, setManual] = useState<string | null>(null);
+  /** 「保存为流程」弹窗 */
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [flowName, setFlowName] = useState('');
+  const [flowNote, setFlowNote] = useState('');
+  const [flowError, setFlowError] = useState('');
+  /** 保存 / 载入之后的一行结果（「已载入 5 步」/「关联页面已删除…」） */
+  const [flowHint, setFlowHint] = useState('');
+  /** hint 是警告还是成功（决定 Tag 颜色） */
+  const [flowWarn, setFlowWarn] = useState(false);
 
   /** 只认填了名字的元素：空行给出去会变成 `loginPage.()` */
   const elList = useMemo(
@@ -123,6 +192,115 @@ export default function BricksPanel(props: Props) {
 
   const shown = manual === null ? gen.code : manual;
   const copyText = gen.imports.length ? gen.imports.join('\n') + '\n\n' + shown : shown;
+
+  /* ---------------- 流程模板：保存 / 载入 ---------------- */
+
+  /** 「流程模板」集合里的记录（没传给就当空表，下拉显示「还没有」） */
+  const flowList = Array.isArray(flows) ? flows : [];
+  const flowOptions = flowList.map((f: any) => {
+    const d = (f && f.data) || {};
+    const label = String(d.name || (f && f.title) || '').trim() || '(未命名流程)';
+    return { value: f.id, label: d.pageName ? label + ' · ' + d.pageName : label };
+  });
+
+  const notify = (message: string, level?: 'success' | 'warning' | 'error') => {
+    if (onNotify) onNotify(message, level);
+  };
+
+  /** 打开保存弹窗：名字先按「页面名 + 月日」填好，用户回车就能存 */
+  const openSave = () => {
+    setFlowName(defaultFlowName(pageName));
+    setFlowNote('');
+    setFlowError('');
+    setSaveOpen(true);
+  };
+
+  /** 保存：把当前步骤 + POM 配置交给调用方写 flows 记录 */
+  const doSaveFlow = async () => {
+    const name = String(flowName || '').trim();
+    if (!name) {
+      setFlowError('流程名不能为空');
+      return;
+    }
+    if (!steps.length) {
+      setFlowError('还没有步骤，先拼两步再存');
+      return;
+    }
+    const data = flowRecordData({
+      name,
+      note: flowNote,
+      pageId,
+      pageName,
+      steps,
+      pomMode,
+      // 自动类名也存下来：流程模板列表 / 详情里能直接看到这套流程用的是哪个类
+      pomClass: pomMode === 'existing' ? pomClass : pomMode === 'generated' ? autoClass : '',
+      pomVar
+    });
+    let ok = false;
+    if (onSaveFlow) {
+      try {
+        ok = (await onSaveFlow(data)) !== false;
+      } catch (e) {
+        ok = false;
+      }
+    }
+    if (!ok) {
+      setFlowError('没存上：详见上方提示');
+      return;
+    }
+    setSaveOpen(false);
+    setFlowName('');
+    setFlowNote('');
+    setFlowError('');
+    setFlowWarn(false);
+    setFlowHint('已保存流程「' + name + '」');
+    notify('已保存，去侧栏「流程模板」查看', 'success');
+  };
+
+  /**
+   * 载入流程：恢复步骤 + POM 配置 + 页面选择。
+   *
+   * 页面还在就自动选中（元素从页面来）；页面被删了只提示、不清空步骤 ——
+   * 步骤里带着选元素时的定位快照，换个页面重选元素仍能接着用。
+   */
+  const loadFlow = (id: string) => {
+    const rec = flowList.find((f: any) => f && f.id === id);
+    if (!rec) return;
+    const data = rec.data || {};
+    const restored = parseFlowSteps(data.steps);
+    if (!restored.length) {
+      setFlowWarn(true);
+      setFlowHint('这条流程里没有能用的步骤（可能已被删干净）');
+      return;
+    }
+    setSteps(restored);
+    setManual(null);
+    setDraft(null);
+    const pom = flowPom(data);
+    setPomMode(pom.pomMode);
+    setPomClass(pom.pomClass);
+    setPomVar(pom.pomVar);
+
+    const pid = String(data.pageId || '').trim();
+    const hit = pid ? pages.find((p: any) => p && p.id === pid) : null;
+    const name = String(data.name || (rec && rec.title) || '').trim();
+    if (hit) {
+      if (pid !== pageId) onSelectPage(pid);
+      setFlowWarn(false);
+      setFlowHint('已载入「' + name + '」：' + restored.length + ' 步');
+      notify('已载入流程「' + name + '」（' + restored.length + ' 步）', 'success');
+    } else {
+      setFlowWarn(true);
+      setFlowHint('已载入「' + name + '」，但关联页面已删除，元素需要重选');
+      notify('关联页面已删除，元素需要重选', 'warning');
+    }
+  };
+
+  // 步骤 / POM 配置变了就回报（调用方用它做跨视图保留）
+  useEffect(() => {
+    if (onStateChange) onStateChange({ steps, pomMode, pomClass, pomVar });
+  }, [steps, pomMode, pomClass, pomVar]);
 
   /* ---------------- 步骤增删改移 ---------------- */
   const openNew = (action: any) => {
@@ -257,7 +435,14 @@ export default function BricksPanel(props: Props) {
           }))}
         />
         {pageId ? (
-          <Tag color="blue">{elList.length + ' 个元素'}</Tag>
+          /*
+           * 「（N 个元素）」上给 hover 提示：每行一个元素（名称 · 定位方式）。
+           * 光看数字不知道是哪几个，得回头翻「页面元素」页 —— 用户明确提过这个痛点。
+           * 元素为空时 ElementCountTip 不包 Tooltip（空提示框更让人困惑）。
+           */
+          <ElementCountTip elements={elList}>
+            <Tag color="blue">{elList.length + ' 个元素'}</Tag>
+          </ElementCountTip>
         ) : (
           <span className="muted" style={{ fontSize: 12 }}>
             先选页面，元素下拉才有内容
@@ -301,7 +486,83 @@ export default function BricksPanel(props: Props) {
             />
           </>
         ) : null}
+
+        {/* 「流程模板」：保存 / 载入。放在工具条最右边，拼完随手存 */}
+        <Space size={6} style={{ marginLeft: 'auto' }}>
+          <Button
+            size="small"
+            icon={<SaveOutlined />}
+            disabled={!steps.length}
+            title={steps.length ? '把当前步骤存成流程模板，下次直接载入' : '先拼两步再保存'}
+            onClick={openSave}
+          >
+            保存为流程
+          </Button>
+          <Select
+            size="small"
+            style={{ width: 200 }}
+            // 不设 value：这是「动作」下拉不是「状态」下拉，选完仍显示 placeholder
+            value={undefined}
+            disabled={!flowOptions.length}
+            showSearch
+            optionFilterProp="label"
+            placeholder={flowOptions.length ? '载入流程' : '载入流程（还没有）'}
+            options={flowOptions}
+            onChange={(v) => (v ? loadFlow(String(v)) : undefined)}
+          />
+        </Space>
       </div>
+
+      {/* ---------- 「用本页生成的」：产物在哪 / 先做什么 ---------- */}
+      {pomMode === 'generated' ? (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            flexWrap: 'wrap',
+            padding: '6px 10px',
+            borderRadius: 8,
+            background: pomReady ? '#f6ffed' : '#fffbe6',
+            border: '1px solid ' + (pomReady ? '#b7eb8f' : '#ffe58f')
+          }}
+        >
+          <span style={{ fontSize: 12.5, color: pomReady ? '#237804' : '#ad6800' }}>
+            {(pomReady ? '✅ 类名 ' : '⚠ 类名 ') +
+              autoClass +
+              (pomReady ? ' 已生成过（存到你的项目里了）' : ' 还没生成')}
+          </span>
+          {pomReady ? (
+            <Button
+              size="small"
+              type="link"
+              style={{ padding: 0 }}
+              onClick={() => (onGoGeneratePom ? onGoGeneratePom() : undefined)}
+            >
+              先看页面对象类 →
+            </Button>
+          ) : (
+            <Button
+              size="small"
+              type="primary"
+              ghost
+              onClick={() => (onGoGeneratePom ? onGoGeneratePom() : undefined)}
+            >
+              去生成页面对象类 →
+            </Button>
+          )}
+          <span className="muted" style={{ fontSize: 11.5, width: '100%', lineHeight: 1.7 }}>
+            {'① 先在「页面对象类」生成 POM 类（存到你的项目里）　② 再回来用积木拼方法体 —— 方法体里只调用这个类，不会自动建文件'}
+          </span>
+        </div>
+      ) : null}
+
+      {/* ---------- 流程模板的结果一行（保存 / 载入之后） ---------- */}
+      {flowHint ? (
+        <div style={{ fontSize: 12 }}>
+          <Tag color={flowWarn ? 'orange' : 'green'}>{flowHint}</Tag>
+        </div>
+      ) : null}
 
       {/* ---------- 三栏 ---------- */}
       <div
@@ -549,6 +810,23 @@ export default function BricksPanel(props: Props) {
             setError('');
           }}
           onOk={confirmDraft}
+        />
+      ) : null}
+
+      {saveOpen ? (
+        <SaveFlowModal
+          open
+          name={flowName}
+          note={flowNote}
+          stepCount={steps.length}
+          error={flowError}
+          onNameChange={setFlowName}
+          onNoteChange={setFlowNote}
+          onCancel={() => {
+            setSaveOpen(false);
+            setFlowError('');
+          }}
+          onOk={doSaveFlow}
         />
       ) : null}
     </div>

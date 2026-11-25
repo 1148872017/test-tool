@@ -28,6 +28,7 @@ const unit = [
   'test-allure-steps.cjs',
   'test-allure.cjs',
   'test-brand.cjs',
+  'test-bricks-save.cjs',
   'test-bundle.cjs',
   'test-codegen.cjs',
   'test-codelab.cjs',
