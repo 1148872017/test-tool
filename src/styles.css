@@ -49,6 +49,17 @@
   --primary-soft: #efecff;
   /* 文字色（链接、选中的导航项、强调文字），压白底 6.66:1 */
   --primary-text: #5443d6;
+  /**
+   * 主题色派生色：边框 / 光晕。
+   *
+   * 这两个不能写死紫色 —— 换主题后 --primary 变了，声明在这里的 color-mix
+   * 会在「使用处」按新的 --primary 现算，所以一条声明覆盖全部主题。
+   * （写 rgba(108,92,231,.22) 这种就永远紫，是本次修的 bug 之一）
+   */
+  --primary-line: color-mix(in srgb, var(--primary) 24%, #fff);
+  --primary-line-soft: color-mix(in srgb, var(--primary) 18%, #fff);
+  --primary-line-strong: color-mix(in srgb, var(--primary) 36%, #fff);
+  --primary-glow: color-mix(in srgb, var(--primary) 26%, transparent);
   --sidebar-w: 226px;
 }
 
@@ -127,7 +138,7 @@ body {
   overflow: hidden;
   /* 图片本身有底色，这里只兜底（加载失败时不会露出白块） */
   background: var(--primary-soft);
-  box-shadow: 0 3px 8px rgba(108, 92, 231, 0.22);
+  box-shadow: 0 3px 8px var(--primary-glow);
 }
 
 .brand-mark-img {
@@ -473,13 +484,13 @@ body {
 }
 
 .pg-chip:hover {
-  border-color: #d7d2fb;
+  border-color: var(--primary-line);
   color: var(--primary-text);
 }
 
 .pg-chip.active {
   background: var(--primary-soft);
-  border-color: #ddd5fb;
+  border-color: var(--primary-line-soft);
   color: var(--primary-text);
 }
 
@@ -815,7 +826,7 @@ body {
 .markdown-body blockquote {
   margin: 8px 0;
   padding: 4px 12px;
-  border-left: 3px solid #d8d2fb;
+  border-left: 3px solid var(--primary-line);
   color: #5c6478;
 }
 
@@ -867,7 +878,7 @@ body {
 
 .calc-result {
   background: var(--primary-soft);
-  border: 1px solid #e3ddff;
+  border: 1px solid var(--primary-line-soft);
   border-radius: 10px;
   padding: 10px 12px;
 }
@@ -893,7 +904,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(circle at 50% 30%, #f6f4ff 0%, #f4f5fa 55%);
+  background: radial-gradient(circle at 50% 30%, var(--primary-soft) 0%, var(--bg) 55%);
 }
 
 .lock-card {
@@ -903,7 +914,7 @@ body {
   border-radius: 16px;
   padding: 28px 26px 24px;
   text-align: center;
-  box-shadow: 0 18px 50px rgba(60, 52, 130, 0.09);
+  box-shadow: 0 18px 50px color-mix(in srgb, var(--primary) 12%, transparent);
 }
 
 .lock-mark {
@@ -911,13 +922,13 @@ body {
   height: 46px;
   border-radius: 13px;
   margin: 0 auto 14px;
-  background: linear-gradient(135deg, #7d6cf0, #5a47d8);
+  background: linear-gradient(135deg, var(--primary), var(--primary-text));
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 20px;
-  box-shadow: 0 8px 18px rgba(108, 92, 231, 0.3);
+  box-shadow: 0 8px 18px var(--primary-glow);
 }
 
 .toolbox-item + .toolbox-item {
@@ -1449,7 +1460,7 @@ body {
   line-height: 1.2;
 }
 .sync-cell.is-new .sync-num {
-  color: #6b4ee6;
+  color: var(--primary-text);
 }
 .sync-cell.is-dim .sync-num {
   color: var(--muted);
@@ -1494,9 +1505,9 @@ body {
   cursor: pointer;
 }
 .link-suggest-item:hover {
-  background: #f4f1ff;
-  border-color: #ddd5fb;
-  color: #5b4bb8;
+  background: var(--primary-soft);
+  border-color: var(--primary-line-soft);
+  color: var(--primary-text);
 }
 .link-suggest-plus {
   font-size: 10px;
@@ -1512,18 +1523,18 @@ body {
   margin-top: 14px;
   padding: 10px 12px;
   border-radius: 10px;
-  background: #f7f5ff;
-  border: 1px solid #e6e0fb;
+  background: var(--primary-soft);
+  border: 1px solid var(--primary-line-soft);
 }
 .sync-change-head {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 12.5px;
-  color: #4a3f8a;
+  color: var(--primary-text);
 }
 .sync-change-icon {
-  color: #6b4ee6;
+  color: var(--primary-text);
 }
 .sync-change-tags {
   margin: 8px 0 10px;
@@ -1552,8 +1563,8 @@ body {
 }
 .change-tag {
   font-size: 12px;
-  background: #f2efff;
-  color: #5b4bb8;
+  background: var(--primary-soft);
+  color: var(--primary-text);
   margin-inline-end: 0;
 }
 .change-block {
@@ -1616,7 +1627,7 @@ body {
   font-size: 12.5px;
 }
 .impact-case:hover {
-  background: #f6f4ff;
+  background: var(--primary-soft);
 }
 .impact-case-icon {
   color: #8b90a8;
@@ -1921,9 +1932,9 @@ body {
   word-break: break-all;
 }
 .json-table-complex {
-  color: #6c5ce7;
+  color: var(--primary-text);
   cursor: help;
-  border-bottom: 1px dashed #c9c2f5;
+  border-bottom: 1px dashed var(--primary-line-strong);
 }
 .json-table-tip {
   margin: 0;

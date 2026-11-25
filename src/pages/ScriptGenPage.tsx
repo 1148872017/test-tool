@@ -8,13 +8,46 @@ import {
   ReloadOutlined,
   PlusOutlined,
   DeleteOutlined,
-  WarningOutlined
+  WarningOutlined,
+  ReadOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
 import StateEmpty from '../components/states/StateEmpty';
+import ScriptTemplatesDrawer from '../components/ScriptTemplatesDrawer';
 
 type Tab = 'jmx' | 'sql';
+
+/**
+ * 附加 JSR223 代码。
+ *
+ * 为什么这里要能做（v0.44.0 用户反馈「JMeter 脚本无法编辑断言」）：
+ *   之前生成器只会写死「响应断言-状态码200」和「持续时间断言」，
+ *   用户想加一条业务断言只能生成完再去 JMeter GUI 里手工拖一个元件。
+ *   现在把脚本模板里的 Groovy 直接带进生成流程，生成出来就是能跑的脚本。
+ *
+ * type 与 shared/jmxgen.js 的 extraElements.type 一一对应：
+ *   assertion = JSR223 断言 / pre = JSR223 前置处理器 / post = JSR223 后置处理器
+ */
+type ExtraType = 'assertion' | 'pre' | 'post';
+
+type ExtraElement = {
+  /** 行键：删中间一行时不让后面的输入框错位复用 */
+  id: number;
+  type: ExtraType;
+  code: string;
+  /** 来源模板名（写进 jmx 的 testname，JMeter 树里好认；手填的为空） */
+  name?: string;
+};
+
+/** 附加代码行自增 id（只在前端当 React key） */
+let extraSeq = 0;
+
+const EXTRA_OPTIONS = [
+  { value: 'pre', label: '前置处理' },
+  { value: 'assertion', label: '断言' },
+  { value: 'post', label: '后置处理' }
+];
 
 /** MySQL 表操作 */
 type TableOp = {
@@ -49,6 +82,11 @@ export default function ScriptGenPage() {
   const [csvRecycle, setCsvRecycle] = useState(true);
   const [csvStopThread, setCsvStopThread] = useState(false);
   const [csvIgnoreFirst, setCsvIgnoreFirst] = useState(false);
+
+  /** 脚本模板抽屉 */
+  const [tplOpen, setTplOpen] = useState(false);
+  /** 附加 JSR223 代码（从模板带过来，或自己粘） */
+  const [extraElements, setExtraElements] = useState<ExtraElement[]>([]);
 
   /* ============ 数据库 SQL（MySQL / SQLite）============ */
   const [sqlMode, setSqlMode] = useState<'snapshot' | 'cleanup' | 'restore'>('snapshot');
@@ -87,6 +125,27 @@ export default function ScriptGenPage() {
     };
   };
 
+  /**
+   * 组装附加代码。
+   * 空行（点了「添加」还没粘代码）直接过滤，别在 jmx 里留空脚本元件。
+   */
+  const buildExtras = () =>
+    extraElements
+      .filter((e) => e.code.trim())
+      .map((e) => ({ type: e.type, code: e.code, name: e.name || '' }));
+
+  /* ---------- 附加代码增删改 ---------- */
+  const addExtra = () => setExtraElements((prev) => prev.concat([{ id: ++extraSeq, type: 'assertion', code: '' }]));
+  const removeExtra = (id: number) => setExtraElements((prev) => prev.filter((e) => e.id !== id));
+  const setExtra = (id: number, patch: Partial<Omit<ExtraElement, 'id'>>) =>
+    setExtraElements((prev) => prev.map((e) => (e.id === id ? Object.assign({}, e, patch) : e)));
+
+  /** 模板抽屉「填入附加代码」：占位符已按模板默认值填好，生成即可跑 */
+  const pickTemplate = (item: { type: ExtraType; code: string; name: string }) => {
+    setExtraElements((prev) => prev.concat([{ id: ++extraSeq, type: item.type, code: item.code, name: item.name }]));
+    toast('已填入附加代码（' + (item.type === 'assertion' ? '断言' : item.type === 'pre' ? '前置处理' : '后置处理') + '），点「生成预览」写进 jmx');
+  };
+
   /* ---------- 生成 jmx ---------- */
   const doGenJmx = async () => {
     if (!apiIds.length) {
@@ -106,7 +165,8 @@ export default function ScriptGenPage() {
         domain,
         port,
         onError,
-        csv: buildCsv()
+        csv: buildCsv(),
+        extraElements: buildExtras()
       });
       if (!res.ok) {
         toast(res.message || '生成失败', 'error');
@@ -142,7 +202,8 @@ export default function ScriptGenPage() {
         domain,
         port,
         onError,
-        csv: buildCsv()
+        csv: buildCsv(),
+        extraElements: buildExtras()
       });
       if (res.canceled) return;
       if (!res.ok) {
@@ -235,6 +296,16 @@ export default function ScriptGenPage() {
             { label: '数据库快照 / 清理', value: 'sql' }
           ]}
         />
+        {/*
+         * 为什么「压测脚本」和「脚本生成」不合并（用户问过）：
+         *   两者的输入不一样——「压测脚本」读的是磁盘上**已有的** .jmx（索引、健康检查、
+         *   启动 JMeter），「脚本生成」是从接口记录**产出新的** .jmx（选接口、设线程、
+         *   附加断言）。合并后一个页面里既有「扫描文件」又有「生成文件」，
+         *   顶部还得再放一层数据源切换，比现在两页更绕。这里用一句说明代替合并。
+         */}
+        <span className="muted" style={{ fontSize: 12 }}>
+          「压测脚本」页看的是你已经有的 .jmx 脚本；这里生成的是新的 jmx 文件。
+        </span>
       </div>
 
       {/* ============ JMeter 脚本 ============ */}
@@ -372,6 +443,72 @@ export default function ScriptGenPage() {
               </>
             ) : null}
 
+            {/* 附加代码：把脚本模板里的断言 / 提取代码直接生成进 jmx（不用生成完再去 GUI 里拖元件） */}
+            <div className="scriptgen-field">
+              <label>附加代码（JSR223，可选）</label>
+              {extraElements.length ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {extraElements.map((e) => (
+                    <div
+                      key={e.id}
+                      style={{
+                        border: '1px solid var(--line-soft)',
+                        borderRadius: 6,
+                        padding: 6,
+                        background: '#fff'
+                      }}
+                    >
+                      <Space size={6} style={{ width: '100%', justifyContent: 'space-between' }}>
+                        <Space size={6}>
+                          <Select
+                            size="small"
+                            value={e.type}
+                            onChange={(v) => setExtra(e.id, { type: v })}
+                            style={{ width: 108 }}
+                            options={EXTRA_OPTIONS}
+                          />
+                          {e.name ? (
+                            <Tag style={{ fontSize: 11, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {e.name}
+                            </Tag>
+                          ) : null}
+                        </Space>
+                        <Button
+                          type="text"
+                          size="small"
+                          danger
+                          icon={<DeleteOutlined />}
+                          onClick={() => removeExtra(e.id)}
+                          aria-label={'删除附加代码 ' + (e.name || e.type)}
+                        />
+                      </Space>
+                      <Input.TextArea
+                        size="small"
+                        className="mono"
+                        value={e.code}
+                        autoSize={{ minRows: 2, maxRows: 8 }}
+                        placeholder={'// 从「脚本模板」带过来，或直接粘 Groovy 代码'}
+                        onChange={(ev) => setExtra(e.id, { code: ev.target.value, name: '' })}
+                        style={{ marginTop: 6 }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="muted" style={{ fontSize: 12 }}>
+                  还没有附加代码。点「脚本模板」挑一条断言/提取模板 → 「填入附加代码」，就会写进生成的 jmx。
+                </div>
+              )}
+              <Space size={6} style={{ marginTop: 2 }}>
+                <Button size="small" type="link" icon={<PlusOutlined />} onClick={addExtra}>
+                  添加附加代码
+                </Button>
+                <Button size="small" type="link" icon={<ReadOutlined />} onClick={() => setTplOpen(true)}>
+                  从模板选
+                </Button>
+              </Space>
+            </div>
+
             <div className="scriptgen-field">
               <label>JMeter 版本</label>
               <div className="muted" style={{ fontSize: 12 }}>
@@ -389,6 +526,10 @@ export default function ScriptGenPage() {
             </div>
 
             <Space size={6} wrap style={{ marginTop: 8 }}>
+              {/* 脚本模板入口：断言/提取代码的现成写法，选中可一键填进上面的附加代码 */}
+              <Button size="small" icon={<ReadOutlined />} onClick={() => setTplOpen(true)}>
+                脚本模板
+              </Button>
               <Button type="primary" size="small" icon={<PlayCircleOutlined />} onClick={doGenJmx} loading={busy}>
                 生成预览
               </Button>
@@ -662,6 +803,17 @@ export default function ScriptGenPage() {
           </div>
         </div>
       ) : null}
+
+      {/*
+       * 脚本模板抽屉（和「压测脚本」页共用同一个组件）。
+       * 传了 onPick 之后，JMeter 模板上会多一个「填入附加代码」按钮，
+       * 这就是「无法编辑断言」那条需求的落地方式：模板 → 附加代码 → 生成进 jmx。
+       */}
+      <ScriptTemplatesDrawer
+        open={tplOpen}
+        onClose={() => setTplOpen(false)}
+        onPick={pickTemplate}
+      />
     </div>
   );
 }

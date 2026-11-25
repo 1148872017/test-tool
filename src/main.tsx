@@ -1,11 +1,8 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { ConfigProvider, App as AntApp } from 'antd';
-import zhCN from 'antd/locale/zh_CN';
 import dayjs from 'dayjs';
 import 'dayjs/locale/zh-cn';
 import App from './App';
-import { themeConfig } from './theme';
 import ErrorBoundary from './components/feedback/ErrorBoundary';
 
 dayjs.locale('zh-cn');
@@ -25,6 +22,12 @@ function hideBoot() {
  *   正式  src/index.tsx        → 不装，预加载缺失时由 ApiUnavailableError 明确报错
  *   预览  src/index.preview.tsx → 先 installMockIfNeeded() 再 mount()
  * 这样 dist/app.js 里不会出现任何 mock 代码（esbuild 不做副作用摇树）。
+ *
+ * 为什么这里没有 ConfigProvider / AntApp：
+ *   antd 的 token 要跟着用户选的主题色走，而主题色只有 App 里的 boot.settings 知道。
+ *   放在这里就只能读一份静态常量（上一版就是这样，切主题后 antd 组件永远紫色）。
+ *   所以 ConfigProvider + AntApp 一起下沉到 App.tsx，单一数据源。
+ *   ErrorBoundary 仍留在最外层：App 自己崩了也要有兜底。
  */
 export function mount() {
   const container = document.getElementById('root');
@@ -36,11 +39,7 @@ export function mount() {
   const root = createRoot(container);
   root.render(
     <ErrorBoundary scope="app">
-      <ConfigProvider locale={zhCN} theme={themeConfig}>
-        <AntApp>
-          <App />
-        </AntApp>
-      </ConfigProvider>
+      <App />
     </ErrorBoundary>
   );
 

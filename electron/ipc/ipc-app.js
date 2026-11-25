@@ -59,23 +59,46 @@ function register(deps) {
     if (!pin || String(pin).length < 4) return { ok: false, message: '密码至少 4 位' };
     const settings = getSettings();
     if (settings.pin) {
-      const ok = security.verifyPin(oldPin, settings.pin.salt, settings.pin.hash);
+      /**
+       * 已有密码时必须验原密码。
+       *
+       * 空值和「填错了」分开报：前端原来把 oldPin 复用给「移除」按钮，
+       * 用户看到的就是一句笼统的「原密码不对」，根本不知道是框没填还是密码记错。
+       */
+      const old = String(oldPin === undefined || oldPin === null ? '' : oldPin);
+      if (!old.trim()) return { ok: false, message: '请输入原密码' };
+      const ok = security.verifyPin(old, settings.pin.salt, settings.pin.hash);
       if (!ok) return { ok: false, message: '原密码不对' };
     }
     settings.pin = security.hashPin(pin);
     saveSettings();
     setLocked(false);
-    return { ok: true };
+    return { ok: true, hasPin: true };
   });
 
-  handle('pin:clear', async (e, { pin }) => {
+  /**
+   * 清除锁屏密码。
+   *
+   * 后端兜底（v0.43.1）：
+   *   - 没有密码时直接成功（幂等）——「本来就没密码」不该报错；
+   *   - 有密码时必须验证。前端老实现拿 oldPin（设置完就被清空）来调这个通道，
+   *     于是「设置密码 → 移除密码」必然报「密码不对」，用户以为密码坏了；
+   *   - 空值和填错分开报，前端才能给出「请输入当前密码」而不是「密码不对」。
+   */
+  handle('pin:clear', async (e, payload) => {
     const settings = getSettings();
-    if (settings.pin && !security.verifyPin(pin, settings.pin.salt, settings.pin.hash)) {
+    // 兼容两种调用：{ pin } 对象（preload 的正常形态）和直接传字符串
+    const raw = payload && typeof payload === 'object' ? payload.pin : payload;
+    const pin = String(raw === undefined || raw === null ? '' : raw);
+
+    if (!settings.pin) return { ok: true, hasPin: false };
+    if (!pin.trim()) return { ok: false, message: '请输入当前密码' };
+    if (!security.verifyPin(pin, settings.pin.salt, settings.pin.hash)) {
       return { ok: false, message: '密码不对' };
     }
     settings.pin = null;
     saveSettings();
-    return { ok: true };
+    return { ok: true, hasPin: false };
   });
 }
 

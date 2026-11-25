@@ -6,6 +6,7 @@
  * 皮肤的图片文件存在 {数据目录}/skin/ 下，设置里只存文件名。
  */
 const sharedHelpers = require('../shared-helpers');
+const workspaceDerive = require('../workspace-derive');
 
 function register(deps) {
   const {
@@ -14,6 +15,7 @@ function register(deps) {
     fs,
     path,
     store,
+    app,
     getWindow,
     getSettings,
     saveSettings,
@@ -33,8 +35,34 @@ function register(deps) {
     for (const key of allowed) {
       if (patch && patch[key] !== undefined) settings[key] = patch[key];
     }
+
+    /**
+     * 工作区变了 → 立刻重新推导 7 个子目录，并把缺的目录建出来。
+     *
+     * 为什么必须在这里做：
+     *   老实现的推导只在 main.js 的 loadSettings() 里，也就是**启动时跑一次**。
+     *   用户在设置页改了工作区，settings:set 存完就返回了，子目录一个都没重算，
+     *   界面上还是旧值 —— 用户看到的就是「设置了工作区，子目录纹丝不动」。
+     *
+     * 推导结果会写回 settings 并 saveSettings()：
+     *   publicSettings() 要给前端显示 casesDir / notesDir ……，不写回 UI 就是空的。
+     * 但「写回」和「用户配置」是两回事，靠 settings.derivedDirs 这本账区分：
+     *   账上的值可以随工作区重算，用户显式填的路径一个字都不动（详见 workspace-derive.js）。
+     *
+     * 建目录失败（比如把工作区挂在只读盘）只记录在 dirSync.failed 里，不阻塞保存。
+     */
+    let dirSync = null;
+    if (workspaceDerive.needsWorkspaceSync(patch)) {
+      dirSync = workspaceDerive.applyWorkspaceChange(settings, patch, {
+        defaultBase: workspaceDerive.defaultWorkspaceDir(app)
+      });
+    }
+
     saveSettings();
-    return publicSettings();
+    const out = publicSettings();
+    // 只有这次真的动了工作区才带 dirSync，前端据此决定 toast 文案
+    if (dirSync) out.dirSync = dirSync;
+    return out;
   });
 
   /** 选背景图（复制到皮肤目录） */

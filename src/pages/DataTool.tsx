@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { InputNumber, Input, Button, Select, Space, Tag, Tooltip, Segmented, Modal, Alert } from 'antd';
 import {
   CopyOutlined,
@@ -13,7 +13,8 @@ import StateEmpty from '../components/states/StateEmpty';
 import { useHotkeys } from '../hooks/useHotkeys';
 
 // 生成逻辑抽到 shared/faker.js，前后端共用（大数量在 Node 侧生成写文件）
-import { TYPES, TYPE_MAP, genOne, genDate, toCsv, toJson } from '../../shared/faker';
+// 字段名序号器也放那边：纯函数，Node 测试能直接跑（.tsx 跑不了）
+import { TYPES, TYPE_MAP, createFieldNamer, genOne, genDate, toCsv, toJson } from '../../shared/faker';
 
 
 /** 多字段组合里的一个字段 */
@@ -77,6 +78,21 @@ export default function DataTool() {
   const [mode, setMode] = useState<'single' | 'multi'>('single');
   const [fields, setFields] = useState<Field[]>(DEFAULT_FIELDS);
   const [multiRows, setMultiRows] = useState<string[][]>([]);
+
+  /**
+   * 字段名序号器（每个类型一个单调递增的计数器）。
+   *
+   * 为什么放 ref 而不是 state：增删字段 / 自动命名都不会因为计数器变化而重渲染，
+   * 但计数器必须**跨渲染连续**——否则「删掉 userName_2 再加一个」会退回
+   * userName_2，正好违反用户要的「删除不重置序号」。
+   *
+   * 初始把已有字段喂进去：字段将来若能从别处恢复（缓存 / 导入），
+   * 序号从名字里的最大值往后推，不会撞名（见 shared/faker.createFieldNamer）。
+   */
+  const namerRef = useRef<ReturnType<typeof createFieldNamer> | null>(null);
+  if (!namerRef.current) namerRef.current = createFieldNamer(DEFAULT_FIELDS);
+  /** 取某类型的下一个默认字段名（调用一次就占掉一个号） */
+  const nextNameFor = (type: string) => namerRef.current!.next(type);
 
   const [count, setCount] = useState(5);
   /** 最近一次「大数量导出」的结果 */
@@ -207,10 +223,37 @@ export default function DataTool() {
 
   /* ---------- 字段增删改 ---------- */
   // 增删都按 id 走：删中间一行后，剩下每行的 id 不变，React 不会错位复用输入框
-  const addField = () => setFields((prev) => prev.concat([makeField()]));
+  /**
+   * 添加字段。
+   *
+   * 字段名不再让用户手打：按「上一个字段的类型」（没有就 name）自动命名，
+   * 同类型自动带递增序号（userName → userName_2 → userName_3）。
+   * 类型跟随上一个字段是为了「连着加 5 个手机号」不用每次都改下拉。
+   */
+  const addField = () => {
+    const type = fields.length ? fields[fields.length - 1].type : 'name';
+    const name = nextNameFor(type);
+    setFields((prev) => prev.concat([makeField({ name, type })]));
+  };
   const removeField = (id: number) => setFields((prev) => prev.filter((f) => f.id !== id));
   const setField = (id: number, key: 'name' | 'type' | 'fixed', v: string) => {
     setFields((prev) => prev.map((f) => (f.id === id ? Object.assign({}, f, { [key]: v }) : f)));
+  };
+
+  /**
+   * 切换字段类型。
+   *
+   * 名字有内容就**不动**（用户可能故意保留，比如把「手机号」字段改成文本但
+   * 仍然叫 mobile）；只有当名字是空的才按新类型补一个默认名。
+   */
+  const setFieldType = (id: number, v: string) => {
+    const target = fields.find((f) => f.id === id);
+    const fillName = target && !target.name.trim() ? nextNameFor(v) : '';
+    setFields((prev) =>
+      prev.map((f) =>
+        f.id === id ? Object.assign({}, f, fillName ? { type: v, name: fillName } : { type: v }) : f
+      )
+    );
   };
 
   /** 当前模式下的有效字段名（导出用） */
@@ -444,7 +487,7 @@ export default function DataTool() {
                         size="small"
                         className="mono"
                         value={f.name}
-                        placeholder="userName"
+                        placeholder="默认按类型自动命名"
                         onChange={(e) => setField(f.id, 'name', e.target.value)}
                       />
                     </td>
@@ -452,7 +495,7 @@ export default function DataTool() {
                       <Select
                         size="small"
                         value={f.type}
-                        onChange={(v) => setField(f.id, 'type', v)}
+                        onChange={(v) => setFieldType(f.id, v)}
                         style={{ width: '100%' }}
                         options={TYPES}
                         virtual={false}
@@ -483,6 +526,10 @@ export default function DataTool() {
             <Button size="small" type="link" icon={<PlusOutlined />} onClick={addField}>
               添加字段
             </Button>
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              字段名不用手打：按类型自动命名（userName / mobile / email…），同类型从第二个起带序号（userName_2、userName_3）。
+              序号只增不减——删掉中间那个字段也不会把号收回去，避免和已有字段重名。
+            </div>
             <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
               一行 = 一条完整记录（比如「姓名 + 手机号 + 邮箱 + 身份证」），导出的 CSV 可直接喂给 pytest / JMeter 的 CSV Data Set。
             </div>

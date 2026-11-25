@@ -120,14 +120,88 @@ function headerPairs(text) {
   return out;
 }
 
+/* ============================================================
+ * 附加 JSR223 元件（v0.44.0）
+ * ============================================================
+ * 需求：脚本生成页「无法编辑断言」。
+ * 模板抽屉里的断言/提取代码要能直接进 jmx，而不是只能复制。
+ *
+ * 只支持 3 个位置，正好覆盖 JMeter 里「代码能待的地方」：
+ *   assertion → JSR223 断言（校验结果）
+ *   pre       → JSR223 前置处理器（改请求前准备数据）
+ *   post      → JSR223 后置处理器（拿响应、存变量）
+ * 都用 Groovy（JMeter 官方推荐，BeanShell 已停维护）。
+ * ============================================================ */
+
+/** 位置 → JMeter 元件定义 */
+const EXTRA_ELEMENT_SPECS = {
+  assertion: { tag: 'JSR223Assertion', label: '附加断言' },
+  pre: { tag: 'JSR223PreProcessor', label: '附加前置处理' },
+  post: { tag: 'JSR223PostProcessor', label: '附加后置处理' }
+};
+
+/**
+ * 清洗 extraElements 入参：类型不认识 / 代码为空的一律丢掉。
+ *
+ * 为什么要清洗而不是直接拼：这段代码是用户手填/从模板塞进来的，
+ * 空行、误点「添加」留下的空项都很常见，直接生成会得到一堆空脚本元件。
+ *
+ * @param {Array<{type?: string, code?: string, name?: string}>} list
+ * @returns {Array<{kind: string, tag: string, label: string, code: string, name: string}>}
+ */
+function normalizeExtras(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const spec = EXTRA_ELEMENT_SPECS[String(item.type || '')];
+    if (!spec) continue;
+    const code = String(item.code == null ? '' : item.code);
+    if (!code.trim()) continue;
+    out.push({
+      kind: String(item.type),
+      tag: spec.tag,
+      label: spec.label,
+      code,
+      name: String(item.name || '').trim()
+    });
+  }
+  return out;
+}
+
+/**
+ * 生成一个 JSR223 元件的 XML（含紧跟的 hashTree）。
+ *
+ * @param {object} extra normalizeExtras 的产物
+ * @param {number} depth 缩进层级
+ */
+function extraXml(extra, depth) {
+  const p = pad(depth);
+  // 有来源模板名就用它当 testname（JMeter 树里能认出是哪段代码），没有就用元件类型名
+  const testname = extra.name || extra.label;
+  return [
+    `${p}<${extra.tag} guiclass="TestBeanGUI" testclass="${extra.tag}" testname="${esc(testname)}" enabled="true">`,
+    `${p}  <stringProp name="scriptLanguage">groovy</stringProp>`,
+    `${p}  <stringProp name="parameters"></stringProp>`,
+    `${p}  <stringProp name="filename"></stringProp>`,
+    `${p}  <stringProp name="script">${esc(extra.code)}</stringProp>`,
+    // cacheKey=true：没有 filename 时每次迭代都会重新编译，脚本里引用变量才拿得到新值
+    `${p}  <boolProp name="cacheKey">true</boolProp>`,
+    `${p}</${extra.tag}>`,
+    `${p}<hashTree/>`
+  ].join('\n');
+}
+
 /**
  * 生成 HTTP 采样器的 XML。
  *
  * @param {object} api 接口记录 data
  * @param {number} depth 缩进层级
+ * @param {number} rtLimit RT 上限（毫秒，0 = 不生成持续时间断言）
+ * @param {Array} [extras] 附加 JSR223 元件（normalizeExtras 的产物，已清洗）
  * @returns {string}
  */
-function sampleXml(api, depth, rtLimit) {
+function sampleXml(api, depth, rtLimit, extras) {
   const p = pad(depth);
   const parts = splitUrl(api.url);
   const method = String(api.method || 'GET').toUpperCase();
@@ -171,6 +245,11 @@ function sampleXml(api, depth, rtLimit) {
   // ---- 子元素：HeaderManager + 断言 ----
   L.push(`${p}<hashTree>`);
 
+  // 附加的前置处理器先挂（脚本里常要改请求参数 / 造签名）
+  for (const extra of extras || []) {
+    if (extra.kind === 'pre') L.push(extraXml(extra, depth + 1));
+  }
+
   if (headers.length) {
     L.push(`${p}  <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP 信息头管理器" enabled="true">`);
     L.push(`${p}    <collectionProp name="HeaderManager.headers">`);
@@ -205,6 +284,11 @@ function sampleXml(api, depth, rtLimit) {
     L.push(`${p}  <hashTree/>`);
   }
 
+  // 附加的断言 / 后置处理器（从脚本模板带过来的 JSR223 代码）
+  for (const extra of extras || []) {
+    if (extra.kind === 'assertion' || extra.kind === 'post') L.push(extraXml(extra, depth + 1));
+  }
+
   L.push(`${p}</hashTree>`);
 
   return L.join('\n');
@@ -225,6 +309,9 @@ function sampleXml(api, depth, rtLimit) {
  *   - onError     出错时（continue / startnextloop / stopthread）
  *   - rtLimit     RT 上限（毫秒，0 = 不生成持续时间断言）
  *   - jmeterVersion  JMeter 版本（从设置里的 jmeterPath 读，默认 5.6.3）
+ *   - extraElements  附加 JSR223 代码（可选）：
+ *          [{ type: 'assertion' | 'pre' | 'post', code: 'Groovy 代码', name: '来源模板名（可选）' }]
+ *          每个采样器下都会插入对应元件（脚本生成页的「附加代码」/ 脚本模板）。
  *   - csv  参数化配置（可选）：
  *          { fileName: 'data.csv', variableNames: 'userName,mobile',
  *            delimiter: ',', recycle: true, stopThread: false, encoding: 'UTF-8' }
@@ -253,6 +340,9 @@ function generateJmx(opts = {}) {
    *   从设置的 jmeterPath 读出版本写进去，就不弹了。
    */
   const jmeterVersion = String(opts.jmeterVersion || '').trim() || '5.6.3';
+
+  // 附加 JSR223 代码：先清洗（类型不认识 / 代码为空都丢掉），再统一挂到每个采样器下
+  const extras = normalizeExtras(opts.extraElements);
 
   // 默认域名/端口：从第一个接口取
   const first = splitUrl(apis[0].data ? apis[0].data.url : apis[0].url);
@@ -324,7 +414,7 @@ function generateJmx(opts = {}) {
   L.push(`${pad(3)}<hashTree>`);
   for (const api of apis) {
     const d = api.data ? api.data : api;
-    L.push(sampleXml(d, 4, rtLimit));
+    L.push(sampleXml(d, 4, rtLimit, extras));
   }
   L.push(`${pad(3)}</hashTree>`);
 
@@ -337,4 +427,4 @@ function generateJmx(opts = {}) {
   return { ok: true, xml: L.join('\n'), filename: `${safeName}.jmx` };
 }
 
-module.exports = { generateJmx, splitUrl, headerPairs, bodyParams };
+module.exports = { generateJmx, splitUrl, headerPairs, bodyParams, normalizeExtras };

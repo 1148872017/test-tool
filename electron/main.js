@@ -8,6 +8,7 @@ const demo = require('./demo');
 const sharedHelpers = require('./shared-helpers');
 const ipcGuard = require('./ipc-guard');
 const navGuard = require('./nav-guard');
+const workspaceDerive = require('./workspace-derive');
 
 const DEBUG = process.env.TT_DEBUG === '1';
 if (DEBUG) app.commandLine.appendSwitch('remote-debugging-port', '9222');
@@ -154,51 +155,23 @@ function loadSettings() {
   settings = Object.assign({}, DEFAULT_SETTINGS, saved);
 
   /**
-   * 目录推导（1 级 → 2 级）。
+   * 目录推导（1 级 → 2 级）收口在 electron/workspace-derive.js。
    *
    * 优先级：
-   *   1. 用户显式配的 2 级目录（settings.xxxDir 有值）
+   *   1. 用户显式配的 2 级目录（他自己填的，一个字都不动）
    *   2. 工作区下的子目录（settings.workspaceDir + 子目录名）
    *   3. 默认的「文档\测试工作台」
    *
-   * 这样用户只配一个「工作区」，7 个子目录全自动。
+   * 老实现是「先填默认值、再按工作区推导」，而推导条件是 if (!settings[key]) ——
+   * 默认值已经把字段填满，工作区推导永远不生效（这就是「配了工作区子目录不动」的一半原因）。
+   * 现在一处实现（workspace-derive.js）两个入口共用：启动时补默认值（不建目录），
+   * 用户在设置页改工作区时立即重算 + 建目录（见 ipc-settings.js 的 settings:set）。
    */
-  const wsBase = String(settings.workspaceDir || '').trim();
+  workspaceDerive.applyStartupDefaults(settings, defaultWorkspaceDir());
 
-  // 首次启动（或用户清空过）时，把四个目录指向「文档\测试工作台\...」
-  const base = defaultWorkspaceDir();
-  if (base) {
-    const fill = (key, sub) => {
-      if (!settings[key]) settings[key] = path.join(base, sub);
-    };
-    fill('casesDir', 'test_cases');
-    fill('jmxDir', 'jmx');
-    fill('reportDir', path.join('jmx', '压测结果'));
-    fill('kbDir', '知识库');
-    fill('notesDir', 'notes');
-  }
-
-  /**
-   * 工作区优先：用户配了工作区，子目录空值就用工作区推导。
-   *
-   * 注意这是「运行时推导」，不写回 settings ——
-   * 这样用户在设置里清空某个子目录，还能回退到工作区默认值。
-   */
-  if (wsBase) {
-    const derive = (key, sub) => {
-      if (!settings[key]) settings[key] = path.join(wsBase, sub);
-    };
-    derive('casesDir', 'test_cases');
-    derive('jmxDir', 'jmx');
-    derive('reportDir', path.join('jmx', '压测结果'));
-    derive('allureDir', '');
-    derive('kbDir', '知识库');
-    derive('notesDir', 'notes');
-    derive('projectDir', 'Project');
-  }
-
-  // 代码项目目录：默认 D:\你的工作区\Project（和「文档\测试工作台」同级）
+  // 代码项目目录：默认 {文档}\Project（和「文档\测试工作台」同级）
   if (!settings.projectDir) {
+    const base = defaultWorkspaceDir();
     const guess = path.join(path.dirname(base || ''), 'Project');
     if (base && fs.existsSync(guess)) settings.projectDir = guess;
   }

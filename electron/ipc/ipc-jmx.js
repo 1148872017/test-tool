@@ -69,6 +69,8 @@ function register(deps) {
       port: payload.port,
       onError: payload.onError,
       csv: payload.csv,
+      // 附加 JSR223 代码（脚本生成页的「附加代码」/ 脚本模板带过来的断言、前置、后置）
+      extraElements: payload.extraElements,
       jmeterVersion
     });
     return Object.assign({}, gen, { jmeterVersion: jmeterVersion || '5.6.3' });
@@ -102,6 +104,8 @@ function register(deps) {
       port: payload.port,
       onError: payload.onError,
       csv: payload.csv,
+      // 保存走的是同一套生成逻辑，附加代码必须一起带上，否则「预览有、保存丢」
+      extraElements: payload.extraElements,
       jmeterVersion
     });
     if (!gen.ok) return gen;

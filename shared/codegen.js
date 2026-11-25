@@ -53,6 +53,48 @@ function classNameFromUrl(url) {
   return pascal(last);
 }
 
+/**
+ * 只保留 ASCII 字母数字（其余按分隔符处理）。
+ *
+ * 为什么要这一步：类名 / 文件名必须是合法标识符。
+ * 中文页面名（如「登录页」）直接丢给 camel/pascal 会被吃成「页」，
+ * 生成的文件名就成了 `页Page.java` —— 这就是「预览文件名不完整」的根因。
+ */
+function asciiWords(s) {
+  return String(s || '')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim();
+}
+
+/** 转下划线小写：LoginPage → login_page（Python 文件名用） */
+function snake(s) {
+  return String(s || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase();
+}
+
+/**
+ * 页面对象的基名（不含 Page 后缀，模板和文件名会自己补）。
+ *
+ * 取值优先级：类名输入框 > 页面名 > URL 路径 > 'My'
+ * 中文/特殊字符会被丢弃，丢干净了就顺延到下一个来源，
+ * 避免出现 `页Page.java` 这种只剩一个字的文件名。
+ */
+function pageBaseName(page, override) {
+  const urlBase = classNameFromUrl(page && page.url);
+  const candidates = [override, page && page.name, urlBase === 'Api' ? '' : urlBase];
+  for (const c of candidates) {
+    const raw = asciiWords(c);
+    if (!raw) continue;
+    // 模板里写死了 `<%= className %>Page`，这里先去掉结尾的 Page，避免 LoginPagePage
+    const base = pascal(raw).replace(/Page$/, '');
+    if (base) return base;
+  }
+  return 'My';
+}
+
 /** 从 URL 猜方法名：POST /pet → createPet */
 function methodNameFromApi(method, url) {
   const m = String(method || 'GET').toUpperCase();
@@ -518,7 +560,7 @@ function generate(targetKey, input = {}) {
   } else if (target.kind === 'page') {
     const page = input.page || {};
     ctx = {
-      className: input.className || pascal(page.name || 'Page'),
+      className: pageBaseName(page, input.className),
       url: String(page.url || '/'),
       elements: (page.elements || []).map((el) => ({
         name: camel(el.name || 'element'),
@@ -574,13 +616,18 @@ function generate(targetKey, input = {}) {
   }
 
   // 文件名
+  //
+  // 页面对象必须带上页面名，否则每个页面都叫 `Page.java`；
+  // Java 用 PascalCase（LoginPage.java），Python 用 snake_case（login_page.py），
+  // 这样文件名和类名/模块名都对得上，一眼能看出是哪个页面。
   let filename;
   if (target.kind === 'api') {
-    filename = `${ctx.className}ApiTest${target.ext}`;
+    filename = `${ctx.className || 'Api'}ApiTest${target.ext}`;
   } else if (target.kind === 'page') {
-    filename = `${ctx.className}Page${target.ext}`;
+    const base = String(ctx.className || 'My').replace(/Page$/, '') || 'My';
+    filename = target.lang === 'python' ? `${snake(base)}_page${target.ext}` : `${base}Page${target.ext}`;
   } else {
-    filename = `${ctx.className}${target.ext}`;
+    filename = `${ctx.className || 'DataModel'}${target.ext}`;
   }
 
   return { ok: true, code, filename, target };
@@ -605,6 +652,8 @@ module.exports = {
   fieldsFromJson,
   classNameFromUrl,
   methodNameFromApi,
+  pageBaseName,
+  snake,
   camel,
   pascal
 };

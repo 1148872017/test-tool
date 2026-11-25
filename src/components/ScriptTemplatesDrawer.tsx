@@ -1,22 +1,55 @@
 import React, { useMemo, useState } from 'react';
-import { Drawer, Input, Tag, Button, Alert, Empty } from 'antd';
-import { CopyOutlined, SearchOutlined, BulbOutlined, WarningOutlined } from '@ant-design/icons';
+import { Drawer, Input, Tag, Button, Alert, Empty, Space } from 'antd';
+import {
+  CopyOutlined,
+  SearchOutlined,
+  BulbOutlined,
+  WarningOutlined,
+  FolderOpenOutlined,
+  PlayCircleOutlined,
+  ImportOutlined
+} from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
-import { NO_CODE_NEEDED, TEMPLATES, TEMPLATE_CATEGORIES, CATEGORY_MAP } from '../../shared/scriptTemplates';
+import {
+  NO_CODE_NEEDED,
+  TEMPLATES,
+  TEMPLATE_CATEGORIES,
+  CATEGORY_MAP,
+  fillTemplateDefaults
+} from '../../shared/scriptTemplates';
 import { extractVars } from '../utils';
 import VarFillModal from './VarFillModal';
+
+/** 「填入附加代码」的目标位置：和 shared/jmxgen.js 的 extraElements.type 对齐 */
+export type TemplateInsertKind = 'assertion' | 'pre' | 'post';
+
+/** 模板分类 → 生成进 jmx 时用哪个 JSR223 元件 */
+const INSERT_KIND: Record<string, TemplateInsertKind> = {
+  assert: 'assertion',
+  extract: 'post',
+  generate: 'pre',
+  crypto: 'pre',
+  flow: 'pre'
+};
 
 type Props = {
   open: boolean;
   onClose: () => void;
+  /**
+   * 可选：提供后，JMeter 相关模板上会多一个「填入附加代码」按钮，
+   * 点一下就把代码（占位符已填默认值）塞进脚本生成页的附加代码区，
+   * 生成 jmx 时会写成 JSR223 断言 / 前置 / 后置处理器。
+   * api-assert / ui-assert 是 RestAssured/pytest/Playwright 代码，不能进 jmx，不显示该按钮。
+   */
+  onPick?: (item: { type: TemplateInsertKind; code: string; name: string }) => void;
 };
 
 /**
  * 脚本模板库。
  * 定位是「带注释的起点」，不是生成器——用户能看懂示例、在示例上改。
  */
-export default function ScriptTemplatesDrawer({ open, onClose }: Props) {
+export default function ScriptTemplatesDrawer({ open, onClose, onPick }: Props) {
   const [keyword, setKeyword] = useState('');
   const [activeId, setActiveId] = useState(TEMPLATES[0].id);
   const [showNoCode, setShowNoCode] = useState(true);
@@ -52,6 +85,49 @@ export default function ScriptTemplatesDrawer({ open, onClose }: Props) {
     toast('已复制，粘到 JMeter 的脚本框里');
   };
 
+  /** 当前模板能不能「直接带进生成的 jmx」 */
+  const insertKind = active && active.category ? INSERT_KIND[active.category] : undefined;
+  const canInsert = !!onPick && !!insertKind;
+
+  /** 把当前模板塞进脚本生成页的附加代码区（占位符换成默认值，粘进去就能跑） */
+  const insert = () => {
+    if (!active || !onPick || !insertKind) return;
+    onPick({
+      type: insertKind,
+      code: fillTemplateDefaults(active.code, active.vars),
+      name: active.name
+    });
+    // 回执交给调用方（脚本生成页会提示「已填入附加代码」），这里不重复弹 toast，
+    // 否则同一次点击会冒出两条一模一样的提示。
+  };
+
+  /** 快捷入口：打开 jmx 目录（生成的脚本都在这里） */
+  const openJmxDir = async () => {
+    try {
+      const s = await api.settings();
+      const dir = (s && s.jmxDir) || '';
+      if (!dir) {
+        toast('还没配 jmx 目录 —— 去「设置 → 压测」选一个', 'warning');
+        return;
+      }
+      const res = await api.jmxReveal(dir);
+      if (res && res.ok === false) toast(res.message || '打开目录失败', 'warning');
+    } catch (e: any) {
+      toast('打开目录失败：' + (e && e.message ? e.message : e), 'error');
+    }
+  };
+
+  /** 快捷入口：直接启动 JMeter GUI，粘完代码就能存 */
+  const launchJmeter = async () => {
+    try {
+      const res = await api.jmxLaunch();
+      if (res && res.ok) toast('JMeter 已启动，把代码粘到对应元件里');
+      else toast((res && res.message) || '启动失败：去「设置 → 压测」指定 bin\\jmeter.bat', 'warning');
+    } catch (e: any) {
+      toast('启动失败：' + (e && e.message ? e.message : e), 'error');
+    }
+  };
+
   return (
     <Drawer
       open={open}
@@ -63,6 +139,28 @@ export default function ScriptTemplatesDrawer({ open, onClose }: Props) {
           <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>
             Groovy · 带注释的起点，改两处就能用
           </span>
+        </div>
+      }
+      footer={
+        /*
+         * 底部说明 + 快捷入口。
+         * 用户真实卡点是「知道怎么写断言，但不知道粘到 JMeter 哪里」，
+         * 所以这里直接把「复制后粘到 JMeter GUI 的对应元件里」写出来，
+         * 再给两个能立刻过去的按钮（打开 jmx 目录 / 启动 JMeter）。
+         */
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+            复制后粘到 JMeter GUI 的对应元件里（断言 / 前置处理器 / 后置处理器）。
+            JMeter 模板还可以点「填入附加代码」，直接写进「脚本生成」出来的新 jmx。
+          </div>
+          <Space size={8} style={{ flex: 'none' }}>
+            <Button size="small" icon={<FolderOpenOutlined />} onClick={openJmxDir}>
+              打开 jmx 目录
+            </Button>
+            <Button size="small" icon={<PlayCircleOutlined />} onClick={launchJmeter}>
+              启动 JMeter
+            </Button>
+          </Space>
         </div>
       }
     >
@@ -156,18 +254,25 @@ export default function ScriptTemplatesDrawer({ open, onClose }: Props) {
                   ) : null}
                   {active.name}
                 </h3>
-                <Button
-                  size="small"
-                  type="primary"
-                  icon={<CopyOutlined />}
-                  onClick={() => {
-                    // 有占位符 → 打开速填弹窗；没有 → 直接复制
-                    if (extractVars(active.code).length) setFillOpen(true);
-                    else copy(active.code);
-                  }}
-                >
-                  {extractVars(active.code).length ? '填写并复制' : '复制代码'}
-                </Button>
+                <Space size={8}>
+                  {canInsert ? (
+                    <Button size="small" icon={<ImportOutlined />} onClick={insert}>
+                      填入附加代码
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="small"
+                    type="primary"
+                    icon={<CopyOutlined />}
+                    onClick={() => {
+                      // 有占位符 → 打开速填弹窗；没有 → 直接复制
+                      if (extractVars(active.code).length) setFillOpen(true);
+                      else copy(active.code);
+                    }}
+                  >
+                    {extractVars(active.code).length ? '填写并复制' : '复制代码'}
+                  </Button>
+                </Space>
               </div>
 
               <div className="tpl-when">

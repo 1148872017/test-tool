@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { App as AntApp, Spin } from 'antd';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { App as AntApp, ConfigProvider, Spin } from 'antd';
+import zhCN from 'antd/locale/zh_CN';
 import api from './api';
 import { bindMessage } from './msg';
 import Sidebar from './components/Sidebar';
@@ -16,6 +17,7 @@ import CodeScanPage from './pages/CodeScanPage';
 import ScriptGenPage from './pages/ScriptGenPage';
 import SettingsPage from './pages/SettingsPage';
 import { getTheme } from '../shared/themes';
+import { buildThemeConfig } from './theme';
 import CasePage from './pages/CasePage';
 import JmxPage from './pages/JmxPage';
 import KnowledgePage from './pages/KnowledgePage';
@@ -24,42 +26,91 @@ import TrashPage from './pages/TrashPage';
 import { COLLECTIONS } from '../shared/collections';
 
 /**
- * 应用皮肤：只注入主题色。
+ * 应用皮肤：注入主题色 CSS 变量，并返回当前主题色给 antd token 用。
  *
  * 全部走 CSS 变量，不改 CSS 文件：
  *   --primary       填充色（按钮底、色块，固定配白字）
  *   --primary-text  文字色（链接、选中的导航项、强调文字）
  *   --primary-soft  浅底色（选中项背景、标签底）
  *
+ * 返回值是「同一个数据源」：CSS 变量和 antd token（见 buildThemeConfig）
+ * 必须用同一份颜色，否则自己写的 div 和 antd 组件会各变各的。
+ *
  * 背景图 / 背景蒙版 / 面板透明度 / 文字深浅三档已经下线：
  * 页面回到纯色底，文字对比度靠 token 保证，不再需要在运行时
  * 打阴影、改 --text、改 --muted 去补救。
  */
 function useSkin(settings: any) {
+  const theme = getTheme(settings && settings.themeColor);
   React.useEffect(() => {
-    const t = getTheme(settings && settings.themeColor);
     const root = document.documentElement;
-    root.style.setProperty('--primary', t.primary);
-    root.style.setProperty('--primary-text', t.primaryText);
-    root.style.setProperty('--primary-soft', t.soft);
-  }, [settings && settings.themeColor]);
+    root.style.setProperty('--primary', theme.primary);
+    root.style.setProperty('--primary-text', theme.primaryText);
+    root.style.setProperty('--primary-soft', theme.soft);
+  }, [theme.primary, theme.primaryText, theme.soft]);
+  // 切主题时 getTheme 返回的是 THEMES 里的同一个对象，引用稳定；
+  // useMemo 依赖放三档颜色，等于「主题变了才算」。
+  return theme;
 }
 
-export default function App() {
+/**
+ * 把 antd 的 message 实例接到全局（msg.ts 里 callMessage 用）。
+ *
+ * useApp 必须在 <AntApp> 内部调用，所以单独抽出来挂一个空组件；
+ * 它自己不留 DOM，只做接线。
+ */
+function MessageBridge() {
   const { message } = AntApp.useApp();
+  useEffect(() => {
+    bindMessage(message);
+  }, [message]);
+  return null;
+}
+
+/**
+ * 应用根节点：只负责「主题色 → antd 主题」这一层。
+ *
+ * ConfigProvider / AntApp 为什么放在这里而不在 main.tsx：
+ *   主题色只有本组件拿得到（boot.settings.themeColor）。放入口就只能读一份
+ *   静态常量，切主题后 antd 组件永远停在紫色（本次修的 bug 就是这么来的）。
+ *   挪进来之后 CSS 变量和 antd token 用的是同一份颜色，单一数据源。
+ *   页面主体交给 AppBody，它的状态和渲染逻辑完全不用知道主题层的存在。
+ */
+export default function App() {
   const [boot, setBoot] = useState<any>(null);
-  // 应用皮肤（只主题色）
-  useSkin(boot && boot.settings);
+  // 应用皮肤（只主题色）：CSS 变量 + antd token 都从这一个返回值取色
+  const skin = useSkin(boot && boot.settings);
+  /**
+   * antd 主题：跟着主题色现算。
+   *
+   * 依赖只有主题色两档 —— 主题没变时 ConfigProvider 拿到的是同一个对象，
+   * antd 不会重复生成样式；切换时才重算，Button / Select / DatePicker /
+   * Table 选中行会一起变色。
+   */
+  const antdTheme = useMemo(
+    () => buildThemeConfig(skin.primary, skin.primaryText),
+    [skin.primary, skin.primaryText]
+  );
+
+  return (
+    <ConfigProvider locale={zhCN} theme={antdTheme}>
+      <AntApp>
+        {/* message 接线必须挂在 AntApp 内部 */}
+        <MessageBridge />
+        <AppBody boot={boot} setBoot={setBoot} />
+      </AntApp>
+    </ConfigProvider>
+  );
+}
+
+/** 页面主体：加载中 / 启动失败 / 锁屏 / 正常四态 + 路由、计数、闲置锁定 */
+function AppBody({ boot, setBoot }: { boot: any; setBoot: (v: any) => void }) {
   const [locked, setLocked] = useState(true);
   const [route, setRoute] = useState<any>({ type: 'collection', key: 'sites' });
   const [counts, setCounts] = useState<Record<string, number>>({});
   /** 回收站角标：单独取，不进 counts（counts 的 key 就是集合 key） */
   const [trashCount, setTrashCount] = useState(0);
   const lastActive = useRef(Date.now());
-
-  useEffect(() => {
-    bindMessage(message);
-  }, [message]);
 
   useEffect(() => {
     api

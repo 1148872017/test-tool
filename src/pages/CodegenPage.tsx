@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
+import { parseElements, type PageElement } from '../components/PageElementsEditor';
 
 type Target = {
   key: string;
@@ -20,8 +21,33 @@ type Target = {
   kind: 'api' | 'page' | 'model';
 };
 
-/** 页面元素（POM 生成用） */
-type PageElement = { name: string; selector: string; desc: string };
+/** 生成类型下拉的语言分组顺序（只有这两门语言，其他语言的组排后面） */
+const TARGET_LANG_ORDER = ['java', 'python'];
+const TARGET_LANG_LABEL: Record<string, string> = { java: 'Java', python: 'Python' };
+
+/**
+ * 生成目标 → 按语言分组的下拉选项。
+ *
+ * 平铺 6 个目标时「Java · REST Assured / Java · Playwright / ...」挤成一长串，
+ * 按语言分组后先选语言再选框架，扫起来快得多。target key 一律以 shared/codegen.js 为准。
+ */
+export function groupTargets(list: Target[]): { label: string; options: { value: string; label: string }[] }[] {
+  const byLang = new Map<string, { value: string; label: string }[]>();
+  for (const t of list) {
+    const lang = String(t.lang || 'other');
+    if (!byLang.has(lang)) byLang.set(lang, []);
+    byLang.get(lang)!.push({ value: t.key, label: t.label });
+  }
+  const langs = Array.from(byLang.keys()).sort((a, b) => {
+    const ia = TARGET_LANG_ORDER.indexOf(a);
+    const ib = TARGET_LANG_ORDER.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+  return langs.map((lang) => ({
+    label: TARGET_LANG_LABEL[lang] || '其他',
+    options: byLang.get(lang)!
+  }));
+}
 
 export default function CodegenPage() {
   const [targets, setTargets] = useState<Target[]>([]);
@@ -46,6 +72,8 @@ export default function CodegenPage() {
   const [pageId, setPageId] = useState('');
   const [pageName, setPageName] = useState('login');
   const [pageUrl, setPageUrl] = useState('/login');
+  /** 载入提示：「已载入：登录页（4 个元素）」，让用户一眼确认带进来了什么 */
+  const [pageHint, setPageHint] = useState('');
   const [elements, setElements] = useState<PageElement[]>([
     { name: 'usernameInput', selector: '#username', desc: '用户名输入框' }
   ]);
@@ -58,6 +86,8 @@ export default function CodegenPage() {
 
   const current = useMemo(() => targets.find((t) => t.key === targetKey), [targets, targetKey]);
   const kind = current ? current.kind : 'api';
+  /** 生成类型下拉：按语言分组 */
+  const targetOptions = useMemo(() => groupTargets(targets), [targets]);
 
   /* ---------- 初始化 ---------- */
   useEffect(() => {
@@ -120,6 +150,12 @@ export default function CodegenPage() {
     return hit ? hit.data : null;
   };
 
+  /**
+   * 生成用的页面元素：只认填了名字的行。
+   * 空行交给模板会生成 `public Locator () { return page.locator(""); }` 这种坏代码。
+   */
+  const filledElements = () => elements.filter((el) => String(el.name || '').trim());
+
   /* ---------- 生成预览 ---------- */
   const doPreview = async () => {
     setBusy(true);
@@ -143,7 +179,13 @@ export default function CodegenPage() {
           payload.apiId = apiId;
         }
       } else if (kind === 'page') {
-        payload.page = { name: pageName, url: pageUrl, elements };
+        const els = filledElements();
+        if (!els.length) {
+          toast('页面元素是空的：先从「页面元素」载入，或手动填一个元素', 'warning');
+          setBusy(false);
+          return;
+        }
+        payload.page = { name: pageName, url: pageUrl, elements: els };
       } else if (modelSource === 'sql') {
         payload.sql = sqlText;
       } else {
@@ -176,8 +218,15 @@ export default function CodegenPage() {
       if (kind === 'api') {
         if (apiSource === 'file') payload.apiData = currentApiData();
         else payload.apiId = apiId;
-      } else if (kind === 'page') payload.page = { name: pageName, url: pageUrl, elements };
-      else if (modelSource === 'sql') payload.sql = sqlText;
+      } else if (kind === 'page') {
+        const els = filledElements();
+        if (!els.length) {
+          toast('页面元素是空的：先从「页面元素」载入，或手动填一个元素', 'warning');
+          setBusy(false);
+          return;
+        }
+        payload.page = { name: pageName, url: pageUrl, elements: els };
+      } else if (modelSource === 'sql') payload.sql = sqlText;
       else payload.json = jsonText;
 
       const res = await api.codegenSave(payload);
@@ -200,10 +249,13 @@ export default function CodegenPage() {
     toast('代码已复制');
   };
 
-  /** 解析 elements 字段（兼容 JSON 数组和旧的多行文本） */
-  const parseElements = (text: string): PageElement[] => parseElementsShared(text);
-
-  /** 从「页面元素」集合载入一个页面 */
+  /**
+   * 从「页面元素」集合载入一个页面。
+   *
+   * 这里曾经写的是 `parseElementsShared(...)`，但那个函数从来没定义 / 没导入过 ——
+   * 点下拉时直接 ReferenceError，所以「带不出存储的元素」、连 toast 都不弹。
+   * 现在直接用 PageElementsEditor 里导出的同一份解析函数（格式完全一致）。
+   */
   const doLoadPage = (id: string) => {
     setPageId(id);
     const hit = pages.find((x) => x.id === id);
@@ -212,7 +264,9 @@ export default function CodegenPage() {
     setPageName(String(d.name || ''));
     setPageUrl(String(d.url || '/'));
     const els = parseElements(d.elements || '');
-    if (els.length) setElements(els);
+    // 原来只在 els.length 时才覆盖，载入一个空页面会留着上一个页面的元素，容易生成错代码
+    setElements(els.length ? els : [{ name: '', selector: '', desc: '' }]);
+    setPageHint(`已载入：${d.name || '未命名页面'}（${els.length} 个元素）`);
     toast(`已载入「${d.name || ''}」（${els.length} 个元素）`);
   };
 
@@ -242,7 +296,7 @@ export default function CodegenPage() {
               setCode('');
             }}
             style={{ width: 240 }}
-            options={targets.map((t) => ({ value: t.key, label: t.label }))}
+            options={targetOptions}
           />
           <span className="muted">类名</span>
           <Input
@@ -250,6 +304,7 @@ export default function CodegenPage() {
             style={{ width: 160 }}
             value={className}
             placeholder="自动推断"
+            allowClear
             onChange={(e) => setClassName(e.target.value)}
           />
           <Button
@@ -295,7 +350,7 @@ export default function CodegenPage() {
                     style={{ width: '100%' }}
                     value={apiId}
                     onChange={setApiId}
-                    placeholder={apis.length ? '从「接口记录」里选' : '还没有接口记录'}
+                    placeholder={apis.length ? '选一个接口记录（会用它生成测试类）' : '还没有接口记录'}
                     showSearch
                     optionFilterProp="label"
                     options={apis.map((a) => ({
@@ -370,8 +425,16 @@ export default function CodegenPage() {
               <Select
                 size="small"
                 style={{ width: '100%' }}
-                value={pageId}
-                onChange={doLoadPage}
+                value={pageId || undefined}
+                onChange={(v) => {
+                  // allowClear 清空时 v 是 undefined，别把 undefined 当 id 去查
+                  if (!v) {
+                    setPageId('');
+                    setPageHint('');
+                    return;
+                  }
+                  doLoadPage(String(v));
+                }}
                 allowClear
                 placeholder={pages.length ? '选一个已保存的页面' : '还没有页面（去「页面元素」新增）'}
                 showSearch
@@ -381,21 +444,34 @@ export default function CodegenPage() {
                   label: `${x.data.name || ''} · ${x.data.url || ''}`
                 }))}
               />
+              {/* 选中后明确告诉用户「载入了什么、几个元素」，光靠高亮不够醒目 */}
+              {pageHint ? (
+                <div style={{ marginTop: 6 }}>
+                  <Tag color="blue">{pageHint}</Tag>
+                </div>
+              ) : null}
 
               <div className="codegen-label" style={{ marginTop: 8 }}>
                 页面信息
               </div>
-              <Space direction="vertical" size={6} style={{ width: '100%' }}>
+              {/* addonBefore 把「页面名 / 路径」写死在框里，比两个空框靠 placeholder 猜要清楚 */}
+              <Space size={8} wrap>
                 <Input
                   size="small"
+                  addonBefore="页面名"
+                  style={{ width: 200 }}
                   value={pageName}
-                  placeholder="页面名（如 login）"
+                  placeholder="login"
+                  allowClear
                   onChange={(e) => setPageName(e.target.value)}
                 />
                 <Input
                   size="small"
+                  addonBefore="路径"
+                  style={{ width: 180 }}
                   value={pageUrl}
-                  placeholder="页面路径（如 /login）"
+                  placeholder="/login"
+                  allowClear
                   onChange={(e) => setPageUrl(e.target.value)}
                 />
               </Space>

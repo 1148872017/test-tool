@@ -199,27 +199,137 @@ function genMac() {
  * 类型清单（前后端共用）
  * ============================================================ */
 
+/**
+ * 类型清单：value / label / fn / defaultName。
+ *
+ * defaultName 是「多字段组合」里加字段时自动填的驼峰字段名
+ * （DataTool 用它省掉「加 5 个字段手动打 5 个名字」）。
+ * 多个同类型字段的序号规则在 createFieldNamer 里，不在这里写死。
+ */
 const TYPES = [
-  { value: 'name', label: '中文姓名', fn: genName },
-  { value: 'phone', label: '手机号', fn: genPhone },
-  { value: 'email', label: '邮箱', fn: genEmail },
-  { value: 'idcard', label: '身份证号', fn: genIdCard },
-  { value: 'bank', label: '银行卡号', fn: genBankCard },
-  { value: 'address', label: '地址', fn: genAddress },
-  { value: 'company', label: '公司名', fn: genCompany },
-  { value: 'uuid', label: 'UUID', fn: genUuid },
-  { value: 'date', label: '日期', fn: genDate },
-  { value: 'amount', label: '金额', fn: genAmount },
-  { value: 'order', label: '订单号', fn: genOrderNo },
-  { value: 'boundary', label: '边界值', fn: genBoundary },
-  { value: 'plate', label: '车牌号', fn: genPlate },
-  { value: 'mac', label: 'MAC 地址', fn: genMac }
+  { value: 'name', label: '中文姓名', fn: genName, defaultName: 'userName' },
+  { value: 'phone', label: '手机号', fn: genPhone, defaultName: 'mobile' },
+  { value: 'email', label: '邮箱', fn: genEmail, defaultName: 'email' },
+  { value: 'idcard', label: '身份证号', fn: genIdCard, defaultName: 'idCard' },
+  { value: 'bank', label: '银行卡号', fn: genBankCard, defaultName: 'bankCard' },
+  { value: 'address', label: '地址', fn: genAddress, defaultName: 'address' },
+  { value: 'company', label: '公司名', fn: genCompany, defaultName: 'companyName' },
+  { value: 'uuid', label: 'UUID', fn: genUuid, defaultName: 'uuid' },
+  { value: 'date', label: '日期', fn: genDate, defaultName: 'date' },
+  { value: 'amount', label: '金额', fn: genAmount, defaultName: 'amount' },
+  { value: 'order', label: '订单号', fn: genOrderNo, defaultName: 'orderNo' },
+  { value: 'boundary', label: '边界值', fn: genBoundary, defaultName: 'edgeValue' },
+  { value: 'plate', label: '车牌号', fn: genPlate, defaultName: 'plateNo' },
+  { value: 'mac', label: 'MAC 地址', fn: genMac, defaultName: 'macAddress' }
 ];
 
 const TYPE_MAP = TYPES.reduce((acc, t) => {
   acc[t.value] = t;
   return acc;
 }, {});
+
+/* ============================================================
+ * 字段名预设（多字段组合「添加字段」时自动填名）
+ * ============================================================ */
+
+/** 兜底字段名：传了未知类型时用 */
+const FALLBACK_NAME = 'field';
+
+/**
+ * 某个类型的默认字段名。
+ * @param {string} type
+ * @returns {string}
+ */
+function defaultNameOf(type) {
+  const t = TYPE_MAP[type];
+  return (t && t.defaultName) || FALLBACK_NAME;
+}
+
+/**
+ * 字段名序号生成器（**纯逻辑**，前端 DataTool 与测试共用）。
+ *
+ * 规则（用户明确定的口径）：
+ *   - 第一个 name 类型 → userName
+ *   - 第二个 → userName_2
+ *   - 第三个 → userName_3
+ *   - **删除不重置**：删掉 userName_2 之后，下一个新加的还是 userName_3
+ *     （甚至 _4：计数器只增不减，绝不复用已用过的号）
+ *   - 不同类型各自独立计数（name 与 phone 互不影响）
+ *
+ * 为什么用独立对象而不是普通 map：
+ *   计数器必须跨渲染稳定存在（DataTool 把它塞在 useRef里），
+ *   而且「从已有字段恢复」时要能从名字里把序号推回去——
+ *   这两件事都要有地方写状态，抽成纯对象比散在组件里好测。
+ *
+ * 关于「用户手改名字不参与计数」：
+ *   计数器只在 next() 被调用（= 自动命名）时前进，用户手写名字不会碰它；
+ *   只有构造 / seedFrom 时才会去「读」已有名字，把序号往前推（防重名）。
+ *   读的时候只认「base」和「base_数字」两种形态，手写的别的名字直接忽略。
+ *
+ * @param {Array<{name?: string, type?: string}>} [initialFields]
+ *        已有字段（从别处恢复的场景），序号会从它们的最大值往后推
+ */
+function createFieldNamer(initialFields) {
+  const used = Object.create(null);
+
+  /**
+   * 从已有字段名里恢复各类型已用到的最大序号。
+   * 只做「往前推」，不会把计数器改小（所以重复调用是安全的）。
+   * @param {Array<{name?: string}>} fields
+   */
+  function seed(fields) {
+    for (const f of Array.isArray(fields) ? fields : []) {
+      const name = String((f && f.name) || '').trim();
+      if (!name) continue;
+      for (const t of TYPES) {
+        const base = t.defaultName;
+        if (name === base) {
+          used[t.value] = Math.max(used[t.value] || 0, 1);
+          continue;
+        }
+        // 只认 base_数字，userName_abc 这种手写名字不参与计数
+        if (name.indexOf(base + '_') !== 0) continue;
+        const n = Number(name.slice(base.length + 1));
+        if (Number.isInteger(n) && n > 0) {
+          used[t.value] = Math.max(used[t.value] || 0, n);
+        }
+      }
+    }
+  }
+
+  seed(initialFields);
+
+  return {
+    /**
+     * 取该类型的下一个字段名（调用一次序号就前进一格）。
+     * @param {string} type
+     * @returns {string}
+     */
+    next(type) {
+      const key = TYPE_MAP[type] ? type : TYPES[0].value;
+      const base = defaultNameOf(key);
+      const n = (used[key] || 0) + 1;
+      used[key] = n;
+      return n === 1 ? base : base + '_' + n;
+    },
+
+    /**
+     * 追加种子（运行期又恢复了外部字段时用），只增不减。
+     * @param {Array<{name?: string}>} fields
+     */
+    seedFrom(fields) {
+      seed(fields);
+      return this;
+    },
+
+    /** 当前各类型已用到的最大序号（只读快照，给测试/排查用） */
+    snapshot() {
+      const out = {};
+      for (const k of Object.keys(used)) out[k] = used[k];
+      return out;
+    }
+  };
+}
 
 /**
  * 生成一条数据。
@@ -327,6 +437,9 @@ module.exports = {
   TYPE_MAP,
   BOUNDARY_VALUES,
   PLATE_PROVINCES,
+  FALLBACK_NAME,
+  defaultNameOf,
+  createFieldNamer,
   genOne,
   genRows,
   genColumn,

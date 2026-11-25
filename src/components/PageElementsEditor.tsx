@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Button, Input, Space, Tag } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 
@@ -25,9 +25,9 @@ export function parseElements(raw: any): PageElement[] {
         return arr
           .filter((x) => x && typeof x === 'object')
           .map((x) => ({
-            name: String(x.name || ''),
-            selector: String(x.selector || ''),
-            desc: String(x.desc || '')
+            name: String(x.name || '').trim(),
+            selector: String(x.selector || '').trim(),
+            desc: String(x.desc || '').trim()
           }));
       }
     } catch (e) {
@@ -69,6 +69,36 @@ export function dropEmptyElements(raw: any): string {
   return serializeElements(parseElements(raw));
 }
 
+/** 一行空白草稿（新增记录时至少给一行可填） */
+export function blankRow(): PageElement {
+  return { name: '', selector: '', desc: '' };
+}
+
+/**
+ * 外部 value → 编辑行。
+ *
+ * 抽成纯函数有两个原因：
+ *   1. 组件里要「首次挂载」和「外部值变化」都用它，逻辑只留一份；
+ *   2. 可以在 node 里直接单测（这条正是会丢数据的那条路径）。
+ *
+ * 空值兜底一行空行：新增记录时表格不能是空的。
+ */
+export function initialRows(value: any): PageElement[] {
+  const parsed = parseElements(value);
+  return parsed.length ? parsed : [blankRow()];
+}
+
+/**
+ * 外部 value 要不要回填到表格？
+ *
+ * 自己 commit 出去的值会被父组件原样传回来（受控组件的回声），
+ * 这种回声不能回填，否则刚输入的内容会被旧值冲掉、光标也会跳。
+ */
+export function shouldAdoptIncoming(incoming: any, lastEmitted: string): boolean {
+  const s = String(incoming === undefined || incoming === null ? '' : incoming);
+  return s !== lastEmitted;
+}
+
 type Props = {
   value: any;
   onChange: (next: string) => void;
@@ -85,13 +115,32 @@ export default function PageElementsEditor({ value, onChange, placeholder }: Pro
   /**
    * 内部维护草稿，避免「边输边序列化」导致光标跳动。
    * 每次改动：更新草稿 + 通知上层（序列化后的字符串）。
+   *
+   * 坑（Bug A，会丢数据）：
+   *   编辑已有记录时，elements 字段是**异步**加载的 —— 组件首次挂载时 value 还是空串。
+   *   旧实现用 `useMemo(() => parseElements(value), [])` + `useState(initial)` 只取一次，
+   *   于是外部值到达后表格仍是那一行空行；用户一保存，serializeElements 过滤空行 → 空串 → 库里被清空。
+   *
+   * 现在：惰性初始化（首帧 value 已有值就直接用）+ useEffect 在外部值变化时回填，
+   * 并用 lastEmitted 忽略「自己刚发出去的那个值」的回声。
    */
-  const initial = useMemo(() => parseElements(value), []);
-  const [rows, setRows] = useState<PageElement[]>(initial.length ? initial : [{ name: '', selector: '', desc: '' }]);
+  const [rows, setRows] = useState<PageElement[]>(() => initialRows(value));
+
+  /** 最近一次自己 commit 出去的字符串，用来识别父组件的回声 */
+  const lastEmitted = useRef<string>('');
+
+  // 外部 value 变了（且不是自己刚发出去的那个值）才回填
+  useEffect(() => {
+    const incoming = String(value === undefined || value === null ? '' : value);
+    if (!shouldAdoptIncoming(incoming, lastEmitted.current)) return; // 自己发的，忽略
+    setRows(initialRows(incoming));
+  }, [value]);
 
   const commit = (next: PageElement[]) => {
     setRows(next);
-    onChange(serializeElements(next));
+    const s = serializeElements(next);
+    lastEmitted.current = s; // 关键：记下自己发出去的值，上面的 effect 才不会把刚输入的内容冲掉
+    onChange(s);
   };
 
   const setRow = (i: number, key: keyof PageElement, v: string) => {
@@ -100,11 +149,11 @@ export default function PageElementsEditor({ value, onChange, placeholder }: Pro
     commit(next);
   };
 
-  const addRow = () => commit(rows.concat([{ name: '', selector: '', desc: '' }]));
+  const addRow = () => commit(rows.concat([blankRow()]));
 
   const removeRow = (i: number) => {
     const next = rows.filter((_, idx) => idx !== i);
-    commit(next.length ? next : [{ name: '', selector: '', desc: '' }]);
+    commit(next.length ? next : [blankRow()]);
   };
 
   const filled = rows.filter((r) => r.name.trim()).length;

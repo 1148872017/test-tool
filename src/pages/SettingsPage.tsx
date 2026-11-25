@@ -66,6 +66,19 @@ export default function SettingsPage({ boot, onChanged }: Props) {
   const [oldPin, setOldPin] = useState('');
   const [newPin, setNewPin] = useState('');
   const [pinBusy, setPinBusy] = useState(false);
+  /**
+   * 「移除密码」独立一套状态，**绝不复用 oldPin**。
+   *
+   * 用户复现过的问题：设置密码 → 移除密码 → 直接报「密码不对」。
+   * 根因是移除按钮原来是个 Popconfirm（不弹输入框），却拿设置弹窗的 oldPin 去调
+   * clearPin —— 而 oldPin 在设置成功后就被清空了，等于每次都在用空密码验证。
+   * 现在移除走独立 Modal + 独立 state，输入框里输入什么就是什么。
+   */
+  const [clearPinOpen, setClearPinOpen] = useState(false);
+  const [clearPinValue, setClearPinValue] = useState('');
+  const [clearPinBusy, setClearPinBusy] = useState(false);
+  /** 最近一次工作区推导的提示（边输边存是静默的，靠这行字让人看见结果） */
+  const [dirSyncTip, setDirSyncTip] = useState('');
   const [workspaceDir, setWorkspaceDir] = useState('');
   const [casesDir, setCasesDir] = useState('');
   const [jmxDir, setJmxDir] = useState('');
@@ -399,8 +412,10 @@ export default function SettingsPage({ boot, onChanged }: Props) {
       const res = await api.pickDir({ title: '选择工作区目录' });
       if (res && res.ok) {
         setWorkspaceDir(res.dir || '');
-        saveSettings({ workspaceDir: res.dir || '' });
-        toast('工作区已设置，子目录会自动推导');
+        // 静默保存：保存本身不弹「已保存」，这里要说的是推导结果
+        const saved = await saveSettings({ workspaceDir: res.dir || '' }, true);
+        if (!saved) return; // 保存失败已经 toast 过了
+        toast(dirSyncText(saved.dirSync) || '工作区已设置，子目录会自动推导');
       }
     } catch (e: any) {
       toast('选择失败：' + (e && e.message ? e.message : e), 'error');
@@ -508,49 +523,126 @@ export default function SettingsPage({ boot, onChanged }: Props) {
   }, []);
 
   /**
+   * 工作区推导结果的提示文案。
+   *
+   * @param sync settings:set 回执里的 dirSync：
+   *             { derived: 重算的字段, kept: 保留的用户值, created: 新建的目录,
+   *               failed: 建失败的目录, skipped: 没有工作区根所以没建的, rootReady }
+   */
+  const dirSyncText = (sync: any): string => {
+    if (!sync) return '';
+    const derived = Array.isArray(sync.derived) ? sync.derived.length : 0;
+    const created = Array.isArray(sync.created) ? sync.created.length : 0;
+    const failed = Array.isArray(sync.failed) ? sync.failed.length : 0;
+    const skipped = Number(sync.skipped) || 0;
+    if (!derived) return '工作区已设置，子目录都保持你显式填的路径';
+    const parts = sync.workspaceDir
+      ? [`已设置工作区，${derived} 个子目录已自动推导`]
+      : [`已清空工作区，${derived} 个子目录回到留空状态`];
+    if (created) parts.push(`并创建了 ${created} 个目录`);
+    else if (skipped) parts.push(`但工作区目录当前不存在，${skipped} 个目录暂未创建`);
+    if (failed) parts.push(`但有 ${failed} 个目录创建失败（权限不足？）`);
+    return parts.join('，');
+  };
+
+  /**
    * 保存设置。
    *
    * @param patch   要改的字段
-   * @param silent  静默（不弹「已保存」）——给 debounce 自动保存用。
+   * @param silent  静默（不弹 toast）——给 debounce 自动保存用。
    *                不加这个的话，输入框每敲一下都会刷一条 toast。
+   * @returns       后端回执（settings:set 的返回值，改工作区时带 dirSync）；失败返回 null
    */
-  const saveSettings = async (patch: any, silent = false) => {
+  const saveSettings = async (patch: any, silent = false): Promise<any> => {
     try {
-      await api.saveSettings(patch);
-      if (!silent) toast('已保存');
+      const res = await api.saveSettings(patch);
+      const tip = dirSyncText(res && res.dirSync);
+      if (tip) setDirSyncTip(tip);
+      // 改工作区时说的是「推导/建目录」的结果，比其他字段的「已保存」有用得多
+      if (!silent) toast(tip || '已保存');
       onChanged();
+      return res;
     } catch (e: any) {
       toast('保存失败：' + (e && e.message ? e.message : e), 'error');
+      return null;
     }
   };
 
+  /** 打开「设置 / 修改密码」弹窗：先把上次残留的输入清干净，避免复用脏值 */
+  const openPinModal = () => {
+    setOldPin('');
+    setNewPin('');
+    setPinBusy(false);
+    setPinOpen(true);
+  };
+
+  /** 打开「移除密码」弹窗：独立 state，和修改密码的 oldPin 互不影响 */
+  const openClearPinModal = () => {
+    setClearPinValue('');
+    setClearPinBusy(false);
+    setClearPinOpen(true);
+  };
+
+  /**
+   * 设置 / 修改密码。
+   *
+   * 两种场景分开校验（用户报过「只输原密码、不输新密码，报错但原密码留在了框里」）：
+   *   - 已设密码 → 必须填原密码（且后端也会验）；
+   *   - 未设密码 → 不显示也不要原密码，传空串。
+   */
   const doSetPin = async () => {
+    const needOld = !!settings.hasPin;
+    if (needOld && !oldPin.trim()) {
+      toast('请输入原密码', 'error');
+      return;
+    }
     if (newPin.length < 4) {
       toast('密码至少 4 位', 'error');
       return;
     }
     setPinBusy(true);
-    const res = await api.setPin(oldPin, newPin);
-    setPinBusy(false);
-    if (res && res.ok) {
-      toast('密码已设置');
-      setPinOpen(false);
-      setOldPin('');
-      setNewPin('');
-      onChanged();
-    } else {
-      toast((res && res.message) || '设置失败', 'error');
+    try {
+      const res = await api.setPin(needOld ? oldPin : '', newPin);
+      if (res && res.ok) {
+        toast(needOld ? '密码已修改' : '密码已设置');
+        setPinOpen(false);
+        setOldPin('');
+        setNewPin('');
+        onChanged();
+      } else {
+        toast((res && res.message) || '设置失败', 'error');
+      }
+    } catch (e: any) {
+      toast('设置失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      setPinBusy(false);
     }
   };
 
+  /**
+   * 移除密码：用弹窗里输入的当前密码（clearPinValue），不再借用 oldPin。
+   * 之前移除按钮是个不弹框的 Popconfirm，oldPin 早被清空 → 每次都是「密码不对」。
+   */
   const doClearPin = async () => {
-    const res = await api.clearPin(oldPin);
-    if (res && res.ok) {
-      toast('已移除密码');
-      setOldPin('');
-      onChanged();
-    } else {
-      toast((res && res.message) || '移除失败', 'error');
+    if (!clearPinValue) {
+      toast('请输入当前密码', 'error');
+      return;
+    }
+    setClearPinBusy(true);
+    try {
+      const res = await api.clearPin(clearPinValue);
+      if (res && res.ok) {
+        toast('密码已移除');
+        setClearPinOpen(false);
+        setClearPinValue('');
+        onChanged();
+      } else {
+        toast((res && res.message) || '密码不对', 'error');
+      }
+    } catch (e: any) {
+      toast('移除失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      setClearPinBusy(false);
     }
   };
 
@@ -723,6 +815,12 @@ export default function SettingsPage({ boot, onChanged }: Props) {
           <div className="dir-row-hint muted">
             配了工作区后，下面的子目录<b>留空就自动用</b>「工作区/子目录名」——通常你只需要配这一个
           </div>
+          {/* 推导结果（边输边存是静默的，这里让人看得见「到底推了几个、建了几个」） */}
+          {dirSyncTip ? (
+            <div className="dir-row-hint" style={{ color: '#389e0d' }}>
+              <CheckCircleOutlined /> {dirSyncTip}
+            </div>
+          ) : null}
         </div>
 
         {/* ===== 2 级：子目录 ===== */}
@@ -881,20 +979,13 @@ export default function SettingsPage({ boot, onChanged }: Props) {
             )}
           </div>
           <Space>
-            <Button size="small" icon={<KeyOutlined />} onClick={() => setPinOpen(true)}>
+            <Button size="small" icon={<KeyOutlined />} onClick={openPinModal}>
               {settings.hasPin ? '修改密码' : '设置密码'}
             </Button>
             {settings.hasPin ? (
-              <Popconfirm
-                title="移除密码后，任何人都能打开这个工具"
-                okText="移除"
-                cancelText="取消"
-                onConfirm={doClearPin}
-              >
-                <Button size="small" danger>
-                  移除
-                </Button>
-              </Popconfirm>
+              <Button size="small" danger onClick={openClearPinModal}>
+                移除
+              </Button>
             ) : null}
           </Space>
         </div>
@@ -1311,17 +1402,27 @@ export default function SettingsPage({ boot, onChanged }: Props) {
       <Modal
         open={pinOpen}
         title={settings.hasPin ? '修改密码' : '设置密码'}
-        onCancel={() => setPinOpen(false)}
+        onCancel={() => {
+          setPinOpen(false);
+          setOldPin('');
+          setNewPin('');
+        }}
         onOk={doSetPin}
         okText="确定"
         cancelText="取消"
         confirmLoading={pinBusy}
         width={420}
       >
+        {/* 已设密码才要原密码；没设密码时这行根本不显示（原来是条件渲染，语义保留） */}
         {settings.hasPin ? (
           <div style={{ marginBottom: 12 }}>
             <div className="kv-label">原密码</div>
-            <Input.Password value={oldPin} onChange={(e) => setOldPin(e.target.value)} />
+            <Input.Password
+              value={oldPin}
+              onChange={(e) => setOldPin(e.target.value)}
+              autoFocus
+              placeholder="请输入当前密码"
+            />
           </div>
         ) : null}
         <div>
@@ -1329,7 +1430,7 @@ export default function SettingsPage({ boot, onChanged }: Props) {
           <Input.Password
             value={newPin}
             onChange={(e) => setNewPin(e.target.value)}
-            autoFocus
+            autoFocus={!settings.hasPin}
             onPressEnter={doSetPin}
             placeholder="用于解锁工具，不是 Windows 密码"
           />
@@ -1337,6 +1438,37 @@ export default function SettingsPage({ boot, onChanged }: Props) {
         <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
           忘记密码只能删除数据目录重建，密码只存在本机，不会被上传。
         </div>
+      </Modal>
+
+      {/* 移除密码：必须在这里输入当前密码，后端再验一次（不再借用「修改密码」的输入框） */}
+      <Modal
+        open={clearPinOpen}
+        title={<span style={{ color: '#cf1322' }}>移除密码</span>}
+        onCancel={() => {
+          setClearPinOpen(false);
+          setClearPinValue('');
+        }}
+        onOk={doClearPin}
+        okText="移除"
+        okButtonProps={{ danger: true }}
+        cancelText="取消"
+        confirmLoading={clearPinBusy}
+        width={420}
+      >
+        <Alert
+          type="warning"
+          showIcon
+          message="移除密码后，任何人都能打开这个工具"
+          style={{ marginBottom: 12 }}
+        />
+        <div className="kv-label">当前密码</div>
+        <Input.Password
+          value={clearPinValue}
+          onChange={(e) => setClearPinValue(e.target.value)}
+          autoFocus
+          placeholder="请输入当前密码"
+          onPressEnter={doClearPin}
+        />
       </Modal>
 
       <Modal

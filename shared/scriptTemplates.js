@@ -621,4 +621,40 @@ log.info("canContinue = " + ok)
   },
 ];
 
-module.exports = { NO_CODE_NEEDED, TEMPLATES, TEMPLATE_CATEGORIES, CATEGORY_MAP };
+/* ============================================================
+ * 模板 → 可直接运行的代码（v0.44.0）
+ * ============================================================ */
+
+/**
+ * 把 {{变量}} 占位符替换成 vars 里的默认值。
+ *
+ * 用在「把模板直接塞进生成的 jmx」这个场景：
+ * 复制到剪贴板时留着 {{...}} 没问题（用户会自己填），
+ * 但直接写进 jmx 的 Groovy 字符串里就成了字面量，运行时必然断言失败。
+ * 所以填默认值——模板作者已经给了合理默认（200 / data.status / SUCCESS…）。
+ *
+ * 找不到默认值的占位符原样保留（宁可在代码里显眼，也不要凭空编一个值）。
+ *
+ * @param {string} code 模板代码
+ * @param {Array<{name: string, value?: string}>} [vars] 变量说明表
+ * @returns {string}
+ */
+function fillTemplateDefaults(code, vars) {
+  const text = String(code == null ? '' : code);
+  const list = Array.isArray(vars) ? vars : [];
+  if (!list.length) return text;
+  return text.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (all, rawName) => {
+    const name = String(rawName).trim();
+    const hit = list.find((v) => v && v.name === name);
+    // 用函数返回值而不是字符串，避免默认值里的 $& / $1 被当成替换模式
+    return hit && hit.value !== undefined ? String(hit.value) : all;
+  });
+}
+
+module.exports = {
+  NO_CODE_NEEDED,
+  TEMPLATES,
+  TEMPLATE_CATEGORIES,
+  CATEGORY_MAP,
+  fillTemplateDefaults
+};

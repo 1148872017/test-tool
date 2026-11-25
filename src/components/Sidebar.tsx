@@ -130,10 +130,15 @@ export default function Sidebar({ route, onNavigate, counts, onLock, trashCount 
       </nav>
 
       <div className="sidebar-foot">
+        {/* 选中态用主题色变量：原来写死 #efecff / #5443d6，换主题后这一颗按钮不变色 */}
         <button
           className="foot-btn"
           onClick={() => onNavigate({ type: 'settings' })}
-          style={route.type === 'settings' ? { background: '#efecff', color: '#5443d6' } : undefined}
+          style={
+            route.type === 'settings'
+              ? { background: 'var(--primary-soft)', color: 'var(--primary-text)' }
+              : undefined
+          }
         >
           <SettingOutlined /> 设置
         </button>
