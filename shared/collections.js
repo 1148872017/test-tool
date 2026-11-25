@@ -393,6 +393,37 @@ const COLLECTIONS = [
     },
     fields: [
       { key: 'name', label: '流程名', type: 'text', required: true, placeholder: '如：登录页流程-1125' },
+      /**
+       * 流程类型：ui（页面动作积木）/ api（接口流程积木）。
+       *
+       * 两种积木共用 flows 集合，靠这个字段把「载入流程」下拉分成两拨 ——
+       * UI 积木只列 ui、接口积木只列 api。**老记录没有这个字段，一律当 ui**
+       * （v0.49 之前只有 UI 积木，兜底规则见 apiBrickHelpers.flowKindOf 和 CodegenPage.flowIsApiKind）。
+       */
+      {
+        key: 'kind',
+        label: '流程类型',
+        type: 'text',
+        hideInForm: true,
+        formHidden: true,
+        formHiddenReason: '由积木区自动写入（ui/api）'
+      },
+      {
+        key: 'baseUrl',
+        label: 'BaseUrl',
+        type: 'text',
+        hideInForm: true,
+        formHidden: true,
+        formHiddenReason: '接口流程由积木区自动写入，生成时拼在 path 前'
+      },
+      {
+        key: 'testName',
+        label: '测试方法名',
+        type: 'text',
+        hideInForm: true,
+        formHidden: true,
+        formHiddenReason: '接口流程由积木区自动写入，留空按 test_flow 兜底'
+      },
       {
         key: 'pageId',
         label: '关联页面',

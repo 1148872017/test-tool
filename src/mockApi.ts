@@ -313,6 +313,57 @@ const SEED: Record<string, any[]> = {
       favorite: false,
       created_at: now() - 3600000,
       updated_at: now() - 3600000
+    },
+    /**
+     * 接口流程（kind: 'api'）：接口积木「保存为流程」写出来的样子。
+     * 上面那条 UI 流程**故意没有 kind** —— 预览里正好能看出「老记录当 ui」的兜底。
+     */
+    {
+      id: 'fl2',
+      collection: 'flows',
+      title: '接口流程-1125',
+      data: {
+        name: '接口流程-1125',
+        kind: 'api',
+        baseUrl: 'http://localhost:8080',
+        testName: 'testOrderFlow',
+        steps: JSON.stringify([
+          {
+            actionId: 'call',
+            params: {
+              apiId: 'p1',
+              apiName: '登录',
+              as: 'loginResp',
+              method: 'POST',
+              path: '/api/login',
+              headers: [{ k: 'Content-Type', v: 'application/json' }],
+              body: '{"username":"admin","password":"123"}'
+            }
+          },
+          {
+            actionId: 'extract-json',
+            params: { from: 'loginResp', path: '$.data.token', as: 'token' }
+          },
+          {
+            actionId: 'call',
+            params: {
+              apiId: 'p2',
+              apiName: '查询订单详情',
+              as: 'orderResp',
+              method: 'GET',
+              path: '/api/order',
+              headers: [{ k: 'Authorization', v: 'Bearer ${token}' }],
+              body: ''
+            }
+          },
+          { actionId: 'assert-status', params: { from: 'orderResp', code: 200 } }
+        ]),
+        note: '演示数据：接口流程（登录 → 提取 token → 查订单 → 断言 200）'
+      },
+      tags: [],
+      favorite: false,
+      created_at: now() - 1800000,
+      updated_at: now() - 1800000
     }
   ]
 };

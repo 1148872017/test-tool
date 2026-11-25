@@ -48,6 +48,37 @@ try {
   ElementCountTipLazy = null;
 }
 
+/**
+ * 接口积木面板（「接口流程（积木）」视图），同样用受保护的 require。
+ * 理由和上面两块一样：scripts/test-elements.cjs 的白名单 require 桩没登记它，
+ * 静态 import 会让那个套件在载入阶段就崩；真打包时 esbuild 照样打进 dist/app.js。
+ */
+let ApiBricksPanelLazy: any = null;
+try {
+  ApiBricksPanelLazy = require('../components/api-bricks/ApiBricksPanel').default;
+} catch (e) {
+  ApiBricksPanelLazy = null;
+}
+
+/**
+ * 接口目标下的两个视图：单个接口（原有「接口测试类骨架」）/ 接口流程（积木）。
+ *
+ * 只有这两个 REST Assured / pytest 目标有「流程」概念；
+ * POJO / Pydantic 模型、Playwright 页面对象各走各的视图。
+ */
+const API_BRICKS_TARGETS = ['java-restassured', 'python-pytest'];
+
+/**
+ * 这条流程记录是不是接口流程。
+ *
+ * 老记录没有 kind 字段（v0.49 之前只有 UI 积木），一律当 UI 流程 —— 兜底规则
+ * 和 src/components/api-bricks/apiBrickHelpers.ts 的 flowKindOf 完全一致。
+ */
+function flowIsApiKind(rec: any): boolean {
+  const d = (rec && rec.data) || {};
+  return String(d.kind || '').trim().toLowerCase() === 'api';
+}
+
 type Target = {
   key: string;
   label: string;
@@ -110,8 +141,10 @@ export default function CodegenPage() {
   const [pageUrl, setPageUrl] = useState('/login');
   /** 载入提示：「已载入：登录页（4 个元素）」，让用户一眼确认带进来了什么 */
   const [pageHint, setPageHint] = useState('');
-  /** 「流程模板」集合的记录（积木区的「载入流程」下拉从这里出） */
+  /** 「流程模板」集合里 **UI 流程** 的记录（接口流程走 apiFlows，两边不串台） */
   const [flows, setFlows] = useState<any[]>([]);
+  /** 「流程模板」集合里 **接口流程** 的记录（kind === 'api'） */
+  const [apiFlows, setApiFlows] = useState<any[]>([]);
   /**
    * 本次会话里已经生成过 POM 类的页面（key 见 pomKeyOf）。
    *
@@ -121,6 +154,8 @@ export default function CodegenPage() {
   const [pomReadyKeys, setPomReadyKeys] = useState<string[]>([]);
   /** 积木区当前拼装状态：切到「页面对象类」再切回来时用它恢复（切换会卸载面板） */
   const bricksStateRef = useRef<any>(null);
+  /** 接口积木区的拼装状态（切到「接口测试类骨架」再切回来时用它恢复） */
+  const apiBricksStateRef = useRef<any>(null);
   const [elements, setElements] = useState<PageElement[]>([
     { name: 'usernameInput', selector: '#username', desc: '用户名输入框' }
   ]);
@@ -141,9 +176,23 @@ export default function CodegenPage() {
    * 接口测试类骨架 / POJO / Pydantic 模型完全不受影响。
    */
   const isBricksTarget = kind === 'page' && String(targetKey).indexOf('playwright-') === 0;
+  /**
+   * 接口目标（REST Assured / pytest）下也有两块：单个接口（原有骨架）/ 接口流程（积木）。
+   * 和 Playwright 的「[页面对象类] [动作拼装（积木）]」是同构的切换。
+   */
+  const isApiBricksTarget =
+    !!current && kind === 'api' && API_BRICKS_TARGETS.indexOf(String(targetKey)) >= 0;
   /** Playwright 目标下的两个视图：动作拼装（积木）/ 页面对象类（原有 POM 生成） */
   const [pageView, setPageView] = useState<'bricks' | 'pom'>('bricks');
   const showBricks = isBricksTarget && pageView === 'bricks';
+  /**
+   * 接口目标下的两个视图：single = 单个接口（原有「接口测试类骨架」，一行没动）/ bricks = 接口流程。
+   * 默认停在 single：这是老用户的主路径，不该因为新增视图被顶掉。
+   */
+  const [apiView, setApiView] = useState<'single' | 'bricks'>('single');
+  const showApiBricks = isApiBricksTarget && apiView === 'bricks';
+  /** 两个积木视图都会顶掉工具条上的「生成预览 / 保存到文件 / 复制」 */
+  const inBricksView = showBricks || showApiBricks;
   /**
    * 元素表格里的代码预览按当前生成目标的语言来出。
    * Java 和 Python 的定位 API 风格不同（getByLabel vs get_by_label），预览不能说谎。
@@ -151,6 +200,19 @@ export default function CodegenPage() {
   const previewLang = current && current.lang === 'python' ? 'python' : 'java';
   /** 生成类型下拉：按语言分组 */
   const targetOptions = useMemo(() => groupTargets(targets), [targets]);
+
+  /**
+   * 读「流程模板」并按 kind 分给两块积木。
+   *
+   * UI 积木只该看到 ui 流程、接口积木只该看到 api 流程 —— 两边共用一个 flows 集合，
+   * 靠这个字段分区；老记录没有 kind，兜底成 ui（v0.49 之前只有 UI 积木）。
+   */
+  const refreshFlows = async () => {
+    const rows = await api.records('flows');
+    const list = rows || [];
+    setFlows(list.filter((f) => !flowIsApiKind(f)));
+    setApiFlows(list.filter((f) => flowIsApiKind(f)));
+  };
 
   /* ---------- 初始化 ---------- */
   useEffect(() => {
@@ -174,9 +236,8 @@ export default function CodegenPage() {
         /* ignore */
       }
       try {
-        // 流程模板：积木区「载入流程」用；读不到就给空表（不能因此让页面白屏）
-        const rows = await api.records('flows');
-        setFlows(rows || []);
+        // 流程模板：两块积木的「载入流程」都用它；读不到就给空表（不能因此让页面白屏）
+        await refreshFlows();
       } catch (e) {
         /* ignore */
       }
@@ -363,8 +424,8 @@ export default function CodegenPage() {
         tags: []
       });
       try {
-        const rows = await api.records('flows');
-        setFlows(rows || []);
+        // 列表刷一遍：保存完立刻能从「载入流程」里看到（按 kind 归到对应那块积木）
+        await refreshFlows();
       } catch (e) {
         /* 列表没刷新不影响已经存进去的记录 */
       }
@@ -456,10 +517,11 @@ export default function CodegenPage() {
             onChange={(e) => setClassName(e.target.value)}
           />
           {/*
-            积木视图下这三个按钮是「页面对象类」视图的操作（生成/保存的是一整个 POM 类），
-            留在这儿点了没反应，会让人以为坏了 —— 直接不渲染，切回「页面对象类」就有。
+            积木视图下这三个按钮是「页面对象类」/「接口测试类骨架」视图的操作
+            （生成/保存的是整份骨架文件），留在这儿点了没反应，会让人以为坏了 ——
+            直接不渲染，切回对应视图就有。
           */}
-          {showBricks ? null : (
+          {inBricksView ? null : (
             <>
               <Button
                 type="primary"
@@ -496,6 +558,19 @@ export default function CodegenPage() {
         />
       ) : null}
 
+      {/* 接口目标才有的视图切换：接口测试类骨架（原有）/ 接口流程（积木，新） */}
+      {isApiBricksTarget ? (
+        <Segmented
+          size="small"
+          value={apiView}
+          onChange={(v) => setApiView(v as 'single' | 'bricks')}
+          options={[
+            { label: '接口测试类骨架', value: 'single' },
+            { label: '接口流程（积木）', value: 'bricks' }
+          ]}
+        />
+      ) : null}
+
       {showBricks ? (
         BricksPanelLazy ? (
           <BricksPanelLazy
@@ -524,6 +599,28 @@ export default function CodegenPage() {
         ) : (
           <div className="muted" style={{ padding: 12 }}>
             积木面板没有加载起来，刷新页面再试
+          </div>
+        )
+      ) : showApiBricks ? (
+        ApiBricksPanelLazy ? (
+          <ApiBricksPanelLazy
+            /* 接口记录：apiRecord 参数的下拉从这里出（选中即抄快照） */
+            apis={apis}
+            lang={previewLang}
+            /* 只喂接口流程；UI 流程在 flows 里，两块面板不串台 */
+            flows={apiFlows}
+            onCopy={doCopyBricks}
+            onSaveFlow={doSaveFlow}
+            onNotify={doNotifyBricks}
+            /* 切换视图会卸载面板：状态回传给页面，回来时原样恢复 */
+            initialState={apiBricksStateRef.current}
+            onStateChange={(s: any) => {
+              apiBricksStateRef.current = s;
+            }}
+          />
+        ) : (
+          <div className="muted" style={{ padding: 12 }}>
+            接口积木面板没有加载起来，刷新页面再试
           </div>
         )
       ) : (
