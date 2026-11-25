@@ -21,6 +21,21 @@ import {
 } from '../components/PageElementsEditor';
 import { previewLocatorCode } from '../../shared/locatorModes';
 
+/**
+ * 积木面板用「受保护的 require」加载，而不是写在顶部的静态 import。
+ *
+ * 原因：scripts/test-elements.cjs 会用一个白名单 require 桩现场加载本文件来验证
+ * groupTargets —— 桩表里没有登记的模块一律抛错，静态 import 一个新模块会让那个
+ * 套件在**载入阶段**就崩掉。真打包时 esbuild 不看 try/catch，照样把这棵模块打进
+ * dist/app.js；测试环境拿不到时只是不渲染积木面板，生成目标分组等逻辑照旧可测。
+ */
+let BricksPanelLazy: any = null;
+try {
+  BricksPanelLazy = require('../components/ui-bricks/BricksPanel').default;
+} catch (e) {
+  BricksPanelLazy = null;
+}
+
 type Target = {
   key: string;
   label: string;
@@ -97,6 +112,15 @@ export default function CodegenPage() {
 
   const current = useMemo(() => targets.find((t) => t.key === targetKey), [targets, targetKey]);
   const kind = current ? current.kind : 'api';
+  /**
+   * 积木区只在 Playwright POM 目标下出现：
+   * 那两个目标产出的本来就是「测试方法 + 页面对象」，动作拼装才有意义；
+   * 接口测试类骨架 / POJO / Pydantic 模型完全不受影响。
+   */
+  const isBricksTarget = kind === 'page' && String(targetKey).indexOf('playwright-') === 0;
+  /** Playwright 目标下的两个视图：动作拼装（积木）/ 页面对象类（原有 POM 生成） */
+  const [pageView, setPageView] = useState<'bricks' | 'pom'>('bricks');
+  const showBricks = isBricksTarget && pageView === 'bricks';
   /**
    * 元素表格里的代码预览按当前生成目标的语言来出。
    * Java 和 Python 的定位 API 风格不同（getByLabel vs get_by_label），预览不能说谎。
@@ -265,6 +289,17 @@ export default function CodegenPage() {
     toast('代码已复制');
   };
 
+  /** 积木面板的「复制」：连 import 一起复制，粘进 IDEA 少一步手抄 */
+  const doCopyBricks = async (text: string) => {
+    if (!text) return;
+    try {
+      await api.copy(text, false);
+      toast('动作代码已复制（含 import）');
+    } catch (e: any) {
+      toast('复制失败：' + (e && e.message ? e.message : e), 'error');
+    }
+  };
+
   /**
    * 从「页面元素」集合载入一个页面。
    *
@@ -328,27 +363,67 @@ export default function CodegenPage() {
             allowClear
             onChange={(e) => setClassName(e.target.value)}
           />
-          <Button
-            type="primary"
-            size="small"
-            icon={<CodeOutlined />}
-            onClick={doPreview}
-            loading={busy}
-          >
-            生成预览
-          </Button>
-          <Button size="small" icon={<SaveOutlined />} onClick={doSave} disabled={!code}>
-            保存到文件
-          </Button>
-          <Button size="small" icon={<CopyOutlined />} onClick={doCopy} disabled={!code}>
-            复制
-          </Button>
+          {/*
+            积木视图下这三个按钮是「页面对象类」视图的操作（生成/保存的是一整个 POM 类），
+            留在这儿点了没反应，会让人以为坏了 —— 直接不渲染，切回「页面对象类」就有。
+          */}
+          {showBricks ? null : (
+            <>
+              <Button
+                type="primary"
+                size="small"
+                icon={<CodeOutlined />}
+                onClick={doPreview}
+                loading={busy}
+              >
+                生成预览
+              </Button>
+              <Button size="small" icon={<SaveOutlined />} onClick={doSave} disabled={!code}>
+                保存到文件
+              </Button>
+              <Button size="small" icon={<CopyOutlined />} onClick={doCopy} disabled={!code}>
+                复制
+              </Button>
+            </>
+          )}
         </Space>
       </div>
 
       {current ? <div className="codegen-desc muted">{current.desc}</div> : null}
 
-      <div className="codegen-body">
+      {/* Playwright POM 目标才有的视图切换：动作拼装（新）/ 页面对象类（原有） */}
+      {isBricksTarget ? (
+        <Segmented
+          size="small"
+          value={pageView}
+          onChange={(v) => setPageView(v as 'bricks' | 'pom')}
+          options={[
+            { label: '动作拼装（积木）', value: 'bricks' },
+            { label: '页面对象类', value: 'pom' }
+          ]}
+        />
+      ) : null}
+
+      {showBricks ? (
+        BricksPanelLazy ? (
+          <BricksPanelLazy
+            pages={pages}
+            pageId={pageId}
+            onSelectPage={doLoadPage}
+            pageName={pageName}
+            pageUrl={pageUrl}
+            className={className}
+            elements={filledElements()}
+            lang={previewLang}
+            onCopy={doCopyBricks}
+          />
+        ) : (
+          <div className="muted" style={{ padding: 12 }}>
+            积木面板没有加载起来，刷新页面再试
+          </div>
+        )
+      ) : (
+        <div className="codegen-body">
         {/* 左侧：数据源 */}
         <div className="codegen-source">
           {kind === 'api' ? (
@@ -685,6 +760,7 @@ export default function CodegenPage() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

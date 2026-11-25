@@ -71,6 +71,7 @@ const unit = [
   'test-startup.cjs',
   'test-templates.cjs',
   'test-theme.cjs',
+  'test-ui-bricks.cjs',
   'test-updater.cjs',
   'test-v41.cjs',
   'test-vars.cjs'
