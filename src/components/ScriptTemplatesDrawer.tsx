@@ -33,6 +33,20 @@ const INSERT_KIND: Record<string, TemplateInsertKind> = {
   flow: 'pre'
 };
 
+/** 底部说明的默认文案（代码调试页会换成「插入到光标处」的说法） */
+const DEFAULT_FOOTER_HINT =
+  '复制后粘到 JMeter GUI 的对应元件里（断言 / 前置处理器 / 后置处理器）。' +
+  'JMeter 模板还可以点「填入附加代码」，直接写进「脚本生成」出来的新 jmx。';
+
+/** onPickTemplate 交出去的模板对象（只给用得上的字段，避免调用方依赖内部结构） */
+export type TemplatePickPayload = {
+  id: string;
+  category: string;
+  name: string;
+  code: string;
+  vars?: any[];
+};
+
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -43,13 +57,32 @@ type Props = {
    * api-assert / ui-assert 是 RestAssured/pytest/Playwright 代码，不能进 jmx，不显示该按钮。
    */
   onPick?: (item: { type: TemplateInsertKind; code: string; name: string }) => void;
+  /**
+   * 可选：和 onPick 二选一（都传时优先这个）。
+   *
+   * 区别只在「交出去的东西」：onPick 给的是填好默认值的代码 + 元件类型，
+   * 给脚本生成页用；这里给整个模板对象，代码调试页要靠 category 补上
+   * 「这段断言在 JMeter 里挂哪」的说明——调试页跑通不等于断言生效。
+   */
+  onPickTemplate?: (tpl: TemplatePickPayload) => void;
+  /** 插入按钮文案（脚本生成页是「填入附加代码」，代码调试页是「插入到光标处」） */
+  pickLabel?: string;
+  /** 底部说明第一句；两个场景的说法不一样，所以可覆盖 */
+  footerHint?: string;
 };
 
 /**
  * 脚本模板库。
  * 定位是「带注释的起点」，不是生成器——用户能看懂示例、在示例上改。
  */
-export default function ScriptTemplatesDrawer({ open, onClose, onPick }: Props) {
+export default function ScriptTemplatesDrawer({
+  open,
+  onClose,
+  onPick,
+  onPickTemplate,
+  pickLabel = '填入附加代码',
+  footerHint = DEFAULT_FOOTER_HINT
+}: Props) {
   const [keyword, setKeyword] = useState('');
   const [activeId, setActiveId] = useState(TEMPLATES[0].id);
   const [showNoCode, setShowNoCode] = useState(true);
@@ -87,11 +120,17 @@ export default function ScriptTemplatesDrawer({ open, onClose, onPick }: Props) 
 
   /** 当前模板能不能「直接带进生成的 jmx」 */
   const insertKind = active && active.category ? INSERT_KIND[active.category] : undefined;
-  const canInsert = !!onPick && !!insertKind;
+  const canInsert = !!insertKind && (!!onPick || !!onPickTemplate);
 
   /** 把当前模板塞进脚本生成页的附加代码区（占位符换成默认值，粘进去就能跑） */
   const insert = () => {
-    if (!active || !onPick || !insertKind) return;
+    if (!active || !insertKind) return;
+    if (onPickTemplate) {
+      // 代码调试页：交整个模板对象，它自己决定要不要补「JMeter 里怎么挂载」
+      onPickTemplate({ id: active.id, category: active.category, name: active.name, code: active.code, vars: active.vars });
+      return;
+    }
+    if (!onPick) return;
     onPick({
       type: insertKind,
       code: fillTemplateDefaults(active.code, active.vars),
@@ -150,8 +189,7 @@ export default function ScriptTemplatesDrawer({ open, onClose, onPick }: Props) 
          */
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-            复制后粘到 JMeter GUI 的对应元件里（断言 / 前置处理器 / 后置处理器）。
-            JMeter 模板还可以点「填入附加代码」，直接写进「脚本生成」出来的新 jmx。
+            {footerHint}
           </div>
           <Space size={8} style={{ flex: 'none' }}>
             <Button size="small" icon={<FolderOpenOutlined />} onClick={openJmxDir}>
@@ -257,7 +295,7 @@ export default function ScriptTemplatesDrawer({ open, onClose, onPick }: Props) 
                 <Space size={8}>
                   {canInsert ? (
                     <Button size="small" icon={<ImportOutlined />} onClick={insert}>
-                      填入附加代码
+                      {pickLabel}
                     </Button>
                   ) : null}
                   <Button

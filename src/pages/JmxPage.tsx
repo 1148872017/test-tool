@@ -13,11 +13,13 @@ import {
   InfoCircleOutlined,
   CopyOutlined,
   RocketOutlined,
-  CodeOutlined
+  CodeOutlined,
+  RedoOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
 import ScriptTemplatesDrawer from '../components/ScriptTemplatesDrawer';
+import { buildHandoff, setJmxHandoff } from '../features/jmx/handoff';
 
 const LEVEL_ICON: Record<string, any> = {
   error: <CloseCircleOutlined style={{ color: '#e5534b' }} />,
@@ -33,6 +35,94 @@ const fmtTime = (ms: number) => {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
+
+/** 文件大小：详情抽屉头部展示（字节数太抽象） */
+const fmtSize = (n: number) => {
+  const b = Number(n) || 0;
+  if (b <= 0) return '—';
+  if (b < 1024) return b + ' B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1024 / 1024).toFixed(1) + ' MB';
+};
+
+/** 数值展示：null / 空串统一显示「—」（jmx 里没配的项就是空串） */
+const showNum = (v: any, suffix = '') => (v === null || v === undefined || v === '' ? '—' : String(v) + suffix);
+
+/**
+ * 元件类型 → 中文名。
+ *
+ * 注意：详情里**仍然显示原始 testclass**（JSR223Assertion / ResponseAssertion…），
+ * 中文名只当提示 —— 用户要验证「我加的断言进没进 jmx」，看的就是 JMeter 里那个类名。
+ */
+const ELEMENT_LABEL: Record<string, string> = {
+  JSR223Assertion: 'JSR223 断言',
+  JSR223PreProcessor: 'JSR223 前置处理器',
+  JSR223PostProcessor: 'JSR223 后置处理器',
+  JSR223Sampler: 'JSR223 采样器',
+  JSR223Timer: 'JSR223 定时器',
+  ResponseAssertion: '响应断言',
+  DurationAssertion: '持续时间断言',
+  BeanShellAssertion: 'BeanShell 断言',
+  BeanShellPreProcessor: 'BeanShell 前置处理器',
+  BeanShellPostProcessor: 'BeanShell 后置处理器',
+  JSONPathAssertion: 'JSONPath 断言',
+  SizeAssertion: '大小断言',
+  XPathAssertion: 'XPath 断言',
+  XPath2Assertion: 'XPath2 断言',
+  JSONPostProcessor: 'JSON 提取器',
+  CSVDataSet: 'CSV 数据源',
+  HeaderManager: 'HTTP 信息头管理器',
+  ConfigTestElement: 'HTTP 请求默认值',
+  Arguments: '用户定义变量',
+  CookieManager: 'HTTP Cookie 管理器',
+  CacheManager: 'HTTP 缓存管理器',
+  ConstantTimer: '固定定时器',
+  SyncTimer: '同步定时器',
+  UniformRandomTimer: '均匀随机定时器',
+  GaussianRandomTimer: '高斯随机定时器'
+};
+
+const elementLabel = (type: string) => ELEMENT_LABEL[type] || type;
+
+/** JSR223 / BeanShell 这类「脚本元件」用紫色，普通断言蓝色，其余灰色 */
+const elementColor = (type: string) => {
+  if (/^JSR223/.test(type) || /^BeanShell/.test(type)) return 'purple';
+  if (type === 'ResponseAssertion' || type === 'DurationAssertion') return 'blue';
+  if (type === 'CSVDataSet') return 'green';
+  return 'default';
+};
+
+/**
+ * 采样器下挂的元件（断言 / 前置 / 后置 / 定时器）一行。
+ *
+ * 这就是「L1 只读详情」的核心：能把 JSR223Assertion 这类元件按采样器列出来，
+ * 用户生成完脚本后可以在这里确认「我加的断言真的进 jmx 了」。
+ * 标签上直接写 testclass（不做中文替换），因为 JMeter GUI 里看到的就是这个名字。
+ */
+function AttachLine({ label, list }: { label: string; list: any[] }) {
+  if (!list || !list.length) return null;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 3 }}>
+      <span className="muted" style={{ fontSize: 12, minWidth: 32 }}>
+        {label}
+      </span>
+      {list.map((a: any, i: number) => (
+        <Tag
+          key={i}
+          color={elementColor(a.type)}
+          style={{ marginInlineEnd: 0, fontSize: 11 }}
+          title={[elementLabel(a.type), a.name, a.language ? '语言：' + a.language : '', a.scriptPreview || '']
+            .filter(Boolean)
+            .join('\n')}
+        >
+          {a.type}
+          {a.name ? ' · ' + a.name : ''}
+          {a.enabled === false ? '（禁用）' : ''}
+        </Tag>
+      ))}
+    </div>
+  );
+}
 
 const TG_TYPE_LABEL: Record<string, string> = { thread: '线程组', setup: 'setUp', teardown: 'tearDown' };
 
@@ -59,13 +149,27 @@ const LISTENER_COLOR: Record<string, string> = {
 
 const listenerKindOf = (l: any) => LISTENER_KIND[l.guiClass] || l.name || '监听器';
 
-export default function JmxPage() {
+type JmxPageProps = {
+  /**
+   * 路由跳转（App.tsx 的 setRoute）。
+   * 只用于「基于这个重新生成」→ 跳到「脚本生成」页；
+   * 不传也能正常用（预览/单测里没有路由）。
+   */
+  onNavigate?: (route: any) => void;
+};
+
+export default function JmxPage({ onNavigate }: JmxPageProps = {}) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
   const [levelFilter, setLevelFilter] = useState('all');
   const [dirFilter, setDirFilter] = useState('');
+  /** 当前打开的行（来自 scan，健康检查结果直接复用，不重复算） */
   const [detail, setDetail] = useState<any>(null);
+  /** jmx:detail 的解析结果（按需解析：点开一行才读一次文件） */
+  const [info, setInfo] = useState<any>(null);
+  const [infoError, setInfoError] = useState('');
+  const [infoLoading, setInfoLoading] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [tplOpen, setTplOpen] = useState(false);
 
@@ -191,6 +295,57 @@ export default function JmxPage() {
     toast('已复制脚本摘要');
   };
 
+  /**
+   * 打开详情抽屉。
+   *
+   * 为什么要两次数据：
+   *   1) 行数据来自 jmx:scan —— 健康检查已经算好，详情页直接复用（不重复算）；
+   *   2) jmx:detail 是「点开才解析单文件」—— 目录里几千个 jmx 时，
+   *      列表不该为了一次详情把每个文件都深读一遍。
+   * 先挂行数据，详情到了再补；详情失败也不影响看健康检查。
+   */
+  const openDetail = async (f: any) => {
+    setDetail(f);
+    setInfo(null);
+    setInfoError('');
+    setInfoLoading(true);
+    try {
+      const res = await api.jmxDetail(f.fullPath);
+      if (res && res.ok) setInfo(res);
+      else setInfoError((res && (res.message || res.code)) || '解析详情失败');
+    } catch (e: any) {
+      setInfoError('读取详情失败：' + (e && e.message ? e.message : e));
+    } finally {
+      setInfoLoading(false);
+    }
+  };
+
+  const closeDetail = () => {
+    setDetail(null);
+    setInfo(null);
+    setInfoError('');
+    setInfoLoading(false);
+  };
+
+  /**
+   * 「基于这个重新生成」：把源脚本的线程数 / Ramp-Up / 循环 / 域名带到「脚本生成」页。
+   *
+   * 只带这 4 个（值最确定、收益最高）：接口要重新选，断言/CSV 由生成页自己组，
+   * 全量预填反而会把用户在源脚本里的手工改动当成「标准答案」。
+   * 交接用模块级变量（features/jmx/handoff.ts），不动 App.tsx 的路由结构。
+   */
+  const regenerateFrom = (f: any) => {
+    const domain = (f && f.defaults && f.defaults[0] && f.defaults[0].domain) || '';
+    const src = info && info.threadGroups ? info : f || {};
+    setJmxHandoff(buildHandoff((f && f.file) || src.file || '', src, { domain }));
+    if (onNavigate) {
+      toast('已带过线程数 / Ramp-Up / 循环 / 域名，到「脚本生成」页接着改');
+      onNavigate({ type: 'tool', key: 'scriptgen' });
+    } else {
+      toast('已带过线程数 / Ramp-Up / 循环 / 域名（当前环境没有路由，无法跳转）', 'warning');
+    }
+  };
+
   const columns: any[] = [
     {
       title: '脚本',
@@ -276,6 +431,29 @@ export default function JmxPage() {
   ];
 
   const jmeter = data && data.jmeter ? data.jmeter : null;
+
+  /**
+   * 详情抽屉的展示数据。
+   *
+   * info（jmx:detail）到了就用它 —— 断言/前后置已按采样器归位；
+   * 还没到（或单文件解析失败）就退回 scan 的结构，至少能看线程组和健康检查。
+   */
+  const summary =
+    info && info.summary
+      ? info.summary
+      : {
+          threadGroups: detail && detail.threadGroups ? detail.threadGroups.length : 0,
+          samplers: detail && detail.samplers ? detail.samplers.length : 0,
+          assertions:
+            detail && detail.responseAssertions
+              ? detail.responseAssertions.length + detail.durationAssertions.length + detail.beanShell.assert.length
+              : 0,
+          configs: detail && detail.csvs ? detail.csvs.length : 0
+        };
+  const samplerList = info ? info.samplers || [] : detail && detail.samplers ? detail.samplers : [];
+  const tgList = info && info.threadGroups ? info.threadGroups : detail && detail.threadGroups ? detail.threadGroups : [];
+  const configList = info ? info.configs || [] : [];
+  const varList: string[] = info ? info.variables || [] : detail && detail.placeholders ? detail.placeholders : [];
 
   return (
     <div>
@@ -401,15 +579,19 @@ export default function JmxPage() {
                   </div>
                 )
               }}
-              onRow={(f: any) => ({ onClick: () => setDetail(f), style: { cursor: 'pointer' } })}
+              onRow={(f: any) => ({ onClick: () => openDetail(f), style: { cursor: 'pointer' } })}
             />
           </div>
         </div>
       </div>
 
+      {/*
+        详情抽屉：宽度保留 760 而不是 480 —— 里面除了概览还有线程组/采样器表格，
+        480 会把「名称/类型/线程数/Ramp/持续/循环/状态」挤成两行，反而看不清。
+      */}
       <Drawer
         open={!!detail}
-        onClose={() => setDetail(null)}
+        onClose={closeDetail}
         width={760}
         title={
           detail ? (
@@ -424,6 +606,10 @@ export default function JmxPage() {
         extra={
           detail ? (
             <div className="drawer-extra">
+              {/* 互跳：带着线程数/rampUp/循环/域名去「脚本生成」页重新生成 */}
+              <Button size="small" icon={<RedoOutlined />} onClick={() => regenerateFrom(detail)}>
+                基于这个重新生成
+              </Button>
               <Button size="small" icon={<CopyOutlined />} onClick={() => copySummary(detail)}>
                 复制摘要
               </Button>
@@ -439,32 +625,57 @@ export default function JmxPage() {
       >
         {detail ? (
           <div className="jmx-detail">
+            {/* 头部信息：大小 · 修改时间（文件大小来自 jmx:detail，退回 scan 的 size） */}
+            <div className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
+              {fmtSize((info && info.size) || detail.size)} · 修改于{' '}
+              {fmtTime((info && info.modifiedAt) || detail.mtime)}
+            </div>
+
             {detail.parseError ? (
               <Alert type="error" showIcon message="解析失败" description={detail.parseError} style={{ marginBottom: 14 }} />
             ) : null}
+            {infoError ? (
+              <Alert
+                type="warning"
+                showIcon
+                message="详情读取失败"
+                description={infoError + '（下面仍显示扫描时的结构）'}
+                style={{ marginBottom: 14 }}
+              />
+            ) : null}
+            {infoLoading ? (
+              <div className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
+                正在解析文件…
+              </div>
+            ) : null}
 
-            {detail.health.issues.length ? (
-              <section className="jmx-section">
-                <h4>健康检查</h4>
-                <div className="jmx-issues">
-                  {detail.health.issues.map((i: any, idx: number) => (
-                    <div className={`jmx-issue jmx-issue-${i.level}`} key={idx}>
-                      {LEVEL_ICON[i.level]}
-                      <div>
-                        <div className="jmx-issue-title">{i.title}</div>
-                        {i.detail ? <div className="jmx-issue-detail">{i.detail}</div> : null}
-                      </div>
-                    </div>
-                  ))}
+            {/* 概览：一眼看清规模（数字都来自 jmx:detail 的 summary） */}
+            <section className="jmx-section">
+              <h4>概览</h4>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 20px', fontSize: 13 }}>
+                <span>
+                  <b style={{ fontSize: 16 }}>{summary.threadGroups}</b> 个线程组
+                </span>
+                <span>
+                  <b style={{ fontSize: 16 }}>{summary.samplers}</b> 个采样器
+                </span>
+                <span>
+                  <b style={{ fontSize: 16 }}>{summary.assertions}</b> 个断言
+                </span>
+                <span>
+                  <b style={{ fontSize: 16 }}>{summary.configs}</b> 个配置
+                </span>
+              </div>
+              {info && info.testPlan ? (
+                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                  测试计划：{info.testPlan.name || '（未命名）'}
                 </div>
-              </section>
-            ) : (
-              <Alert type="success" showIcon message="没有发现问题" style={{ marginBottom: 14 }} />
-            )}
+              ) : null}
+            </section>
 
-            {detail.threadGroups.length ? (
+            {tgList.length ? (
               <section className="jmx-section">
-                <h4>线程组（{detail.threadGroups.length}）</h4>
+                <h4>线程组（{tgList.length}）</h4>
                 <table className="jmx-table">
                   <thead>
                     <tr>
@@ -478,14 +689,14 @@ export default function JmxPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {detail.threadGroups.map((t: any, i: number) => (
+                    {(tgList || []).map((t: any, i: number) => (
                       <tr key={i}>
                         <td>{t.name}</td>
-                        <td className="muted">{TG_TYPE_LABEL[t.type] || t.type}</td>
-                        <td>{t.numThreads || '—'}</td>
-                        <td>{t.rampUp ? t.rampUp + 's' : '—'}</td>
-                        <td>{t.duration ? t.duration + 's' : '—'}</td>
-                        <td>{t.loops || '—'}</td>
+                        <td className="muted">{TG_TYPE_LABEL[t.type] || t.type || '—'}</td>
+                        <td>{showNum(t.numThreads)}</td>
+                        <td>{showNum(t.rampUp, 's')}</td>
+                        <td>{showNum(t.duration, 's')}</td>
+                        <td>{showNum(t.loops)}</td>
                         <td>{t.enabled ? <Tag color="green">启用</Tag> : <Tag>禁用</Tag>}</td>
                       </tr>
                     ))}
@@ -494,20 +705,75 @@ export default function JmxPage() {
               </section>
             ) : null}
 
-            {detail.samplers.length ? (
+            {samplerList.length ? (
               <section className="jmx-section">
-                <h4>采样器（{detail.samplers.length}）</h4>
+                <h4>采样器（{samplerList.length}）</h4>
                 <div className="jmx-samplers">
-                  {detail.samplers.map((s: any, i: number) => (
-                    <div className={'jmx-sampler' + (s.enabled ? '' : ' jmx-sampler-off')} key={i}>
-                      <Tag color={s.method === 'GET' ? 'green' : s.method === 'POST' ? 'blue' : 'purple'}>
-                        {s.method}
+                  {samplerList.map((s: any, i: number) => {
+                    const attachCount =
+                      (s.assertions ? s.assertions.length : 0) +
+                      (s.preProcessors ? s.preProcessors.length : 0) +
+                      (s.postProcessors ? s.postProcessors.length : 0) +
+                      (s.timers ? s.timers.length : 0);
+                    return (
+                      <div className={'jmx-sampler' + (s.enabled ? '' : ' jmx-sampler-off')} key={i} style={{ display: 'block' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <Tag color={s.method === 'GET' ? 'green' : s.method === 'POST' ? 'blue' : 'purple'}>
+                            {s.method}
+                          </Tag>
+                          <span className="jmx-sampler-path mono">{s.path || '(继承默认值)'}</span>
+                          <span className="jmx-sampler-name muted">{s.name}</span>
+                          {attachCount ? (
+                            <Tag style={{ fontSize: 11 }}>{attachCount} 个附加元件</Tag>
+                          ) : (
+                            <span className="muted" style={{ fontSize: 11 }}>
+                              无附加元件
+                            </span>
+                          )}
+                          {!s.enabled ? <Tag>禁用</Tag> : null}
+                        </div>
+                        {/* 断言 / 前后置 / 定时器：按采样器列出，类型原样展示 */}
+                        <AttachLine label="断言" list={s.assertions || []} />
+                        <AttachLine label="前置" list={s.preProcessors || []} />
+                        <AttachLine label="后置" list={s.postProcessors || []} />
+                        <AttachLine label="定时" list={s.timers || []} />
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
+
+            {configList.length ? (
+              <section className="jmx-section">
+                <h4>配置元件（{configList.length}）</h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {configList.map((c: any, i: number) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+                      <Tag color={elementColor(c.type)} style={{ marginInlineEnd: 0, fontSize: 11 }} title={elementLabel(c.type)}>
+                        {c.type}
                       </Tag>
-                      <span className="jmx-sampler-path mono">{s.path || '(继承默认值)'}</span>
-                      <span className="jmx-sampler-name muted">{s.name}</span>
-                      {!s.enabled ? <Tag>禁用</Tag> : null}
+                      <span>{c.name}</span>
+                      {c.scope ? <span className="muted">挂在 {c.scope}</span> : <span className="muted">测试计划级</span>}
+                      {c.enabled === false ? <Tag>禁用</Tag> : null}
                     </div>
                   ))}
+                </div>
+              </section>
+            ) : null}
+
+            {varList.length ? (
+              <section className="jmx-section">
+                <h4>变量（{varList.length}）</h4>
+                <div className="jmx-placeholders">
+                  {varList.map((p: string) => (
+                    <Tag key={p} className="mono">
+                      {'${' + p + '}'}
+                    </Tag>
+                  ))}
+                </div>
+                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                  {'从脚本内容里抽出来的 ${...} 引用（${__P(...)} 这类函数不算变量，已排除）'}
                 </div>
               </section>
             ) : null}
@@ -589,7 +855,7 @@ export default function JmxPage() {
 
             {detail.responseAssertions.length || detail.durationAssertions.length || detail.beanShell.assert.length ? (
               <section className="jmx-section">
-                <h4>断言</h4>
+                <h4>断言细节</h4>
                 {detail.responseAssertions.map((a: any, i: number) => (
                   <div className="jmx-kv" key={'r' + i}>
                     <span className="muted">响应断言</span>
@@ -627,19 +893,6 @@ export default function JmxPage() {
               </section>
             ) : null}
 
-            {detail.placeholders.length ? (
-              <section className="jmx-section">
-                <h4>占位符（{detail.placeholders.length}）</h4>
-                <div className="jmx-placeholders">
-                  {detail.placeholders.map((p: string) => (
-                    <Tag key={p} className="mono">
-                      {'${' + p + '}'}
-                    </Tag>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-
             {detail.listeners.length ? (
               <section className="jmx-section">
                 <h4>监听器（{detail.listeners.length}）</h4>
@@ -666,6 +919,29 @@ export default function JmxPage() {
                 </div>
               </section>
             ) : null}
+
+            {/*
+              健康检查放最后：直接复用 jmx:scan 算好的结果（detail.health），
+              这里**不重新解析** —— 一个文件只算一次，避免详情页和列表结论不一致。
+            */}
+            {detail.health && detail.health.issues.length ? (
+              <section className="jmx-section">
+                <h4>健康检查</h4>
+                <div className="jmx-issues">
+                  {detail.health.issues.map((i: any, idx: number) => (
+                    <div className={`jmx-issue jmx-issue-${i.level}`} key={idx}>
+                      {LEVEL_ICON[i.level]}
+                      <div>
+                        <div className="jmx-issue-title">{i.title}</div>
+                        {i.detail ? <div className="jmx-issue-detail">{i.detail}</div> : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : (
+              <Alert type="success" showIcon message="健康检查没有发现问题" style={{ marginBottom: 14 }} />
+            )}
           </div>
         ) : null}
       </Drawer>

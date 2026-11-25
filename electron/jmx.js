@@ -157,7 +157,16 @@ function parseHttpSampler(el) {
     path: p['HTTPSampler.path'] || '',
     args,
     body: p['HTTPSampler.postBodyRaw'] ? '(raw)' : '',
-    followRedirects: p['HTTPSampler.follow_redirects'] === 'true'
+    followRedirects: p['HTTPSampler.follow_redirects'] === 'true',
+    /**
+     * 挂在这个采样器下面的元件桶（parseJmx 递归时填充）。
+     * 详情页要能按采样器回答「我加的断言真的进了这个请求吗」，
+     * 而不是把所有断言平铺在文件级 —— 那是 4 个采样器共享 3 条断言时分不清。
+     */
+    assertions: [],
+    preProcessors: [],
+    postProcessors: [],
+    timers: []
   };
 }
 
@@ -301,6 +310,73 @@ function listenerKind(l) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 元件分类（v0.45.0：JSR223 等通用识别）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 配置类元件（testclass）：这些不算断言/前后置，但详情页要单独列。
+ * 只收 JMeter 自带、教程里出现过的；不认识的元件一律忽略，不会误报。
+ */
+const CONFIG_TYPES = new Set([
+  'ConfigTestElement', // HTTP 请求默认值
+  'HeaderManager', // HTTP 信息头管理器
+  'Arguments', // 用户定义的变量
+  'CSVDataSet', // CSV Data Set Config
+  'CookieManager', // HTTP Cookie 管理器
+  'CacheManager', // HTTP 缓存管理器
+  'JDBCConnectionConfiguration', // JDBC 连接配置
+  'RandomVariableConfig', // 随机变量
+  'CounterConfig', // 计数器
+  'KeystoreConfig', // 证书
+  'LDAPArguments', // LDAP 请求默认值
+  'LoginConfig', // 登录配置
+  'RegExUserParameters', // 正则提取的 URL 参数
+  'SampleTimeout' // 超时配置
+]);
+
+/**
+ * 按 testclass 后缀判断元件属于哪一类。
+ *
+ * 为什么按后缀而不是写死一张大表（踩过的坑）：
+ *   用户会从 JMeter GUI 里拖各种元件进来（JSR223Assertion / JSONPathAssertion /
+ *   XPath2Assertion / BeanShellTimer …）。写死表的话，新元件在详情里就看不见，
+ *   而这正是 L1「看得见 jmx 里有什么」要解决的问题。
+ *   JMeter 的类名命名很稳定：断言都以 Assertion 结尾，前后置分别是
+ *   PreProcessor / PostProcessor，定时器以 Timer 结尾 —— 按这条规律认得全。
+ *
+ * @param {string} tc testclass 属性
+ * @returns {'' | 'assertion' | 'preProcessor' | 'postProcessor' | 'timer' | 'sampler' | 'config'}
+ */
+function componentKind(tc) {
+  const t = String(tc || '');
+  if (!t) return '';
+  if (/Assertion$/.test(t)) return 'assertion';
+  if (/PreProcessor$/.test(t)) return 'preProcessor';
+  if (/PostProcessor$/.test(t)) return 'postProcessor';
+  // SyncTimer 也以 Timer 结尾，正好一起收
+  if (/Timer$/.test(t)) return 'timer';
+  // HTTPSamplerProxy 不以 Sampler 结尾，单独点名
+  if (/Sampler$/.test(t) || t === 'HTTPSamplerProxy') return 'sampler';
+  if (CONFIG_TYPES.has(t)) return 'config';
+  return '';
+}
+
+/**
+ * JSR223 元件（断言 / 前置 / 后置 / 定时器 / 采样器）的脚本信息。
+ * JSR223 系列的属性名是通用的（script / scriptLanguage），不像 BeanShell 带前缀。
+ */
+function parseJsr223(el) {
+  const p = props(el);
+  return {
+    name: el.getAttribute('testname') || '',
+    type: el.getAttribute('testclass') || el.tagName,
+    enabled: el.getAttribute('enabled') !== 'false',
+    language: p.scriptLanguage || '',
+    script: p.script || ''
+  };
+}
+
+/* ------------------------------------------------------------------ *
  * 主解析
  * ------------------------------------------------------------------ */
 
@@ -321,6 +397,8 @@ function parseJmx(raw, filePath) {
     responseAssertions: [],
     durationAssertions: [],
     beanShell: { pre: [], post: [], assert: [] },
+    /** 所有断言 / 前后置 / 定时器 / 配置元件的统一清单（v0.45.0） */
+    components: [],
     jsonExtractors: [],
     syncTimers: [],
     listeners: [],
@@ -357,7 +435,7 @@ function parseJmx(raw, filePath) {
    * 平铺遍历拿不到父子关系，而监听器/CSV/断言都挂在具体采样器下——
    * 4 个都叫「察看结果树」的监听器，只能靠 scope 区分。
    */
-  const visit = (hashTree, scope) => {
+  const visit = (hashTree, scope, owner) => {
     const kids = children(hashTree);
     for (let i = 0; i < kids.length; i++) {
       const el = kids[i];
@@ -365,20 +443,48 @@ function parseJmx(raw, filePath) {
       const tc = el.getAttribute('testclass') || '';
       const tag = el.tagName;
       const name = el.getAttribute('testname') || '';
+      const kind = componentKind(tc);
 
       // 下一个兄弟是 hashTree → 它是 el 的子树
       const sub = i + 1 < kids.length && kids[i + 1].tagName === 'hashTree' ? kids[i + 1] : null;
 
+      /**
+       * 通用元件登记：断言 / 前后置 / 定时器 / 配置。
+       *
+       * 这一层是 v0.45.0 的「L1 只读详情」新增的：
+       *   原解析器只认写死在 switch 里的那几个元件，v0.44.0 新加进 jmx 的
+       *   JSR223Assertion / JSR223PreProcessor / JSR223PostProcessor 全被 default 丢掉，
+       *   用户没办法在界面上验证「我加的断言到底进没进脚本」。
+       *   现在按 testclass 后缀认（见 componentKind），并在 owner 存在时直接挂到
+       *   当前采样器对象上 —— 详情页按采样器展示，不是全局平铺。
+       */
+      if (kind && kind !== 'sampler') {
+        const item = { name, type: tc || tag, kind, enabled: el.getAttribute('enabled') !== 'false', scope };
+        // JSR223 三类额外带脚本语言 + 代码首行预览（详情里能认出「这段是不是我加的」）
+        if (tc.indexOf('JSR223') === 0) {
+          const js = parseJsr223(el);
+          item.language = js.language;
+          item.scriptPreview = String(js.script || '').split('\n')[0].slice(0, 120);
+        }
+        out.components.push(item);
+        if (owner) {
+          if (kind === 'assertion') owner.assertions.push(item);
+          else if (kind === 'preProcessor') owner.preProcessors.push(item);
+          else if (kind === 'postProcessor') owner.postProcessors.push(item);
+          else if (kind === 'timer') owner.timers.push(item);
+        }
+      }
+
       if (tag === 'TestPlan') {
         out.testPlanName = name;
-        if (sub) visit(sub, name);
+        if (sub) visit(sub, name, null);
         if (sub) i++;
         continue;
       }
       if (THREAD_GROUP_TYPES[tag]) {
         out.threadGroups.push(parseThreadGroup(el));
         // 线程组下还有循环控制器、采样器等，必须继续往下走
-        if (sub) visit(sub, name);
+        if (sub) visit(sub, name, null);
         if (sub) i++;
         continue;
       }
@@ -386,63 +492,63 @@ function parseJmx(raw, filePath) {
       switch (tc) {
         case 'HTTPSamplerProxy':
           out.samplers.push(parseHttpSampler(el));
-          // 采样器下的监听器/CSV/断言，scope 记成这个采样器
-          if (sub) visit(sub, name);
+          // 采样器对象传下去：子孙里的断言/前后置/定时器直接进它自己的桶
+          if (sub) visit(sub, name, out.samplers[out.samplers.length - 1]);
           break;
         case 'ConfigTestElement':
           out.defaults.push(parseDefaults(el));
-          if (sub) visit(sub, scope);
+          if (sub) visit(sub, scope, owner);
           break;
         case 'HeaderManager':
           out.headers.push(parseHeaderManager(el));
-          if (sub) visit(sub, scope);
+          if (sub) visit(sub, scope, owner);
           break;
         case 'Arguments':
           out.variables.push(parseArguments(el));
-          if (sub) visit(sub, scope);
+          if (sub) visit(sub, scope, owner);
           break;
         case 'CSVDataSet':
           out.csvs.push(Object.assign(parseCsv(el), { scope }));
-          if (sub) visit(sub, scope);
+          if (sub) visit(sub, scope, owner);
           break;
         case 'ResponseAssertion':
           out.responseAssertions.push(Object.assign(parseResponseAssertion(el), { scope }));
-          if (sub) visit(sub, scope);
+          if (sub) visit(sub, scope, owner);
           break;
         case 'DurationAssertion':
           out.durationAssertions.push(Object.assign(parseDurationAssertion(el), { scope }));
-          if (sub) visit(sub, scope);
+          if (sub) visit(sub, scope, owner);
           break;
         case 'BeanShellPreProcessor':
           out.beanShell.pre.push(Object.assign(parseBeanShell(el), { scope }));
-          if (sub) visit(sub, scope);
+          if (sub) visit(sub, scope, owner);
           break;
         case 'BeanShellPostProcessor':
           out.beanShell.post.push(Object.assign(parseBeanShell(el), { scope }));
-          if (sub) visit(sub, scope);
+          if (sub) visit(sub, scope, owner);
           break;
         case 'BeanShellAssertion':
           out.beanShell.assert.push(Object.assign(parseBeanShell(el), { scope }));
-          if (sub) visit(sub, scope);
+          if (sub) visit(sub, scope, owner);
           break;
         case 'JSONPostProcessor':
           out.jsonExtractors.push(Object.assign(parseJsonExtractor(el), { scope }));
-          if (sub) visit(sub, scope);
+          if (sub) visit(sub, scope, owner);
           break;
         case 'SyncTimer':
           out.syncTimers.push(Object.assign(parseSyncTimer(el), { scope }));
-          if (sub) visit(sub, scope);
+          if (sub) visit(sub, scope, owner);
           break;
         case 'ResultCollector':
           out.listeners.push(parseListener(el, scope));
-          if (sub) visit(sub, scope);
+          if (sub) visit(sub, scope, owner);
           break;
         case 'LoopController':
           out.loops.push({ name, loops: prop(el, 'LoopController.loops'), scope });
-          if (sub) visit(sub, scope);
+          if (sub) visit(sub, scope, owner);
           break;
         default:
-          if (sub) visit(sub, scope);
+          if (sub) visit(sub, scope, owner);
           break;
       }
       if (sub) i++;
@@ -450,8 +556,8 @@ function parseJmx(raw, filePath) {
   };
 
   const topTree = root.getElementsByTagName('hashTree');
-  if (topTree.length) visit(topTree[0], '');
-  else visit(root, '');
+  if (topTree.length) visit(topTree[0], '', null);
+  else visit(root, '', null);
 
   // ${...} 占位符（教程第五章：引用方式 ${XXX}）
   const seen = new Set();
@@ -486,9 +592,15 @@ function checkHealth(jmx, opts) {
   const add = (level, code, title, detail) => issues.push({ level, code, title, detail: detail || '' });
 
   // 1) 断言（教程第四章）
-  const hasResp = jmx.responseAssertions.length > 0;
+  // v0.45.0：JSR223 断言也算「响应断言」。之前只认 ResponseAssertion，
+  // 于是「脚本生成时附加了 JSR223 断言」的脚本会被误报「没有任何断言」。
+  // 注意只认 JSR223Assertion：BeanShell 断言的既有判定保持不变（有回归测试守着）。
+  const components = Array.isArray(jmx.components) ? jmx.components : [];
+  const hasJsr223Assertion = components.some((c) => c.kind === 'assertion' && c.type === 'JSR223Assertion');
+  const hasResp = jmx.responseAssertions.length > 0 || hasJsr223Assertion;
   const hasDur = jmx.durationAssertions.length > 0;
-  if (!hasResp && !hasDur) {
+  const hasAny = hasResp || hasDur;
+  if (!hasAny) {
     add('warn', 'no-assertion', '没有任何断言', '教程第四章：响应断言 + 持续时间断言是常规必备，否则压测跑完无法判断对错');
   } else if (!hasResp) {
     add('warn', 'no-response-assertion', '没有响应断言', '状态码/响应文本无法校验');
@@ -597,6 +709,151 @@ function checkHealth(jmx, opts) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 只读详情（v0.45.0 L1）
+ * ------------------------------------------------------------------ */
+
+/** jmx 正常只有几十 KB；超过 5MB 一定是选错文件了（比如 jtl / 日志） */
+const MAX_DETAIL_BYTES = 5 * 1024 * 1024;
+
+/** 字符串 → 数字（空 / 非数字 → null，别把 '' 变成 0 骗人） */
+function toNum(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * 把 parseJmx 的结果整理成「详情页」结构。
+ *
+ * 为什么不直接把 parseJmx 的原始结构回给界面：
+ *   原始结构是给健康检查/index 用的，字段偏工程化（数字是字符串、
+ *   断言/前后置平铺在文件级）。详情页关心的是「这个采样器上挂了什么」，
+ *   所以这里做一层收敛：数字转 number、断言按采样器归位、给出 summary。
+ *
+ * @param {object} parsed parseJmx 的返回值
+ * @param {{size?: number, mtimeMs?: number}} stat 文件信息
+ */
+function buildDetail(parsed, stat) {
+  const st = stat || {};
+  const components = Array.isArray(parsed.components) ? parsed.components : [];
+  const assertionComponents = components.filter((c) => c.kind === 'assertion');
+
+  // 配置元件（CSV / 信息头 / 请求默认值 / 用户变量…）
+  const configs = components
+    .filter((c) => c.kind === 'config')
+    .map((c) => ({ name: c.name, type: c.type, enabled: c.enabled, scope: c.scope }));
+
+  /**
+   * ${xxx} 变量：从所有文本节点里抽出来的（parseJmx 已去重）。
+   * 过滤 ${__P(...)} / ${__time(...)} 这类 JMeter 函数 —— 它们是函数调用，不是变量；
+   * 留在「变量」里会让用户以为脚本少定义了东西。
+   */
+  const variables = [];
+  const seen = new Set();
+  for (const raw of parsed.placeholders || []) {
+    const name = String(raw == null ? '' : raw).trim();
+    if (!name || name.indexOf('__') === 0 || seen.has(name)) continue;
+    seen.add(name);
+    variables.push(name);
+  }
+
+  const threadGroups = (parsed.threadGroups || []).map((t) => ({
+    name: t.name,
+    type: t.type,
+    enabled: t.enabled,
+    numThreads: toNum(t.numThreads),
+    rampUp: toNum(t.rampUp),
+    loops: toNum(t.loops),
+    // duration 空串 = 没用调度器，按 0 展示（0 秒不代表跑 0 秒，而是「不限时」）
+    duration: toNum(t.duration) || 0,
+    scheduler: !!t.scheduler
+  }));
+
+  const samplers = (parsed.samplers || []).map((s) => ({
+    name: s.name,
+    method: s.method,
+    path: s.path,
+    domain: s.domain,
+    enabled: s.enabled,
+    assertions: s.assertions || [],
+    preProcessors: s.preProcessors || [],
+    postProcessors: s.postProcessors || [],
+    timers: s.timers || []
+  }));
+
+  return {
+    file: path.basename(parsed.fullPath || ''),
+    fullPath: parsed.fullPath || '',
+    size: Number(st.size) || 0,
+    modifiedAt: Number(st.mtimeMs) || 0,
+    jmeterVersion: parsed.jmeterVersion || '',
+    testPlan: { name: parsed.testPlanName || '' },
+    threadGroups,
+    samplers,
+    configs,
+    variables,
+    assertionCount: assertionComponents.length,
+    summary: {
+      threadGroups: threadGroups.length,
+      samplers: samplers.length,
+      assertions: assertionComponents.length,
+      configs: configs.length
+    }
+  };
+}
+
+/**
+ * 读取并解析一个 jmx 的详情（只读，绝不写文件）。
+ *
+ * 错误一律返回 { ok:false, code, message }，不抛异常：
+ *   Electron 的 handler 抛错会被包成 "Error invoking remote method"，
+ *   界面拿不到能直接展示的中文原因。
+ *
+ * @param {string} filePath 绝对路径（调用方负责路径白名单校验）
+ * @param {{maxBytes?: number}} [opts]
+ * @returns {{ok: boolean, code?: string, message?: string}}
+ */
+function readDetail(filePath, opts) {
+  const options = opts || {};
+  const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : MAX_DETAIL_BYTES;
+  const target = String(filePath == null ? '' : filePath).trim();
+  if (!target) return { ok: false, code: 'BAD_PATH', message: '缺少文件路径' };
+
+  let stat;
+  try {
+    stat = fs.statSync(target);
+  } catch (e) {
+    return { ok: false, code: 'NOT_FOUND', message: '文件不存在或无法访问：' + target };
+  }
+  if (!stat.isFile()) {
+    return { ok: false, code: 'NOT_A_FILE', message: '不是文件：' + target };
+  }
+  if (stat.size > maxBytes) {
+    const mb = (stat.size / 1024 / 1024).toFixed(1);
+    const limit = (maxBytes / 1024 / 1024).toFixed(0);
+    return {
+      ok: false,
+      code: 'TOO_LARGE',
+      message: `文件 ${mb} MB，超过 ${limit} MB 上限，已拒绝解析（jmx 正常只有几十 KB，别选成 jtl / 日志）`
+    };
+  }
+
+  let raw = '';
+  try {
+    raw = fs.readFileSync(target, 'utf8');
+  } catch (e) {
+    return { ok: false, code: 'READ_FAILED', message: '读取失败：' + String((e && e.message) || e) };
+  }
+
+  const parsed = parseJmx(raw, target);
+  if (parsed.parseError) {
+    return { ok: false, code: 'BAD_JMX', message: '不是合法的 jmx 文件：' + parsed.parseError };
+  }
+  return Object.assign({ ok: true }, buildDetail(parsed, stat));
+}
+
+/* ------------------------------------------------------------------ *
  * 目录扫描
  * ------------------------------------------------------------------ */
 
@@ -651,4 +908,15 @@ function scanJmx(root, opts) {
   return out;
 }
 
-module.exports = { parseJmx, checkHealth, scanJmx, listenerKind, LISTENER_KIND };
+module.exports = {
+  parseJmx,
+  checkHealth,
+  scanJmx,
+  buildDetail,
+  readDetail,
+  componentKind,
+  parseJsr223,
+  MAX_DETAIL_BYTES,
+  listenerKind,
+  LISTENER_KIND
+};

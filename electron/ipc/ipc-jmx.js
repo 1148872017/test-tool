@@ -143,6 +143,37 @@ function register(deps) {
     return res;
   });
 
+  /**
+   * jmx 只读详情（L1）。
+   *
+   * 入参：{ file } —— 绝对路径，或相对「设置 → 压测」jmxDir 的路径。
+   * 出参：{ ok:true, file, size, modifiedAt, testPlan, threadGroups, samplers,
+   *         configs, variables, assertionCount, summary }
+   *
+   * 为什么单独开通道而不是复用 jmx:scan：
+   *   scan 是整个目录的索引（健康检查、列表），detail 是单文件深读，
+   *   打开一行才解析一次，几千个 jmx 的目录也不会因为点详情变慢。
+   * 只读：readDetail 全程不写盘（有测试守着 mtime / 内容不变）。
+   */
+  handle('jmx:detail', async (e, { file } = {}) => {
+    assertUnlocked();
+    const settings = getSettings();
+    const input = String(file == null ? '' : file).trim();
+    if (!input) return { ok: false, code: 'BAD_PATH', message: '缺少文件路径' };
+
+    // 相对路径按 jmxDir 拼（详情页传的是 scan 出来的 fullPath，一般是绝对路径）
+    const jmxDir = String(settings.jmxDir || '').trim();
+    const target = path.isAbsolute(input) ? input : jmxDir ? path.join(jmxDir, input) : '';
+    if (!target) {
+      return { ok: false, code: 'NO_JMX_DIR', message: '还没配置 jmx 目录，没法解析相对路径' };
+    }
+    // 路径白名单：和 jmx:openFile / jmx:openGui 同一套守卫，越界直接拒绝
+    const bad = assertPathIn(target);
+    if (bad) return bad;
+
+    return jmxIndex.readDetail(target);
+  });
+
   handle('jmx:openFile', async (e, { file }) => {
     assertUnlocked();
     if (!file) return { ok: false, message: '缺少文件路径' };

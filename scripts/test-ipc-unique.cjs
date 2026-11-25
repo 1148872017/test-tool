@@ -16,11 +16,12 @@ const ELECTRON_DIR = path.join(__dirname, '..', 'electron');
  *   +5 回收站：records:trash-list / -count / -restore / -purge / -clear
  *   +1 代码体检规则表：codescan:rules（v0.41.3 规则表数据化）
  *   +2 同期其它改造（ipc-records / ipc-runner 新增）→ 当前实际 110
+ *   +1 jmx 只读详情：jmx:detail（v0.45.0 L1）→ 当前实际 111
  *
  * 注意：这个数字是**整个 electron/ 目录的通道总数**，多人并行改不同域时
  * 以最后一次实测为准（合并后跑一遍 node scripts/test-ipc-unique.cjs 对一下）。
  */
-const EXPECTED_CHANNELS = 110;
+const EXPECTED_CHANNELS = 111;
 
 /**
  * 递归列出 electron/ 下所有 .js。

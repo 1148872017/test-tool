@@ -157,12 +157,23 @@ function rowsOf(tree) {
   );
 }
 
-/** 一行的 3 个输入框节点（名称 / 定位器 / 说明） */
-function cellsOf(row) {
-  return row.props.children.slice(0, 3).map((td) => td.props.children);
+/** 一个 td 里的输入框节点（定位值那一格还可能跟着提示行 / 预览行，得跳过去） */
+function inputOf(td) {
+  const nodes = collect(td ? td.props.children : null, []);
+  return (
+    nodes.find((n) => n && n.props && typeof n.props.value === 'string' && 'placeholder' in n.props) || {
+      props: {}
+    }
+  );
 }
 
-/** [[名称, 定位器, 说明], ...] */
+/** 一行的 4 个格子（名称 / 定位方式 Select / 定位值 / 说明） */
+function cellsOf(row) {
+  const tds = row.props.children;
+  return [inputOf(tds[0]), tds[1].props.children, inputOf(tds[2]), inputOf(tds[3])];
+}
+
+/** [[名称, 定位方式, 定位值, 说明], ...] */
 function valuesOf(tree) {
   return rowsOf(tree).map((r) => cellsOf(r).map((c) => c.props.value));
 }
@@ -185,7 +196,8 @@ function loadTsxModule(file, extraStubs) {
       react: () => hooks,
       'react/jsx-runtime': () => jsxRuntime,
       antd: () => antdProxy,
-      '@ant-design/icons': () => iconsProxy
+      '@ant-design/icons': () => iconsProxy,
+      '../../shared/locatorModes': () => require('../shared/locatorModes.js')
     },
     extraStubs || {}
   );
@@ -336,19 +348,23 @@ function mount(initialValue) {
   const h = mount(VALUE4);
   const v = valuesOf(h.tree);
   check('首帧有值时表格就是 4 行', v.length === 4, v.length);
-  check('首帧定位器列有值', (v[0] || [])[1] === '#username' && (v[2] || [])[1] === 'button[type=submit]', v);
+  check('首帧定位值列有值', (v[0] || [])[2] === '#username' && (v[2] || [])[2] === 'button[type=submit]', v);
 
   /* 6.2 空值挂载 → 一行空行可填 */
   const h2 = mount('');
   check('空值挂载时兜底 1 行', valuesOf(h2.tree).length === 1, valuesOf(h2.tree));
-  check('兜底行三个格子都是空串', (valuesOf(h2.tree)[0] || []).every((x) => x === ''));
+  {
+    const blankRowValues = valuesOf(h2.tree)[0] || [];
+    check('兜底行三个输入格子都是空串', blankRowValues[0] === '' && blankRowValues[2] === '' && blankRowValues[3] === '', blankRowValues);
+    check('兜底行的定位方式是 css', blankRowValues[1] === 'css', blankRowValues);
+  }
 
   /* 6.3 Bug A 主场景：elements 异步到达（挂载时还是空串） */
   const h3 = mount('');
   const tree3 = h3.render({ value: VALUE4 }); // 父组件数据加载完成
   const v3 = valuesOf(tree3);
   check('外部值到达后回填成 4 行（Bug A 主场景）', v3.length === 4, v3.length);
-  check('回填后定位器列不再是空（Bug A 主场景）', (v3[0] || [])[1] === '#username' && (v3[3] || [])[1] === '[data-testid=remember]', v3);
+  check('回填后定位值列不再是空（Bug A 主场景）', (v3[0] || [])[2] === '#username' && (v3[3] || [])[2] === '[data-testid=remember]', v3);
 
   /* 6.4 在编辑状态下改名称 → 父组件回写不能把输入冲掉 */
   const firstRow = rowsOf(tree3)[0];
@@ -357,7 +373,7 @@ function mount(initialValue) {
   const v4 = valuesOf(tree4);
   check('编辑后父组件回写不冲掉输入', (v4[0] || [])[0] === '用户名输入框-改', v4[0]);
   check('编辑后行数不变', v4.length === 4, v4.length);
-  check('编辑后其它行的定位器没丢', (v4[1] || [])[1] === '#password' && (v4[2] || [])[1] === 'button[type=submit]', v4);
+  check('编辑后其它行的定位值没丢', (v4[1] || [])[2] === '#password' && (v4[2] || [])[2] === 'button[type=submit]', v4);
   check('onChange 发出的是完整 JSON', parseElements(h3.emitted[h3.emitted.length - 1] || '').length === 4, h3.emitted[h3.emitted.length - 1]);
 
   /* 6.5 保存（RecordForm 会调 dropEmptyElements）：不能变成空串 */
@@ -371,7 +387,8 @@ function mount(initialValue) {
     const rs = rowsOf(tree5);
     const lastRow = rs[rs.length - 1];
     if (!lastRow) break;
-    lastRow.props.children[3].props.children.props.onClick(); // 删除按钮
+    const lastTds = lastRow.props.children;
+    lastTds[lastTds.length - 1].props.children.props.onClick(); // 删除按钮（最后一格）
     tree5 = h3.render();
   }
   const v5 = valuesOf(tree5);

@@ -290,7 +290,8 @@ function AppBody({ boot, setBoot }: { boot: any; setBoot: (v: any) => void }) {
             onOpenedCase={() => setRoute((r: any) => ({ ...r, openCase: undefined }))}
           />
         ) : null}
-        {route.type === 'jmx' ? <JmxPage /> : null}
+        {/* 互跳：压测脚本页「基于这个重新生成」→ 脚本生成页（交接参数走 features/jmx/handoff） */}
+        {route.type === 'jmx' ? <JmxPage onNavigate={setRoute} /> : null}
         {route.type === 'kb' ? <KnowledgePage /> : null}
         {route.type === 'notes' ? <NotesPage /> : null}
         {/* 回收站：常规列表看不到的已删除记录在这里恢复 / 彻底删除 */}
@@ -302,7 +303,8 @@ function AppBody({ boot, setBoot }: { boot: any; setBoot: (v: any) => void }) {
         {route.type === 'tool' && route.key === 'codegen' ? <CodegenPage /> : null}
         {route.type === 'tool' && route.key === 'report' ? <ReportPage /> : null}
         {route.type === 'tool' && route.key === 'codescan' ? <CodeScanPage /> : null}
-        {route.type === 'tool' && route.key === 'scriptgen' ? <ScriptGenPage /> : null}
+        {/* 互跳：保存 jmx 后「去压测脚本页查看」 */}
+        {route.type === 'tool' && route.key === 'scriptgen' ? <ScriptGenPage onNavigate={setRoute} /> : null}
         {route.type === 'settings' ? (
           <SettingsPage
             boot={boot}

@@ -1,11 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Select, Button, Alert, Space, Modal, InputNumber } from 'antd';
+import { Select, Button, Alert, Space, Modal, InputNumber, Dropdown } from 'antd';
 import {
   PlayCircleOutlined,
   StopOutlined,
   ClearOutlined,
   CopyOutlined,
   FolderOpenOutlined,
+  ReadOutlined,
+  ImportOutlined,
+  DownOutlined,
   ReloadOutlined,
   SettingOutlined,
   CloseOutlined
@@ -13,6 +16,14 @@ import {
 import api from '../api';
 import { toast } from '../msg';
 import { CODE_LANGS, DEFAULT_TIMEOUT_MS, clampTimeout } from '../../shared/codelab';
+import {
+  TEMPLATES as SCRIPT_TEMPLATES,
+  CATEGORY_MAP,
+  GROOVY_CATEGORIES,
+  templateSnippet,
+  insertCodeAtCursor
+} from '../../shared/scriptTemplates';
+import ScriptTemplatesDrawer from '../components/ScriptTemplatesDrawer';
 import { createLineBuffer, DEFAULT_LINE_CAP } from '../features/runner/lineBuffer';
 import type { RunnerLine } from '../features/runner/lineBuffer';
 import OutputConsole from '../features/runner/OutputConsole';
@@ -143,6 +154,25 @@ const TIMEOUT_PRESETS = [
 /** 提示条自动关闭时间（毫秒） */
 const TIP_DURATION = 30000;
 
+/**
+ * 模板分类 → 这个分类的脚本在 JMeter 里挂到哪个元件。
+ *
+ * 下拉分组用它做副标题：用户看到「断言 · JSR223 断言」就知道自己会在
+ * JMeter 里找什么东西，而不是只看到库里自己的分类名。
+ */
+const GROUP_ELEMENT: Record<string, string> = {
+  assert: 'JSR223 断言',
+  extract: 'JSR223 后置处理器',
+  generate: 'JSR223 前置处理器',
+  crypto: 'JSR223 前置处理器',
+  flow: 'JSR223 前置处理器 + If 控制器'
+};
+
+/** 代码调试页的模板库说明：调试页跑通 ≠ 断言生效，这句话必须出现在入口边上 */
+const DRAWER_FOOTER_HINT =
+  '点「插入到光标处」把代码插进编辑器（占位符已填默认值，注释保留）。' +
+  '注意：本页只是用 groovy 跑一遍语法，断言/提取器真正生效要挂到 JMeter 的采样器上。';
+
 /** 路径太长时只显示末尾两段，完整路径放 title 里（悬停能看全） */
 function shortPath(p: string) {
   const s = String(p || '');
@@ -188,6 +218,11 @@ export default function CodeRunnerPage() {
   const [tipVisible, setTipVisible] = useState(false);
   const [tipPct, setTipPct] = useState(100);
   const tipTimer = useRef<any>(null);
+
+  // 模板：下拉「导入模板」+ 完整模板库抽屉
+  const [tplOpen, setTplOpen] = useState(false);
+  /** 光标位置要靠它，插入模板时必须拿到真实的 selectionStart */
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const outputRef = useRef<HTMLDivElement | null>(null);
   /**
@@ -235,6 +270,11 @@ export default function CodeRunnerPage() {
   const currentRunner = useMemo(() => allRunners.find((r) => r.key === runnerKey), [allRunners, runnerKey]);
   const isMaven = runnerKey === 'maven';
   const isLangMode = !!(currentRunner && currentRunner.lang);
+  /**
+   * 只有 Groovy（JMeter）模式才有模板导入。
+   * Maven / pytest / JavaScript 那些不是 JSR223 脚本，塞 JMeter 模板进去没意义。
+   */
+  const isGroovy = runnerKey === 'groovy';
 
   /** 实际生效的超时（毫秒）：前端算一遍只为显示，主进程还会再钳一次 */
   const timeoutMs = useMemo(() => {
@@ -491,6 +531,67 @@ export default function CodeRunnerPage() {
     }
   };
 
+  /* ---------- 模板：插入到光标处 ---------- */
+  /**
+   * 把一条模板插进编辑器。
+   *
+   * 为什么不替换：用户常常是「已经写了两行，再补一段断言」，
+   * 直接覆盖会把已写的代码吃掉，所以一律插入。
+   *
+   * 真正的字符串拼接在 shared/scriptTemplates.js 的 insertCodeAtCursor 里
+   * （纯函数，能单测）；这里只负责拿光标位置 + 把光标放回插入内容末尾。
+   */
+  const insertTemplate = (tpl: { id?: string; category?: string; name?: string; code: string; vars?: any[] }) => {
+    const snippet = templateSnippet(tpl);
+    if (!snippet) return;
+    const ta = textareaRef.current;
+    if (!ta) {
+      // 编辑器还没挂上（比如刚切到 Maven）：退化成「追加到现有内容末尾」
+      setCode((cur) => insertCodeAtCursor(cur, snippet).text);
+      toast(`已插入模板：${tpl.name || '模板'}`);
+      return;
+    }
+    const res = insertCodeAtCursor(code, snippet, ta.selectionStart, ta.selectionEnd);
+    setCode(res.text);
+    // 光标落到插入内容末尾，下一步接着写；等一帧让受控 textarea 先把新值渲染出来
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(res.cursor, res.cursor);
+    });
+    toast(`已插入模板：${tpl.name || '模板'}`);
+  };
+
+  /** 下拉里选了一个模板 id → 找到模板 → 插入 */
+  const pickTemplateById = (id: string) => {
+    const tpl = SCRIPT_TEMPLATES.find((t) => t.id === id);
+    if (tpl) insertTemplate(tpl);
+  };
+
+  /**
+   * 「导入模板」下拉菜单的分组项。
+   *
+   * 数据全部来自 shared/scriptTemplates.js（按 GROOVY_CATEGORIES 过滤，
+   * 顺序也按它走：断言排第一，因为这是最常插的一类）。
+   * 这里不另写一份模板清单 —— 改了模板库，下拉和抽屉必须同时变。
+   * 用 Dropdown 而不是 Select：Select 选完会留在选中态，
+   * 同一个模板想连插两次就点不动了；菜单每次点都触发一次。
+   */
+  const templateMenuItems = useMemo(() => {
+    return GROOVY_CATEGORIES.map((key) => {
+      const cat = CATEGORY_MAP[key];
+      return {
+        type: 'group' as const,
+        label: `${cat ? cat.name : key} · ${GROUP_ELEMENT[key] || 'JSR223'}`,
+        children: SCRIPT_TEMPLATES.filter((t) => t.category === key).map((t) => ({
+          key: t.id,
+          label: t.name
+        }))
+      };
+    }).filter((g) => g.children.length > 0);
+  }, []);
+
   /* ---------- 快捷键 ---------- */
   /**
    * 快捷键统一走 useHotkeys（挂着 window 上，焦点在页面任何位置都生效）：
@@ -698,6 +799,27 @@ export default function CodeRunnerPage() {
             </>
           ) : null}
 
+          {isGroovy ? (
+            /*
+             * 只有 Groovy（JMeter）模式才出现：
+             * 「导入模板」解决「快速插一段断言」，旁边的按钮进完整模板库看说明和坑。
+             * 两者读的是同一份 shared/scriptTemplates.js。
+             */
+            <>
+              <Dropdown
+                trigger={['click']}
+                menu={{ items: templateMenuItems, onClick: ({ key }) => pickTemplateById(key) }}
+              >
+                <Button size="small" icon={<ImportOutlined />}>
+                  导入模板 <DownOutlined />
+                </Button>
+              </Dropdown>
+              <Button size="small" icon={<ReadOutlined />} onClick={() => setTplOpen(true)}>
+                完整模板库
+              </Button>
+            </>
+          ) : null}
+
           <Button
             type="primary"
             size="small"
@@ -727,11 +849,12 @@ export default function CodeRunnerPage() {
       {/* 代码编辑器 */}
       {!isMaven ? (
         <textarea
+          ref={textareaRef}
           className="runner-editor mono"
           value={code}
           onChange={(e) => setCode(e.target.value)}
           spellCheck={false}
-          placeholder="在这里写代码，Ctrl+Enter 运行"
+          placeholder={isGroovy ? '在这里写代码，Ctrl+Enter 运行；右上角「导入模板」可插入现成断言/提取器' : '在这里写代码，Ctrl+Enter 运行'}
           aria-label="代码编辑器，Ctrl+Enter 运行"
           aria-keyshortcuts="Control+Enter"
         />
@@ -787,6 +910,19 @@ export default function CodeRunnerPage() {
       >
         <OutputConsole lines={output} running={running} dropped={droppedLines} />
       </div>
+
+      {/*
+        完整模板库（和脚本生成页共用同一个抽屉，数据同一份）。
+        只是交出去的回调不一样：那边是「填入附加代码 → 生成进 jmx」，
+        这边是 onPickTemplate → 插入到编辑器光标处。
+      */}
+      <ScriptTemplatesDrawer
+        open={tplOpen}
+        onClose={() => setTplOpen(false)}
+        onPickTemplate={insertTemplate}
+        pickLabel="插入到光标处"
+        footerHint={DRAWER_FOOTER_HINT}
+      />
     </div>
   );
 }

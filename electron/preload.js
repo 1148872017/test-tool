@@ -116,6 +116,7 @@ contextBridge.exposeInMainWorld('api', {
   casePickDir: () => invoke('cases:pickDir'),
 
   jmxScan: (root) => invoke('jmx:scan', { root }),
+  jmxDetail: (file) => invoke('jmx:detail', { file }),
   jmxOpenFile: (file) => invoke('jmx:openFile', { file }),
   jmxReveal: (file) => invoke('jmx:reveal', { file }),
   jmxOpenGui: (file) => invoke('jmx:openGui', { file }),

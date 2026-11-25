@@ -9,12 +9,14 @@ import {
   PlusOutlined,
   DeleteOutlined,
   WarningOutlined,
-  ReadOutlined
+  ReadOutlined,
+  ArrowRightOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
 import StateEmpty from '../components/states/StateEmpty';
 import ScriptTemplatesDrawer from '../components/ScriptTemplatesDrawer';
+import { takeJmxHandoff } from '../features/jmx/handoff';
 
 type Tab = 'jmx' | 'sql';
 
@@ -56,7 +58,15 @@ type TableOp = {
   where: string;
 };
 
-export default function ScriptGenPage() {
+type ScriptGenPageProps = {
+  /**
+   * 路由跳转（App.tsx 的 setRoute）。
+   * 只用于「已保存 → 去『压测脚本』页查看」；不传也能正常用（预览/单测）。
+   */
+  onNavigate?: (route: any) => void;
+};
+
+export default function ScriptGenPage({ onNavigate }: ScriptGenPageProps = {}) {
   const [tab, setTab] = useState<Tab>('jmx');
 
   /* ============ JMeter 脚本 ============ */
@@ -73,6 +83,8 @@ export default function ScriptGenPage() {
   const [onError, setOnError] = useState('continue');
   const [jmxCode, setJmxCode] = useState('');
   const [jmxFile, setJmxFile] = useState('');
+  /** 最近一次保存成功的完整路径（用于「去『压测脚本』页查看」的入口） */
+  const [savedJmx, setSavedJmx] = useState('');
   /** 生成时用的 JMeter 版本（从设置里的 jmeterPath 读） */
   const [jmeterVersion, setJmeterVersion] = useState('');
   /** CSV 参数化 */
@@ -112,6 +124,29 @@ export default function ScriptGenPage() {
       }
     })();
   }, []);
+
+  /**
+   * 从「压测脚本」页点「基于这个重新生成」跳过来时，把源脚本的
+   * 线程数 / Ramp-Up / 循环 / 域名填进表单（交接参数见 features/jmx/handoff.ts）。
+   *
+   * 只在挂载时取一次：takeJmxHandoff() 取完即清空，
+   * 之后用户在本页改的值不会被来回切页面反复覆盖。
+   */
+  useEffect(() => {
+    const h = takeJmxHandoff();
+    if (!h) return;
+    if (h.threads) setThreads(h.threads);
+    if (h.rampUp !== undefined) setRampUp(h.rampUp);
+    if (h.loops) setLoops(h.loops);
+    if (h.domain) setDomain(h.domain);
+    toast('已带入「' + (h.file || '源脚本') + '」的线程数 / Ramp-Up / 循环 / 域名，选好接口就能重新生成');
+  }, []);
+
+  /** 跳「压测脚本」页（保存成功后给用户的下一步入口） */
+  const goJmxPage = () => {
+    if (onNavigate) onNavigate({ type: 'jmx' });
+    else toast('当前环境没有路由，没法跳转', 'warning');
+  };
 
   /** 组装 CSV 参数（没启用就返回 undefined，jmxgen 会跳过） */
   const buildCsv = () => {
@@ -210,7 +245,8 @@ export default function ScriptGenPage() {
         toast(res.message || '保存失败', 'error');
         return;
       }
-      toast('已保存：' + res.file);
+      setSavedJmx(res.file);
+      toast('已保存：' + res.file + '，可去「压测脚本」页查看');
     } catch (e: any) {
       toast('保存失败：' + (e && e.message ? e.message : e), 'error');
     } finally {
@@ -551,6 +587,24 @@ export default function ScriptGenPage() {
                 </span>
               ) : null}
             </div>
+            {/* 保存成功后给下一步入口：直接去「压测脚本」页看刚生成的脚本 */}
+            {savedJmx ? (
+              <Alert
+                type="success"
+                showIcon
+                style={{ marginBottom: 8 }}
+                message={
+                  <span>
+                    已生成 <span className="mono">{savedJmx}</span>
+                  </span>
+                }
+                action={
+                  <Button size="small" type="link" icon={<ArrowRightOutlined />} onClick={goJmxPage}>
+                    去「压测脚本」页查看
+                  </Button>
+                }
+              />
+            ) : null}
             {jmxCode ? (
               <pre className="scriptgen-code mono">{jmxCode}</pre>
             ) : (

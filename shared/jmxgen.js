@@ -391,6 +391,22 @@ function generateJmx(opts = {}) {
   L.push(`${pad(4)}<stringProp name="ThreadGroup.delay"></stringProp>`);
   L.push(`${pad(3)}</ThreadGroup>`);
 
+  /**
+   * 线程组的子树从这里开始（CSV / 采样器都是它的子元素）。
+   *
+   * 为什么这个 <hashTree> 必须在 CSV 之前打开（v0.45.0 修的 bug）：
+   *   jmx 的约定是「元素后面紧跟它的 hashTree」。之前 CSV 被插在
+   *   </ThreadGroup> 和 <hashTree> 中间，于是 jmx 变成
+   *     <ThreadGroup>…</ThreadGroup>
+   *     <CSVDataSet>…</CSVDataSet><hashTree/>
+   *     <hashTree><HTTPSamplerProxy>…</HTTPSamplerProxy></hashTree>
+   *   采样器所在的 hashTree 前面没有元素 —— 成了孤儿树，
+   *   采样器挂不到线程组上（本仓解析器实测只数出 0 个采样器，
+   *   JMeter 也是按「元素 + 紧跟的 hashTree」读层级的）。
+   *   test-jmx-detail.cjs 里有回归断言。
+   */
+  L.push(`${pad(3)}<hashTree>`);
+
   // ---- CSV 数据文件设置（参数化）----
   // 放在线程组下、采样器之前，对这个线程组里所有请求生效。
   const csv = opts.csv && String(opts.csv.fileName || '').trim() ? opts.csv : null;
@@ -411,7 +427,6 @@ function generateJmx(opts = {}) {
   }
 
   // ---- 采样器 ----
-  L.push(`${pad(3)}<hashTree>`);
   for (const api of apis) {
     const d = api.data ? api.data : api;
     L.push(sampleXml(d, 4, rtLimit, extras));

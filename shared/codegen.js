@@ -22,6 +22,12 @@
 
 const ejs = require('ejs');
 const { parseCreateTable } = require('./sqlschema');
+const {
+  LOCATOR_MODES,
+  normalizeLocatorMode,
+  splitRoleSelector,
+  previewLocatorCode
+} = require('./locatorModes');
 
 /* ============================================================
  * 工具函数
@@ -336,6 +342,9 @@ const TPL_PLAYWRIGHT_JAVA = `package com.test.pages;
 
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
+<% if (hasRole) { -%>
+import com.microsoft.playwright.options.AriaRole;
+<% } -%>
 
 /**
  * <%= className %> 页面对象
@@ -353,9 +362,9 @@ public class <%= className %>Page {
 
     // ===== 元素定位器 =====
 <% elements.forEach(function (el) { -%>
-    /** <%= el.desc || el.name %> */
+    /** <%= el.desc || el.name %>（定位方式：<%= el.mode %>） */
     public Locator <%= el.name %>() {
-        return page.locator("<%= el.selector %>");
+        return <%= el.locator %>;
     }
 
 <% }); -%>
@@ -387,8 +396,8 @@ class <%= className %>Page:
 <% elements.forEach(function (el) { -%>
     @property
     def <%= el.name %>(self) -> Locator:
-        """<%= el.desc || el.name %>"""
-        return self.page.locator("<%= el.selector %>")
+        """<%= el.desc || el.name %>（定位方式：<%= el.mode %>）"""
+        return <%= el.locator %>
 
 <% }); -%>
     # ===== 常用操作 =====
@@ -542,7 +551,8 @@ function fieldsFromJson(jsonText) {
  * @param {string} targetKey 生成目标
  * @param {object} input
  *   - api      接口记录（kind=api 用）
- *   - page     页面信息（kind=page 用）：{ name, url, elements: [{name, selector, desc}] }
+ *   - page     页面信息（kind=page 用）：{ name, url, elements: [{name, mode?, selector, desc}] }
+ *              mode 缺省 = css；语义化定位由 shared/locatorModes.js 生成 getByXXX 调用
  *   - json     JSON 文本（kind=model 用）
  *   - className 类名（可选，覆盖自动推断）
  * @returns {{ok: boolean, code?: string, filename?: string, message?: string}}
@@ -559,14 +569,29 @@ function generate(targetKey, input = {}) {
     if (input.className) ctx.className = input.className;
   } else if (target.kind === 'page') {
     const page = input.page || {};
+    /**
+     * 元素的定位代码在这里就生成好（模板只贴 <%= el.locator %>）。
+     *
+     * 好处：Java / Python 两套模板共用 shared/locatorModes.js 的同一份逻辑，
+     * 前端表格里的实时预览也是这个函数 —— 预览和真生成不会说谎。
+     */
+    const elements = (page.elements || []).map((el) => {
+      const mode = normalizeLocatorMode(el && el.mode);
+      const selector = String((el && el.selector) || '');
+      return {
+        name: camel((el && el.name) || 'element'),
+        mode,
+        selector,
+        desc: String((el && el.desc) || ''),
+        locator: previewLocatorCode(mode, selector, target.lang)
+      };
+    });
     ctx = {
       className: pageBaseName(page, input.className),
       url: String(page.url || '/'),
-      elements: (page.elements || []).map((el) => ({
-        name: camel(el.name || 'element'),
-        selector: String(el.selector || ''),
-        desc: String(el.desc || '')
-      }))
+      elements,
+      // 只有真的用到 role 才 import AriaRole，避免生成一堆没用的 import
+      hasRole: elements.some((el) => el.mode === 'role')
     };
   } else if (target.kind === 'model') {
     /**
@@ -655,5 +680,10 @@ module.exports = {
   pageBaseName,
   snake,
   camel,
-  pascal
+  pascal,
+  // 定位方式相关（统一从 shared/locatorModes.js 来，前端预览用的也是同一份）
+  LOCATOR_MODES,
+  normalizeLocatorMode,
+  splitRoleSelector,
+  previewLocatorCode
 };

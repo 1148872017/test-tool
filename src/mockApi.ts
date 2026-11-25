@@ -1372,6 +1372,73 @@ const isTrashed = (id: string) => {
         }
       ]
     }),
+    /**
+     * 预览模式的 jmx 详情（L1 只读解析）。
+     * 浏览器里没有文件系统，返回一份和真实 IPC 同形的样例 ——
+     * 带 JSR223 断言 / 前置，正好用来核对详情抽屉的展示效果。
+     */
+    jmxDetail: async (file?: string) => ({
+      ok: true,
+      file: file ? String(file).split(/[\\/]/).pop() : '测试计划.jmx',
+      fullPath: file || 'D:\\demo\\jmx\\demo-plan.jmx',
+      size: 49439,
+      modifiedAt: Date.now() - 86400000 * 280,
+      jmeterVersion: '5.4.3',
+      testPlan: { name: '测试计划' },
+      threadGroups: [{ name: '用户模块', type: 'thread', enabled: true, numThreads: 10, rampUp: 2, loops: 1, duration: 0, scheduler: false }],
+      samplers: [
+        {
+          name: '小程序登录',
+          method: 'POST',
+          path: '/api/v1/user/login',
+          domain: '127.0.0.1',
+          enabled: true,
+          assertions: [
+            { name: '响应断言-状态码200', type: 'ResponseAssertion', kind: 'assertion', enabled: true, scope: '小程序登录' },
+            {
+              name: '断言-返回体成功',
+              type: 'JSR223Assertion',
+              kind: 'assertion',
+              enabled: true,
+              scope: '小程序登录',
+              language: 'groovy',
+              scriptPreview: 'assert json.success == true'
+            }
+          ],
+          preProcessors: [
+            {
+              name: '附加前置处理',
+              type: 'JSR223PreProcessor',
+              kind: 'preProcessor',
+              enabled: true,
+              scope: '小程序登录',
+              language: 'groovy',
+              scriptPreview: 'vars.put("sign", "abc")'
+            }
+          ],
+          postProcessors: [],
+          timers: []
+        },
+        {
+          name: '查询用户余额',
+          method: 'GET',
+          path: '/api/v1/user/info',
+          domain: '',
+          enabled: true,
+          assertions: [],
+          preProcessors: [],
+          postProcessors: [],
+          timers: []
+        }
+      ],
+      configs: [
+        { name: 'CSV 数据文件设置', type: 'CSVDataSet', enabled: true, scope: '用户模块' },
+        { name: 'HTTP信息头管理器', type: 'HeaderManager', enabled: true, scope: '小程序登录' }
+      ],
+      variables: ['test_environment', 'token_file', 'mail', 'pwd'],
+      assertionCount: 2,
+      summary: { threadGroups: 1, samplers: 2, assertions: 2, configs: 2 }
+    }),
     jmxOpenFile: async () => ({ ok: true }),
     jmxReveal: async () => ({ ok: true }),
     jmxOpenGui: async () => ({ ok: false, message: '预览模式不能启动 JMeter' }),

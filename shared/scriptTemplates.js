@@ -651,10 +651,117 @@ function fillTemplateDefaults(code, vars) {
   });
 }
 
+/* ============================================================
+ * 模板 → 代码调试页「插入到光标处」（v0.45.0）
+ * ============================================================ */
+
+/**
+ * 代码调试页能导入的分类（顺序 = 「导入模板」下拉的分组顺序）。
+ *
+ * 只放 JMeter 的 JSR223 脚本（Groovy）：api-assert 是 RestAssured/pytest、
+ * ui-assert 是 Playwright 的 TS，插进 Groovy 运行器里根本跑不了，
+ * 所以下拉里不出现它们。
+ * 断言排第一：调试页最常插的就是一段断言。
+ */
+const GROOVY_CATEGORIES = ['assert', 'extract', 'generate', 'crypto', 'flow'];
+
+/**
+ * 分类 → 「这段代码在 JMeter 里挂到哪儿」的注释。
+ *
+ * 为什么插入时要补这两行：代码调试页只是把脚本丢给 groovy 跑一遍，
+ * 它**不是** JMeter 的元件。用户在调试页看到「运行成功」很容易以为
+ * 断言已经生效了 —— 实际上下次压测该失败还是失败。
+ * 所以每个 JMeter 模板插入时都带上挂载位置 + 这句免责说明。
+ */
+const JMETER_USAGE = {
+  assert: [
+    '// 用法：JMeter 里「右键采样器 → 添加 → 断言 → JSR223 断言」，把这段粘进去',
+    '// 在代码调试页运行只能验证语法，真正生效要在 JMeter 里挂载'
+  ].join('\n'),
+  extract: [
+    '// 用法：JMeter 里「右键采样器 → 添加 → 后置处理器 → JSR223 后置处理程序」，把这段粘进去',
+    '// 在代码调试页运行只能验证语法，真正生效要在 JMeter 里挂载'
+  ].join('\n'),
+  generate: [
+    '// 用法：JMeter 里「右键采样器 → 添加 → 前置处理器 → JSR223 预处理程序」，把这段粘进去',
+    '// 在代码调试页运行只能验证语法，真正生效要在 JMeter 里挂载'
+  ].join('\n'),
+  crypto: [
+    '// 用法：JMeter 里「右键采样器 → 添加 → 前置处理器 → JSR223 预处理程序」，把这段粘进去',
+    '// 在代码调试页运行只能验证语法，真正生效要在 JMeter 里挂载'
+  ].join('\n'),
+  flow: [
+    '// 用法：JMeter 里「右键采样器 → 添加 → 前置处理器 → JSR223 预处理程序」，再把变量交给 If 控制器',
+    '// 在代码调试页运行只能验证语法，真正生效要在 JMeter 里挂载'
+  ].join('\n')
+};
+
+/**
+ * 单条模板 → 可以直接插进编辑器的代码。
+ *
+ * = 挂载说明（仅 JMeter 分类）+ 占位符已填默认值的模板代码。
+ * 注释保留：模板里「为什么这么写」的注释是这个库的核心价值。
+ *
+ * @param {{code: string, vars?: Array, category?: string}} tpl 模板对象
+ * @returns {string}
+ */
+function templateSnippet(tpl) {
+  if (!tpl || tpl.code == null) return '';
+  const code = fillTemplateDefaults(tpl.code, tpl.vars);
+  const usage = tpl.category ? JMETER_USAGE[tpl.category] : '';
+  return usage ? usage + '\n' + code : code;
+}
+
+/**
+ * 把一段代码插到光标处（纯函数，不碰 DOM，方便单测）。
+ *
+ * 规则：
+ *   1. 编辑器为空（或只有空白）→ 直接就是这段代码，不在开头留空行；
+ *   2. 有内容 → 插在 [selStart, selEnd) 之间，选区被替换；
+ *   3. 光标前不是换行 → 补一个换行；后面还有内容且不是换行开头 → 也补一个，
+ *      已经挨着换行就不补（否则每插一次多一个空行）；
+ *   4. 返回的 cursor 指向插入内容末尾，调用方把光标放过去接着写。
+ *
+ * @param {string} text 编辑器当前内容
+ * @param {string} snippet 要插入的代码
+ * @param {number} [selStart] 选区起点（默认=末尾）
+ * @param {number} [selEnd] 选区终点（默认=selStart）
+ * @returns {{text: string, cursor: number, inserted: number}}
+ */
+function insertCodeAtCursor(text, snippet, selStart, selEnd) {
+  const cur = String(text == null ? '' : text);
+  const ins = String(snippet == null ? '' : snippet);
+  const len = cur.length;
+  const clamp = (v, fallback) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(Math.max(0, Math.trunc(n)), len);
+  };
+  const start = clamp(selStart, len);
+  const end = Math.max(start, clamp(selEnd, start));
+
+  // 空编辑器：直接填满（否则会在最前面多一个空行）
+  if (!cur.trim()) return { text: ins, cursor: ins.length, inserted: ins.length };
+
+  const before = cur.slice(0, start);
+  const after = cur.slice(end);
+  // 光标前不是换行 → 补一个；空串不补
+  const sepBefore = before && !before.endsWith('\n') ? '\n' : '';
+  // 后面还有内容：已经以换行开头就不补，否则补一个；后面空了就补个收尾换行
+  const sepAfter = !after ? '\n' : after.startsWith('\n') ? '' : '\n';
+
+  const head = before + sepBefore + ins;
+  return { text: head + sepAfter + after, cursor: head.length, inserted: ins.length };
+}
+
 module.exports = {
   NO_CODE_NEEDED,
   TEMPLATES,
   TEMPLATE_CATEGORIES,
   CATEGORY_MAP,
-  fillTemplateDefaults
+  fillTemplateDefaults,
+  GROOVY_CATEGORIES,
+  JMETER_USAGE,
+  templateSnippet,
+  insertCodeAtCursor
 };

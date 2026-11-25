@@ -10,7 +10,16 @@ import {
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
-import { parseElements, type PageElement } from '../components/PageElementsEditor';
+import {
+  parseElements,
+  LOCATOR_MODE_OPTIONS,
+  LOCATOR_MODE_PLACEHOLDER,
+  normalizeMode,
+  looksLikeXPath,
+  type LocatorMode,
+  type PageElement
+} from '../components/PageElementsEditor';
+import { previewLocatorCode } from '../../shared/locatorModes';
 
 type Target = {
   key: string;
@@ -77,6 +86,8 @@ export default function CodegenPage() {
   const [elements, setElements] = useState<PageElement[]>([
     { name: 'usernameInput', selector: '#username', desc: '用户名输入框' }
   ]);
+  /** 当前聚焦的「定位值」行（-1 = 没聚焦）：只影响下面的代码预览行显不显示 */
+  const [focusEl, setFocusEl] = useState<number>(-1);
   const [className, setClassName] = useState('');
 
   // 输出
@@ -86,6 +97,11 @@ export default function CodegenPage() {
 
   const current = useMemo(() => targets.find((t) => t.key === targetKey), [targets, targetKey]);
   const kind = current ? current.kind : 'api';
+  /**
+   * 元素表格里的代码预览按当前生成目标的语言来出。
+   * Java 和 Python 的定位 API 风格不同（getByLabel vs get_by_label），预览不能说谎。
+   */
+  const previewLang = current && current.lang === 'python' ? 'python' : 'java';
   /** 生成类型下拉：按语言分组 */
   const targetOptions = useMemo(() => groupTargets(targets), [targets]);
 
@@ -273,7 +289,11 @@ export default function CodegenPage() {
   /* ---------- 元素增删 ---------- */
   const addElement = () =>
     setElements((prev) => prev.concat([{ name: '', selector: '', desc: '' }]));
-  const removeElement = (i: number) => setElements((prev) => prev.filter((_, idx) => idx !== i));
+  const removeElement = (i: number) => {
+    setElements((prev) => prev.filter((_, idx) => idx !== i));
+    // 删行后下标会错位，聚焦预览直接清掉，免得预览跑到别的行上
+    setFocusEl(-1);
+  };
   const setElement = (i: number, key: keyof PageElement, v: string) => {
     setElements((prev) => {
       const next = prev.slice();
@@ -479,57 +499,100 @@ export default function CodegenPage() {
               <div className="codegen-label" style={{ marginTop: 10 }}>
                 元素定位器
               </div>
-              <table className="jmx-table codegen-el-table">
-                <thead>
-                  <tr>
-                    <th style={{ width: '30%' }}>名称</th>
-                    <th style={{ width: '40%' }}>定位器</th>
-                    <th>说明</th>
-                    <th style={{ width: 32 }} />
-                  </tr>
-                </thead>
-                <tbody>
-                  {elements.map((el, i) => (
-                    <tr key={i}>
-                      <td>
-                        <Input
-                          size="small"
-                          value={el.name}
-                          placeholder="usernameInput"
-                          onChange={(e) => setElement(i, 'name', e.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <Input
-                          size="small"
-                          className="mono"
-                          value={el.selector}
-                          placeholder="#username"
-                          onChange={(e) => setElement(i, 'selector', e.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <Input
-                          size="small"
-                          value={el.desc}
-                          placeholder="用户名输入框"
-                          onChange={(e) => setElement(i, 'desc', e.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <Button
-                          type="text"
-                          size="small"
-                          danger
-                          onClick={() => removeElement(i)}
-                        >
-                          ×
-                        </Button>
-                      </td>
+              {/* 左栏只有 380px，多一列「定位方式」后必须横滑，否则「说明」会被挤成几个字 */}
+              <div className="codegen-el-scroll" style={{ overflowX: 'auto' }}>
+                <table className="jmx-table codegen-el-table" style={{ minWidth: 560 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: '20%' }}>名称</th>
+                      <th style={{ width: 130 }}>定位方式</th>
+                      <th style={{ width: '32%' }}>定位值</th>
+                      <th>说明</th>
+                      <th style={{ width: 32 }} />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {elements.map((el, i) => {
+                      const mode = normalizeMode(el.mode);
+                      // 和 PageElementsEditor 用同一个生成函数，只是这里知道目标语言
+                      const preview = previewLocatorCode(mode, el.selector, previewLang);
+                      const showPreview = focusEl === i || String(el.selector || '').trim() !== '';
+                      return (
+                        <tr key={i}>
+                          <td>
+                            <Input
+                              size="small"
+                              value={el.name}
+                              placeholder="usernameInput"
+                              onChange={(e) => setElement(i, 'name', e.target.value)}
+                            />
+                          </td>
+                          <td>
+                            <Select
+                              size="small"
+                              style={{ width: '100%' }}
+                              value={mode}
+                              options={LOCATOR_MODE_OPTIONS}
+                              onChange={(v) => setElement(i, 'mode', v as LocatorMode)}
+                            />
+                          </td>
+                          <td>
+                            <Input
+                              size="small"
+                              className="mono"
+                              value={el.selector}
+                              placeholder={LOCATOR_MODE_PLACEHOLDER[mode]}
+                              onChange={(e) => setElement(i, 'selector', e.target.value)}
+                              onFocus={() => setFocusEl(i)}
+                              onBlur={() => setFocusEl(-1)}
+                            />
+                            {mode === 'css' && looksLikeXPath(el.selector) ? (
+                              <div
+                                className="pe-el-xpath-hint"
+                                style={{ fontSize: 11, lineHeight: '15px', marginTop: 2, color: '#d46b08' }}
+                              >
+                                ⚠ 看起来像 XPath，建议把定位方式改成 XPath
+                              </div>
+                            ) : null}
+                            {showPreview ? (
+                              <div
+                                className="pe-el-preview mono"
+                                style={{
+                                  fontSize: 11,
+                                  lineHeight: '15px',
+                                  marginTop: 2,
+                                  color: 'var(--text-3)',
+                                  wordBreak: 'break-all'
+                                }}
+                              >
+                                {'→ ' + (preview || '（等待输入）')}
+                              </div>
+                            ) : null}
+                          </td>
+                          <td>
+                            <Input
+                              size="small"
+                              value={el.desc}
+                              placeholder="用户名输入框"
+                              onChange={(e) => setElement(i, 'desc', e.target.value)}
+                            />
+                          </td>
+                          <td>
+                            <Button
+                              type="text"
+                              size="small"
+                              danger
+                              onClick={() => removeElement(i)}
+                            >
+                              ×
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
               <Button size="small" type="link" onClick={addElement}>
                 + 添加元素
               </Button>
