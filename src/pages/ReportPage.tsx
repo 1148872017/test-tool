@@ -8,11 +8,16 @@ import {
   CloseCircleOutlined,
   MinusCircleOutlined,
   ThunderboltOutlined,
-  BugOutlined
+  BugOutlined,
+  RightOutlined,
+  DownOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
 import StateEmpty from '../components/states/StateEmpty';
+import StepsList, { AllureStep, StepSummary } from '../components/StepsList';
+import AllureArchive from '../components/AllureArchive';
+import { useAllureHandoff } from '../features/allure/handoff';
 
 type Test = {
   id: string;
@@ -28,6 +33,15 @@ type Test = {
   severity: string;
   duration: number;
   attachments: { name: string; source: string; type: string }[];
+  /** 测试步骤（递归解析好的树，可能为空数组） */
+  steps?: AllureStep[];
+  /** 步骤统计（后端算好，含嵌套） */
+  stepSummary?: StepSummary;
+  /** 第一个失败/异常步骤的名字（没有就是空串） */
+  firstFailedStep?: string;
+  /** 步骤树是否被截断（单用例上限 200 个节点） */
+  stepsTruncated?: boolean;
+  stepsTruncatedReason?: string;
 };
 
 type Cluster = {
@@ -62,7 +76,7 @@ const fmtMs = (n: number) => {
   return `${Math.floor(n / 60000)}m${Math.round((n % 60000) / 1000)}s`;
 };
 
-export default function ReportPage() {
+export default function ReportPage({ onNavigate }: { onNavigate?: (route: any) => void } = {}) {
   const [dirs, setDirs] = useState<string[]>([]);
   const [dir, setDir] = useState('');
   const [loading, setLoading] = useState(false);
@@ -79,6 +93,8 @@ export default function ReportPage() {
   // 视图
   const [view, setView] = useState<'tests' | 'clusters' | 'flaky'>('clusters');
   const [statusFilter, setStatusFilter] = useState('');
+  // 展开的用例详情（同一时间只展开一个，避免一屏全是细节）
+  const [openId, setOpenId] = useState('');
 
   /* ---------- 扫描 ---------- */
   const doScan = async () => {
@@ -91,7 +107,7 @@ export default function ReportPage() {
         return;
       }
       setDirs(res.dirs || []);
-      if (res.dirs && res.dirs.length && !dir) setDir(res.dirs[0]);
+      if (res.dirs && res.dirs.length) setDir((cur: string) => cur || res.dirs[0]);
       toast(`找到 ${(res.dirs || []).length} 个 allure-results`);
     } catch (e: any) {
       toast('扫描失败：' + (e && e.message ? e.message : e), 'error');
@@ -99,6 +115,17 @@ export default function ReportPage() {
       setLoading(false);
     }
   };
+
+  /* ---------- 从「测试执行」跳过来时，自动填目录并解析 ---------- */
+  /**
+   * 交接槽：测试执行页点「关联报告」时，把 reportDir 放进来。
+   * 这里挂载时取一次（取完即清空），自动设目录 + 解析。
+   */
+  useAllureHandoff((d: string) => {
+    setDir(d);
+    setDirs((prev: string[]) => (prev.includes(d) ? prev : prev.concat([d])));
+    doParse(d);
+  });
 
   /* ---------- 解析 ---------- */
   const doParse = async (d?: string) => {
@@ -117,6 +144,8 @@ export default function ReportPage() {
       setTests(res.tests || []);
       setSummary(res.summary);
       setClusters(res.clusters || []);
+      // 换目录后旧的展开项已经不在了，顺手收掉
+      setOpenId('');
       setView('clusters');
       toast(`解析完成：${res.summary.total} 个用例`);
     } catch (e: any) {
@@ -210,6 +239,8 @@ export default function ReportPage() {
           >
             解析
           </Button>
+          {/* 归档到「测试执行」——对齐压测那个 ImportReportModal */}
+          <AllureArchive dir={dir} summary={summary} onNavigate={onNavigate} />
         </Space>
       </div>
 
@@ -328,20 +359,154 @@ export default function ReportPage() {
             <div className="report-tests">
               {filteredTests.map((t) => {
                 const m = statusMeta(t.status);
+                const open = openId === t.id;
                 return (
-                  <div className="report-test-row" key={t.id}>
-                    <span className="report-test-icon" style={{ color: m.color }}>
-                      {m.icon}
-                    </span>
-                    <span className="report-test-name">{t.name}</span>
-                    <span className="report-test-class muted mono">{t.testClass}</span>
-                    <span className="report-test-dur muted">{fmtMs(t.duration)}</span>
-                    {t.message ? (
-                      <Tooltip title={t.message}>
-                        <span className="report-test-msg muted">{t.message.split('\n')[0]}</span>
-                      </Tooltip>
+                  // 用 Fragment 而不是再包一层 div：.report-test-row 的
+                  // border-bottom / :last-child 分隔线规则要维持原样
+                  <React.Fragment key={t.id}>
+                    {/* 整行可点：展开「用例详情」，失败用例点开就能看到挂在哪一步 */}
+                    <div
+                      className={'report-test-row' + (open ? ' is-open' : '')}
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={open}
+                      title={open ? '收起用例详情' : '展开用例详情（步骤 / 失败信息）'}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => setOpenId(open ? '' : t.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setOpenId(open ? '' : t.id);
+                        }
+                      }}
+                    >
+                      <span className="report-test-toggle" style={{ flex: '0 0 auto', fontSize: 10, color: '#9aa0b4' }}>
+                        {open ? <DownOutlined /> : <RightOutlined />}
+                      </span>
+                      <span className="report-test-icon" style={{ color: m.color }}>
+                        {m.icon}
+                      </span>
+                      <span className="report-test-name">{t.name}</span>
+                      {/* 「挂在哪一步」列：扫一眼就知道问题位置，不用点进去 */}
+                      {t.firstFailedStep ? (
+                        <Tooltip title={'挂在这一步：' + t.firstFailedStep}>
+                          <span
+                            className="report-test-step"
+                            style={{
+                              flex: '0 1 auto',
+                              minWidth: 0,
+                              maxWidth: 200,
+                              fontSize: 12,
+                              color: '#c9372f',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            挂在：{t.firstFailedStep}
+                          </span>
+                        </Tooltip>
+                      ) : null}
+                      <span className="report-test-class muted mono">{t.testClass}</span>
+                      <span className="report-test-dur muted">{fmtMs(t.duration)}</span>
+                      {t.message ? (
+                        <Tooltip title={t.message}>
+                          <span className="report-test-msg muted">{t.message.split('\n')[0]}</span>
+                        </Tooltip>
+                      ) : null}
+                    </div>
+
+                    {/* 用例详情：步骤 → 失败信息 → trace */}
+                    {open ? (
+                      <div
+                        className="report-test-detail"
+                        style={{
+                          padding: '4px 14px 12px 34px',
+                          background: '#fbfbfd',
+                          borderBottom: '1px solid #f4f5fa'
+                        }}
+                      >
+                        <div className="report-detail-head" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span className="report-detail-label" style={{ fontSize: 11.5, color: '#8a90a2' }}>
+                            用例详情
+                          </span>
+                          <span className="report-detail-name" style={{ fontSize: 13, fontWeight: 600, color: '#3a4055' }}>
+                            {t.name}
+                          </span>
+                          <Tag
+                            color={
+                              t.status === 'passed'
+                                ? 'green'
+                                : t.status === 'failed'
+                                  ? 'red'
+                                  : t.status === 'broken'
+                                    ? 'orange'
+                                    : 'default'
+                            }
+                          >
+                            {m.label}
+                          </Tag>
+                        </div>
+                        <div className="report-detail-meta muted" style={{ fontSize: 12, marginTop: 2 }}>
+                          {[t.suite, t.feature, fmtMs(t.duration)].filter(Boolean).join(' · ')}
+                        </div>
+
+                        <StepsList
+                          steps={t.steps}
+                          summary={t.stepSummary}
+                          firstFailedStep={t.firstFailedStep}
+                          truncated={t.stepsTruncated}
+                          truncatedReason={t.stepsTruncatedReason}
+                        />
+
+                        {t.message || t.trace ? (
+                          <div className="report-detail-fail" style={{ marginTop: 6 }}>
+                            <div className="report-detail-fail-title" style={{ fontSize: 12.5, fontWeight: 600, color: '#3a4055' }}>
+                              失败信息
+                            </div>
+                            {t.message ? (
+                              <div
+                                className="report-detail-msg"
+                                style={{
+                                  fontSize: 12.5,
+                                  color: '#c9372f',
+                                  whiteSpace: 'pre-wrap',
+                                  wordBreak: 'break-all',
+                                  margin: '4px 0'
+                                }}
+                              >
+                                {t.message}
+                              </div>
+                            ) : null}
+                            {t.trace ? (
+                              <details className="report-detail-trace">
+                                <summary style={{ fontSize: 12, color: 'var(--primary)', cursor: 'pointer' }}>
+                                  展开 trace
+                                </summary>
+                                <pre
+                                  style={{
+                                    maxHeight: 220,
+                                    overflow: 'auto',
+                                    background: '#fff',
+                                    border: '1px solid #eceef5',
+                                    borderRadius: 6,
+                                    padding: '8px 10px',
+                                    fontSize: 11.5,
+                                    lineHeight: 1.6,
+                                    marginTop: 6,
+                                    whiteSpace: 'pre-wrap',
+                                    wordBreak: 'break-all'
+                                  }}
+                                >
+                                  {t.trace}
+                                </pre>
+                              </details>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
                     ) : null}
-                  </div>
+                  </React.Fragment>
                 );
               })}
             </div>

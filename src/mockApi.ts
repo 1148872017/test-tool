@@ -719,9 +719,9 @@ const isTrashed = (id: string) => {
       ok: true,
       dir: 'D:/mock/Project/example/allure-results',
       tests: [
-        { id: '1', name: '正确用户名和密码登录成功', fullName: 't1', status: 'passed', message: '', trace: '', suite: '登录', testClass: 'LoginApiTest', testMethod: 'testLogin', feature: '登录', severity: 'normal', duration: 1200, attachments: [] },
-        { id: '2', name: '空用户名登录失败', fullName: 't2', status: 'broken', message: 'Cannot invoke "Response.getStatusCode()" because "response" is null', trace: '', suite: '登录', testClass: 'LoginApiTest', testMethod: 'testEmpty', feature: '登录', severity: 'normal', duration: 3000, attachments: [] },
-        { id: '3', name: '错误密码登录失败', fullName: 't3', status: 'broken', message: 'Cannot invoke "Response.getStatusCode()" because "response" is null', trace: '', suite: '登录', testClass: 'LoginApiTest', testMethod: 'testWrong', feature: '登录', severity: 'normal', duration: 2800, attachments: [] }
+        { id: '1', name: '正确用户名和密码登录成功', fullName: 't1', status: 'passed', message: '', trace: '', suite: '登录', testClass: 'LoginApiTest', testMethod: 'testLogin', feature: '登录', severity: 'normal', duration: 1200, attachments: [], steps: [{ name: '构造登录请求体', status: 'passed', duration: 300, steps: [], attachments: [] }, { name: 'POST /api/login', status: 'passed', duration: 620, steps: [], attachments: [] }, { name: '断言 code=0 且 token 非空', status: 'passed', duration: 280, steps: [], attachments: [] }], stepSummary: { total: 3, passed: 3, failed: 0, skipped: 0, broken: 0 }, firstFailedStep: '' },
+        { id: '2', name: '空用户名登录失败', fullName: 't2', status: 'broken', message: 'Cannot invoke "Response.getStatusCode()" because "response" is null', trace: '', suite: '登录', testClass: 'LoginApiTest', testMethod: 'testEmpty', feature: '登录', severity: 'normal', duration: 3000, attachments: [], steps: [{ name: '构造 username="" 的请求体', status: 'passed', duration: 240, steps: [], attachments: [] }, { name: 'POST /api/login', status: 'passed', duration: 900, steps: [], attachments: [] }, { name: '断言 HTTP 400', status: 'broken', duration: 1860, steps: [{ name: '读取响应状态码', status: 'broken', duration: 1800, steps: [], attachments: [{ name: '接口响应', source: 'mock-attach-1', type: 'text/plain' }] }], attachments: [] }], stepSummary: { total: 4, passed: 2, failed: 0, skipped: 0, broken: 2 }, firstFailedStep: '断言 HTTP 400' },
+        { id: '3', name: '错误密码登录失败', fullName: 't3', status: 'broken', message: 'Cannot invoke "Response.getStatusCode()" because "response" is null', trace: '', suite: '登录', testClass: 'LoginApiTest', testMethod: 'testWrong', feature: '登录', severity: 'normal', duration: 2800, attachments: [], steps: [{ name: '构造错误密码请求体', status: 'passed', duration: 220, steps: [], attachments: [] }, { name: 'POST /api/login', status: 'passed', duration: 780, steps: [], attachments: [] }, { name: '断言 HTTP 401', status: 'broken', duration: 1800, steps: [], attachments: [] }], stepSummary: { total: 3, passed: 2, failed: 0, skipped: 0, broken: 1 }, firstFailedStep: '断言 HTTP 401' }
       ],
       summary: { total: 3, passed: 1, failed: 0, broken: 2, skipped: 0, unknown: 0, duration: 7000 },
       clusters: [
@@ -729,6 +729,24 @@ const isTrashed = (id: string) => {
       ]
     }),
     allureFlaky: async () => ({ ok: true, runs: 2, flaky: [{ fullName: 't1', name: '正确用户名和密码登录成功', history: ['passed', 'failed', 'passed'], flaky: true }], errors: [] }),
+    allureArchive: async (payload: any) => ({
+      ok: true,
+      // 预览里不落库，给个假 id 让「去测试执行看看」的跳转能跑通
+      id: 'r_mock_allure_archive',
+      name: (payload && payload.name) || 'Allure 归档-11-25 09:40',
+      kind: 'api',
+      result: payload && Number(payload.failCount) > 0 ? 'bad' : 'ok',
+      dir: (payload && payload.dir) || 'D:/mock/Project/example/allure-results',
+      duplicated: false,
+      duplicates: 0,
+      counts: {
+        total: Number((payload && payload.total) || 3),
+        passCount: Number((payload && payload.passCount) || 1),
+        failCount: Number((payload && payload.failCount) || 2),
+        skipped: 0,
+        duration: Number((payload && payload.duration) || 7000)
+      }
+    }),
 
     /* ---- 代码体检（mock）---- */
     codescanCoverage: async () => ({

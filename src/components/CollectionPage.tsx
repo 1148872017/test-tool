@@ -37,6 +37,7 @@ import { parseAccounts, AccountRow } from './AccountsEditor';
 import { ROLE_OPTIONS } from '../../shared/collections';
 import { asArray, fieldOptions, getOptionsSync, loadOptions, OptionsMap } from '../options';
 import { capabilitiesOf, hasHeaderAction, HeaderAction } from '../features/collections/capabilities';
+import { setAllureHandoff } from '../features/allure/handoff';
 
 type Props = {
   conf: any;
@@ -50,6 +51,11 @@ type Props = {
   logFor?: any;
   onLoggedRun?: () => void;
   onLogRun?: (record: any) => void;
+  /**
+   * 页面互跳（和 v0.45 的 JmxPage / ScriptGenPage 同一个模式）：
+   * 「关联报告」点一下要切到「报告分析」页，路由只有 App 拿得到。
+   */
+  onNavigate?: (route: any) => void;
 };
 
 
@@ -133,7 +139,8 @@ export default function CollectionPage({
   onOpenCase,
   logFor,
   onLoggedRun,
-  onLogRun
+  onLogRun,
+  onNavigate
 }: Props) {
   const [all, setAll] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -174,6 +181,42 @@ export default function CollectionPage({
   const searchRef = useRef<InputRef>(null);
 
   const caps = useMemo(() => capabilitiesOf(conf), [conf]);
+
+  /**
+   * 关联报告：字段名 + 「什么条件下才显示」都由 capabilities.linkedReport 决定。
+   *
+   * 为什么不写 `conf.key === 'runs'`：
+   *   v0.46 刚把「某个集合支持什么」收口到 shared/collections.js 的 capabilities，
+   *   页面再按 key 写 if/else 就等于把刚拆掉的耦合装回去。
+   *   没有这个能力的集合（其余 4 个）自然什么都不渲染，代码路径完全不变。
+   */
+  const linkedReportDir = (r: any): string => {
+    const cap = caps.linkedReport;
+    if (!cap) return '';
+    const d = (r && r.data) || {};
+    // 例：压测（kind=perf）的 reportDir 是 JMeter 报告，报告分析页解析不了，不挂入口
+    if (cap.when) {
+      const cur = d[cap.when.field];
+      if (String(cur === undefined || cur === null ? '' : cur) !== cap.when.equals) return '';
+    }
+    return String(d[cap.field] || '').trim();
+  };
+
+  /** 点「关联报告」→ 带着报告目录跳到「报告分析」，到那边自动解析 */
+  const openLinkedReport = (r: any) => {
+    const dir = linkedReportDir(r);
+    if (!dir) {
+      toast('这条记录没有关联报告', 'warning');
+      return;
+    }
+    if (!onNavigate) {
+      toast('打不开报告分析页', 'warning');
+      return;
+    }
+    // 交接槽只生效一次：报告页挂载时 take，拿完即清空
+    setAllureHandoff({ dir, from: r && r.title ? String(r.title) : '' });
+    onNavigate({ type: 'tool', key: 'report' });
+  };
 
   const loadAll = async () => {
     setLoading(true);
@@ -820,6 +863,34 @@ export default function CollectionPage({
           <span className="t" title={text}>
             {text}
           </span>
+          {/*
+            关联报告：只有能力里配了字段、且这条记录真的存了目录才显示。
+            点它不进详情（行本身可点），所以必须 stopPropagation。
+          */}
+          {linkedReportDir(r) ? (
+            <Tooltip title="有关联报告，点击查看">
+              <span
+                className="title-report-link"
+                role="button"
+                aria-label="查看关联报告"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  flex: '0 0 auto',
+                  marginInlineStart: 4,
+                  fontSize: 12,
+                  color: 'var(--primary-text)',
+                  cursor: 'pointer'
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openLinkedReport(r);
+                }}
+              >
+                <FileTextOutlined />
+              </span>
+            </Tooltip>
+          ) : null}
           {(r.tags || []).map((t: string) => (
             <Tag key={t} style={{ fontSize: 11, marginInlineEnd: 0 }}>
               {t}

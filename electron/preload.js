@@ -83,6 +83,8 @@ contextBridge.exposeInMainWorld('api', {
   allurePickDir: () => invoke('allure:pickDir'),
   allureParse: (dir) => invoke('allure:parse', { dir }),
   allureFlaky: (dirs) => invoke('allure:flaky', { dirs }),
+  // 归档到「测试执行」：写一条 runs 记录，reportDir 是「关联报告」的锚点
+  allureArchive: (payload) => invoke('allure:archive', payload),
 
   // ---- 代码扫描 ----
   codescanRules: () => invoke('codescan:rules'),

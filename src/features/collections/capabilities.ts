@@ -24,6 +24,22 @@ export type HeaderAction =
   | 'syncOpenApi'
   | 'impact';
 
+/**
+ * 「关联报告」能力：报告目录存在哪个字段、什么条件下才该给入口。
+ *
+ * 为什么要带 when：
+ *   runs 里 reportDir 有两个来源 —— Allure 归档（kind=api，报告分析页能解析）
+ *   和 jtl 压测导入（kind=perf，目录里是 JMeter 的报告，报告分析页解析不了）。
+ *   只看「有 reportDir」会给压测记录挂一个点了就报错的图标，
+ *   所以条件也写进能力里，页面只做通用判断，不认识 kind 的语义。
+ */
+export interface LinkedReportCapability {
+  /** 报告目录存在哪个字段里（一般是 reportDir） */
+  field: string;
+  /** 只有这个字段等于这个值时才显示入口；缺省 = 都显示 */
+  when?: { field: string; equals: string };
+}
+
 export interface CollectionCapabilities {
   /** 有「打开地址」动作时，存地址的字段名；null = 没有这个动作 */
   open: string | null;
@@ -39,6 +55,13 @@ export interface CollectionCapabilities {
   headerActions: HeaderAction[];
   /** 名称列宽百分比（0~100），其余列按权重分剩下的宽度 */
   titleWidthPct: number;
+  /**
+   * 「关联报告」锚点；null = 这个集合没有关联报告。
+   *
+   * 存字段名而不是布尔值：页面拿它去 `record.data[字段名]` 取值，
+   * 不需要认识集合 key，也不用知道报告目录到底存在哪个字段里。
+   */
+  linkedReport: LinkedReportCapability | null;
 }
 
 const DEFAULT_HEADER_ACTIONS: HeaderAction[] = ['importData', 'importTemplate', 'exportData', 'refresh'];
@@ -83,6 +106,36 @@ function legacyTitleWidthPct(conf: any): number {
   return listFields.indexOf('accounts') >= 0 ? 32 : 50;
 }
 
+/**
+ * 「关联报告」能力：字段必须是这个集合里真实存在的（when.field 同理）。
+ *
+ * 光看配置不够 —— 字段名写错（比如 reports）会让每条记录都渲染出一个
+ * 点了没反应的图标；这里对不上就当没有，宁可少一个入口也不给假入口。
+ *
+ * 兼容两种写法：
+ *   字符串          → 'reportDir'（无条件）
+ *   对象            → { field: 'reportDir', when: { field: 'kind', equals: 'api' } }
+ */
+function asLinkedReport(conf: any, value: any): LinkedReportCapability | null {
+  const fields = Array.isArray(conf && conf.fields) ? conf.fields : [];
+  const has = (key: any) => typeof key === 'string' && key.trim() !== '' && fields.some((f: any) => f && f.key === key);
+
+  const raw = typeof value === 'string' ? { field: value } : value;
+  if (!raw || typeof raw !== 'object') return null;
+
+  const field = String(raw.field || '').trim();
+  if (!field || !has(field)) return null;
+
+  const when = raw.when && typeof raw.when === 'object' ? raw.when : null;
+  if (when) {
+    const wf = String(when.field || '').trim();
+    const eq = when.equals === undefined || when.equals === null ? '' : String(when.equals);
+    if (!wf || !has(wf) || !eq) return { field };
+    return { field, when: { field: wf, equals: eq } };
+  }
+  return { field };
+}
+
 export function capabilitiesOf(conf: any): CollectionCapabilities {
   const raw = (conf && conf.capabilities) || {};
   const actions = Array.isArray(conf && conf.actions) ? conf.actions : [];
@@ -96,6 +149,7 @@ export function capabilitiesOf(conf: any): CollectionCapabilities {
 
   const copyKinds = asCopyKinds(raw.copyKinds);
   const headerActions = asHeaderActions(raw.headerActions);
+  const linkedReport = asLinkedReport(conf, raw.linkedReport);
 
   return {
     open,
@@ -107,7 +161,8 @@ export function capabilitiesOf(conf: any): CollectionCapabilities {
     titleWidthPct:
       typeof raw.titleWidthPct === 'number' && raw.titleWidthPct > 0
         ? Math.min(90, Math.max(20, raw.titleWidthPct))
-        : legacyTitleWidthPct(conf)
+        : legacyTitleWidthPct(conf),
+    linkedReport
   };
 }
 

@@ -233,7 +233,17 @@ const COLLECTIONS = [
       showRunLog: false,
       favorite: false,
       headerActions: ['importReport', 'importData', 'importTemplate', 'exportData', 'refresh'],
-      titleWidthPct: 50
+      titleWidthPct: 50,
+      /**
+       * 「关联报告」锚点（v0.46.1）。
+       *
+       * 有值 = 这条执行能在「报告分析」页重新打开那份报告：
+       *   Allure 报告 → 归档时写 reportDir（allure:archive）
+       *   jtl 压测报告 → 导入时也写 reportDir，但目录里是 JMeter 的报告，
+       *                  报告分析页解析不了 → 用 when 限定只给接口测试挂入口
+       * 存的是**字段名**而不是布尔值：页面拿它去 data 里取值，不认识集合 key。
+       */
+      linkedReport: { field: 'reportDir', when: { field: 'kind', equals: 'api' } }
     },
     fields: [
       { key: 'name', label: '标题', type: 'text', required: true, placeholder: '如：下单链路 10 并发 1 分钟' },
@@ -264,7 +274,17 @@ const COLLECTIONS = [
       { key: 'p99', label: 'P99 (ms)', type: 'number', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '99% 请求的响应时间' },
       { key: 'errRate', label: '错误率 (%)', type: 'number', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '如：0.2' },
       { key: 'samples', label: '样本数', type: 'number', onlyFor: { kind: 'perf' }, hideInDetail: true, placeholder: '总请求数（导入报告自动填）' },
-      { key: 'reportDir', label: '报告目录', type: 'text', onlyFor: { kind: 'perf' }, formHidden: true, formHiddenReason: '导入压测报告时自动写入，表单里不给改' },
+      // 报告目录：接口测试（Allure 归档）和压测（jtl 导入）都会写，是「关联报告」的锚点。
+      // 不再用 onlyFor 限成压测专用 —— 否则接口测试那条执行永远看不到自己的报告目录。
+      {
+        key: 'reportDir',
+        label: '报告目录',
+        type: 'text',
+        formHidden: true,
+        // 没归档过的执行不显示这一行（否则每条都挂一条空行）
+        hideEmpty: true,
+        formHiddenReason: '导入压测报告 / 归档 Allure 报告时自动写入，表单里不给改'
+      },
       // 压测指标汇总（详情页渲染成表格，字段本身不单独展示）
       { key: 'perfMetrics', label: '压测指标', type: 'metrics', onlyFor: { kind: 'perf' }, formHidden: true, hideEmpty: true, formHiddenReason: '详情页渲染成指标表格，表单里不给改' },
       { key: 'conclusion', label: '结论', type: 'textarea', placeholder: '达标没达标、瓶颈在哪、要不要跟进' }

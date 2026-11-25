@@ -25,6 +25,7 @@ const NOT_A_SUITE = ['test-preflight.cjs'];
 /** unit 档：纯函数 + 临时目录，任何机器都能跑（npm test 只跑这一档） */
 const unit = [
   'test-accounts.cjs',
+  'test-allure-steps.cjs',
   'test-allure.cjs',
   'test-brand.cjs',
   'test-bundle.cjs',
@@ -60,6 +61,7 @@ const unit = [
   'test-openapi.cjs',
   'test-pin-workspace.cjs',
   'test-recycle.cjs',
+  'test-report-archive.cjs',
   'test-rules.cjs',
   'test-runner.cjs',
   'test-scan-scope.cjs',

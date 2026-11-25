@@ -281,6 +281,8 @@ function AppBody({ boot, setBoot }: { boot: any; setBoot: (v: any) => void }) {
             onLogRun={logRunForApi}
             logFor={route.logFor}
             onLoggedRun={() => setRoute((r: any) => ({ ...r, logFor: undefined }))}
+            /* 互跳：测试执行列表的「关联报告」→ 报告分析（目录走 features/allure/handoff） */
+            onNavigate={setRoute}
           />
         ) : null}
         {route.type === 'cases' ? (
@@ -301,7 +303,8 @@ function AppBody({ boot, setBoot }: { boot: any; setBoot: (v: any) => void }) {
         {route.type === 'tool' && route.key === 'toolbox' ? <Toolbox /> : null}
         {route.type === 'tool' && route.key === 'runner' ? <CodeRunnerPage /> : null}
         {route.type === 'tool' && route.key === 'codegen' ? <CodegenPage /> : null}
-        {route.type === 'tool' && route.key === 'report' ? <ReportPage /> : null}
+        {/* 报告分析：归档成功后「去『测试执行』页查看」用的是这个 onNavigate */}
+        {route.type === 'tool' && route.key === 'report' ? <ReportPage onNavigate={setRoute} /> : null}
         {route.type === 'tool' && route.key === 'codescan' ? <CodeScanPage /> : null}
         {/* 互跳：保存 jmx 后「去压测脚本页查看」 */}
         {route.type === 'tool' && route.key === 'scriptgen' ? <ScriptGenPage onNavigate={setRoute} /> : null}
