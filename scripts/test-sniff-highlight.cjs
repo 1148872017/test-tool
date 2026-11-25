@@ -73,7 +73,7 @@ check(
 );
 check('cdp.js 自己实现 id 对成（有 pending 表 + id 自增）', /pending\.set\(id/.test(CDP_SRC) && /nextId \+= 1/.test(CDP_SRC));
 check('cdp.js 有命令超时（不能挂着不回）', /CDP_TIMEOUT/.test(CDP_SRC) && /setTimeout/.test(CDP_SRC));
-check('ipc-sniff.js 5 个通道全在这里注册', (IPC_SRC.match(/handle\('sniff:/g) || []).length === 5, (IPC_SRC.match(/handle\('sniff:[^']+'/g) || []));
+check('ipc-sniff.js 6 个通道全在这里注册', (IPC_SRC.match(/handle\('sniff:/g) || []).length === 6, (IPC_SRC.match(/handle\('sniff:[^']+'/g) || []));
 
 /* ============================================================
  * 1. jsLiteral：拼进注入脚本的字面量必须安全
@@ -383,13 +383,22 @@ check('归一化：null / undefined / 空串都当 css', hl.normalizeMode(null) 
   const ipcCode = IPC_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   check('ipc：url 校验走 isHttpUrl（不是 assertPathIn —— 那是文件路径守卫）', /isHttpUrl\(url\)/.test(ipcCode) && ipcCode.indexOf('assertPathIn') < 0, 'assertPathIn found');
   check('ipc：非法 url 直接回 ok:false（reject）', /return sniffer\.reject\(URL_REJECT\)/.test(IPC_SRC));
-  check('ipc：5 个通道每个都显式 assertUnlocked', (IPC_SRC.match(/assertUnlocked\(\)/g) || []).length === 5, (IPC_SRC.match(/assertUnlocked\(\)/g) || []).length);
+  check('ipc：6 个通道每个都显式 assertUnlocked', (IPC_SRC.match(/assertUnlocked\(\)/g) || []).length === 6, (IPC_SRC.match(/assertUnlocked\(\)/g) || []).length);
   check('ipc：没有直接碰 ipcMain（统一走 deps.handle）', IPC_SRC.indexOf('ipcMain') < 0);
   check('ipc：before-quit 里同步杀浏览器（应用退出不留残尸）', /before-quit/.test(IPC_SRC) && /stopSync\(\)/.test(IPC_SRC));
   check('ipc：process exit 也兜了一层', /process\.on\('exit'/.test(IPC_SRC));
   check('ipc：不 require electron（域模块靠 deps 注入）', !/require\(\s*['"]electron['"]\s*\)/.test(IPC_SRC));
   check('cdp.js 只发我们自己的命令（没有 Network/Storage/Cookie 域）', !/Network\.|Storage\.|Cookie/.test(CDP_SRC), 'forbidden domain');
   check('browser-session 里没有裸的 ipcMain.handle', !/ipcMain\.handle\(/.test(BS_SRC));
+
+  /* ---- v0.55：codegen 录制语言（Python 系 / Java）---- */
+  check('ipc：codegen 接受 lang 参数（python / pytest / java）', /payload[\s\S]{0,120}lang/.test(IPC_SRC) && IPC_SRC.indexOf("'java'") >= 0, 'no lang');
+  check('ipc：Java 录制先探测 npx playwright（spawnSync）', /probeNodePlaywright/.test(IPC_SRC) && /npx playwright --version/.test(IPC_SRC), 'no probe');
+  check('ipc：探测绝不联网/自动安装（npm_config_offline + yes=false）', /npm_config_offline/.test(IPC_SRC) && /npm_config_yes/.test(IPC_SRC), 'probe may go online');
+  check('ipc：Java 探测失败回 NO_NODE_PLAYWRIGHT + 明确降级文案', /NO_NODE_PLAYWRIGHT/.test(IPC_SRC) && /不会自动安装、也不会联网下载/.test(IPC_SRC), 'no fallback message');
+  check('ipc：Java 录制命令是 npx playwright codegen --target java', /playwright codegen --target java/.test(IPC_SRC), 'no java command');
+  check('ipc：python 系仍走 python -m playwright codegen（原路径不变）', /'playwright',\s*'codegen'/.test(IPC_SRC) && /'-m',\s*'playwright',\s*'codegen'/.test(IPC_SRC), 'python command changed');
+  check('ipc：Java 走 shell 前先挡掉引号/百分号/换行（UNSAFE_URL）', /UNSAFE_URL/.test(IPC_SRC) && /\["%\\r\\n\]/.test(IPC_SRC), 'unsafe url guard missing');
 }
 
 /* ============================================================

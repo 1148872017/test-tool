@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Drawer, Button, Tag, Space, Popconfirm, Select } from 'antd';
 import {
   CopyOutlined,
@@ -10,7 +10,8 @@ import {
   StarFilled,
   LinkOutlined,
   FileTextOutlined,
-  CloseOutlined
+  CloseOutlined,
+  CaretRightOutlined
 } from '@ant-design/icons';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -22,6 +23,7 @@ import VarsEditor from './VarsEditor';
 import MetricsTable from './MetricsTable';
 import ScenePicker from './ScenePicker';
 import AccountsEditor from './AccountsEditor';
+import SniffPanel, { type SniffPhase, type SniffTarget } from './SniffPanel';
 import { caseKey, knownCaseKeys, loadCaseIndex } from '../caseIndex';
 import { matchOnlyFor, recentForApi, resultTone, runLine } from '../../shared/runs';
 import { RUN_KIND_OPTIONS } from '../../shared/collections';
@@ -30,7 +32,7 @@ import CaseLinkModal from './CaseLinkModal';
 import ErrorBoundary from './feedback/ErrorBoundary';
 import StateEmpty from './states/StateEmpty';
 import { asArray, fieldOptions, getOptionsSync, loadOptions, OptionsMap } from '../options';
-import { parseElements, normalizeMode, type PageElement } from './PageElementsEditor';
+import { parseElements, normalizeMode, settleSniff, type PageElement } from './PageElementsEditor';
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -90,6 +92,134 @@ export function elementsToText(raw: any): string {
     .join('\n');
 }
 
+/** 定位方式 → 校验面板里显示的名字（css 在详情里没有标签，这里补全称） */
+function elementModeLabel(mode: any): string {
+  const m = normalizeMode(mode);
+  return m === 'css' ? 'CSS 选择器' : MODE_SHORT_LABEL[m] || m;
+}
+
+/**
+ * 详情页的单行「实时校验」（v0.55）。
+ *
+ * 和编辑器里用的是同一个 SniffPanel，但**会话生命周期由它自己管**：
+ *   挂载 = 起浏览器 + 高亮这一行；关闭 / 卸载 = 收面板 + 关浏览器。
+ * 详情是只读的：没有顺序走查、不写回 elements、不调 saveRecord。
+ */
+function DetailElementSniff({ url, target, onClose }: { url: string; target: SniffTarget; onClose: () => void }) {
+  const [phase, setPhase] = useState<SniffPhase>('starting');
+  const [busy, setBusy] = useState(true);
+  const [resp, setResp] = useState<any>(null);
+  const [error, setError] = useState('');
+  const phaseRef = useRef<SniffPhase>('starting');
+  const aliveRef = useRef(true);
+
+  /** 统一调用入口：后端永远 resolve 一个统一返回体，这里再兜一层，面板不会白屏 */
+  const request = async (method: string, payload?: any): Promise<any> => {
+    try {
+      const fn = (api as any)[method];
+      if (typeof fn !== 'function') {
+        return { ok: false, message: '当前环境没有 ' + method + '（浏览器预览不支持实时校验）' };
+      }
+      const raw = await fn(payload);
+      return raw && typeof raw === 'object' ? raw : {};
+    } catch (e: any) {
+      return { ok: false, message: (e && e.message) || String(e) };
+    }
+  };
+
+  const apply = (res: any) => {
+    if (!aliveRef.current) return;
+    const next = settleSniff(res, phaseRef.current);
+    phaseRef.current = next.phase;
+    setPhase(next.phase);
+    setResp(next.resp);
+    setError(next.error);
+    setBusy(false);
+  };
+
+  const start = async () => {
+    if (!url) {
+      phaseRef.current = 'idle';
+      setPhase('idle');
+      setBusy(false);
+      setError('这条记录还没有页面地址（url），先填上再校验');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    apply(await request('sniffStart', { url, name: target.name, mode: target.mode, selector: target.selector }));
+  };
+
+  useEffect(() => {
+    aliveRef.current = true;
+    start();
+    // 面板开着时定期问一次：用户把浏览器窗口关了 → 切到「会话已结束」
+    const timer = setInterval(() => {
+      if (phaseRef.current !== 'ready') return;
+      request('sniffStatus').then((res) => {
+        if (!aliveRef.current) return;
+        if (res && res.ok !== false && res.running === false) {
+          phaseRef.current = 'ended';
+          setPhase('ended');
+          setBusy(false);
+        }
+      });
+    }, 2500);
+    return () => {
+      aliveRef.current = false;
+      clearInterval(timer);
+      // 面板没了就没有控制入口，浏览器一并关掉（stop 是幂等的，重复调无副作用）
+      const fn = (api as any).sniffStop;
+      if (typeof fn === 'function') Promise.resolve(fn()).catch(() => {});
+    };
+  }, []);
+
+  const rehighlight = async () => {
+    setBusy(true);
+    setError('');
+    apply(await request('sniffHighlight', { name: target.name, mode: target.mode, selector: target.selector }));
+  };
+
+  const reopen = async () => {
+    setBusy(true);
+    setError('');
+    apply(await request('sniffReopen', url));
+  };
+
+  /** 「结束校验」和右上角 X 一样：关浏览器 + 收面板 */
+  const stopAndClose = async () => {
+    setBusy(true);
+    await request('sniffStop');
+    onClose();
+  };
+
+  return (
+    <SniffPanel
+      phase={phase}
+      busy={busy}
+      resp={resp}
+      error={error}
+      sequential={false}
+      index={0}
+      total={0}
+      currentName={target.name}
+      currentModeLabel={elementModeLabel(target.mode)}
+      currentSelector={target.selector}
+      skipped={[]}
+      url={url}
+      onClose={stopAndClose}
+      onHighlight={rehighlight}
+      onReopen={reopen}
+      onStopBrowser={stopAndClose}
+      onNext={() => {}}
+      onRepeat={rehighlight}
+      onSkip={() => {}}
+      onStopSeq={() => {}}
+      onRestart={start}
+    />
+  );
+}
+
 type Props = {
   record: any;
   conf: any;
@@ -112,6 +242,8 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
   // 这个接口最近跑过的几次（接口测试 / 压测都算一个「执行」）
   const [runs, setRuns] = useState<any[]>([]);
   const [opts, setOpts] = useState<OptionsMap>(getOptionsSync());
+  /** 详情页的单行实时校验：记住目标行 + 递增序号（点另一行就换一个会话） */
+  const [verify, setVerify] = useState<{ target: SniffTarget; seq: number } | null>(null);
 
   const isApis = conf.key === 'apis';
 
@@ -248,6 +380,29 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
       /* 忽略设置读取失败 */
     }
     toast('已用浏览器打开');
+  };
+
+  /**
+   * 点元素行末的 ▶：只读地拉起实时校验（本机浏览器高亮这一行）。
+   *
+   * 详情页不进入编辑：不写回 elements、不保存记录，换个位置只看事实。
+   */
+  const startVerify = (el: PageElement) => {
+    const name = String(el.name || '').trim();
+    const selector = String(el.selector || '').trim();
+    if (!name || !selector) {
+      toast('这一行还没填元素名称或定位值，先补上再校验', 'warning');
+      return;
+    }
+    const url = String(data.url || '').trim();
+    if (!url) {
+      toast('这条记录还没有页面地址（url），先填上再校验', 'warning');
+      return;
+    }
+    setVerify((prev) => ({
+      target: { name, mode: normalizeMode(el.mode), selector },
+      seq: (prev ? prev.seq : 0) + 1
+    }));
   };
 
   /** 删除 = 移入回收站（软删除）：说清楚「还能找回」，别让人以为数据没了 */
@@ -455,7 +610,28 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
                     ) : null}
                     {String(el.selector || '').trim() || <span className="muted">-</span>}
                   </td>
-                  <td style={{ wordBreak: 'break-all' }}>{String(el.desc || '').trim() || <span className="muted">-</span>}</td>
+                  <td style={{ wordBreak: 'break-all' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ flex: 1 }}>{String(el.desc || '').trim() || <span className="muted">-</span>}</span>
+                      {/*
+                        行末的 ▶：只读的实时校验入口（浏览器高亮这一行）。
+                        动作不进编辑表单，也不改 elements —— 详情页只负责「点验」。
+                      */}
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<CaretRightOutlined />}
+                        aria-label="实时校验这一行"
+                        title="实时校验：用本机浏览器高亮这一行的元素（只读，不改数据）"
+                        disabled={!String(el.selector || '').trim()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startVerify(el);
+                        }}
+                        style={{ flex: 'none', paddingInline: 2 }}
+                      />
+                    </div>
+                  </td>
                 </tr>
               );
             })}
@@ -672,6 +848,16 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
       <CaseLinkModal open={linkOpen} record={record} onClose={() => setLinkOpen(false)} onSaved={() => reloadLinks()} />
 
       <VarFillModal open={varOpen} text={String(data.sql || '')} title="填充变量并复制 SQL" onClose={() => setVarOpen(false)} />
+
+      {/* 详情页的单行实时校验：面板自己管会话，关掉即结束（进度不落库） */}
+      {verify ? (
+        <DetailElementSniff
+          key={(recordId || 'none') + ':' + String(verify.seq)}
+          url={String(data.url || '').trim()}
+          target={verify.target}
+          onClose={() => setVerify(null)}
+        />
+      ) : null}
       </ErrorBoundary>
     </Drawer>
   );

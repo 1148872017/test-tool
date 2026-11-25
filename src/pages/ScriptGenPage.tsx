@@ -16,6 +16,7 @@ import api from '../api';
 import { toast } from '../msg';
 import StateEmpty from '../components/states/StateEmpty';
 import ScriptTemplatesDrawer from '../components/ScriptTemplatesDrawer';
+import CodeBlock from '../components/CodeBlock';
 import { takeJmxHandoff } from '../features/jmx/handoff';
 import type { JmxHandoff } from '../features/jmx/handoff';
 
@@ -660,7 +661,8 @@ export default function ScriptGenPage({ onNavigate }: ScriptGenPageProps = {}) {
               />
             ) : null}
             {jmxCode ? (
-              <pre className="scriptgen-code mono">{jmxCode}</pre>
+              // jmx 就是 XML：标签/属性/文本分开染色，行号方便对照 JMeter 树
+              <CodeBlock code={jmxCode} lang="xml" copyable={false} maxHeight="none" />
             ) : (
               <StateEmpty
                 kind="no-data"
@@ -899,7 +901,7 @@ export default function ScriptGenPage({ onNavigate }: ScriptGenPageProps = {}) {
               ) : null}
             </div>
             {sqlCode ? (
-              <pre className="scriptgen-code mono">{sqlCode}</pre>
+              <CodeBlock code={sqlCode} lang="sql" copyable={false} maxHeight="none" />
             ) : (
               <StateEmpty
                 kind="no-data"

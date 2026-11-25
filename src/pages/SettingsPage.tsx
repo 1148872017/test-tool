@@ -958,7 +958,9 @@ export default function SettingsPage({ boot, onChanged }: Props) {
           <TagOutlined /> 选项配置
         </div>
         <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
-          「环境」「角色 / 权限」「标签」「接口模块」「页面项目」的下拉项都在这里维护，保存后新增和编辑表单立即生效
+          「环境」「角色 / 权限」「标签」的下拉项都在这里维护，保存后新增和编辑表单立即生效。
+          <br />
+          接口模块 / 页面项目已经搬回各自的功能页：「接口记录」或「页面元素」右上角 <b>⋯</b> →「管理模块…」/「管理项目…」。
         </div>
         <OptionEditor />
       </div>

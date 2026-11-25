@@ -207,6 +207,12 @@ const editor = loadTsxModule(path.join(ROOT, 'src', 'components', 'PageElementsE
     describeResult: () => ({ lines: [], tone: 'muted' }),
     phaseLabel: () => '',
     browserLabel: () => ''
+  }),
+  // v0.54.1：编辑器多了「codegen 录制」入口，用不到解析器，给最小桩即可
+  '../utils/playwrightSnippet': () => ({
+    __esModule: true,
+    parsePlaywrightSnippet: () => ({ rows: [], skipped: 0, duplicates: 0 }),
+    toIdentifier: () => 'el1'
   })
 });
 
@@ -263,7 +269,19 @@ const detail = loadTsxModule(DETAIL, {
     getOptionsSync: () => ({}),
     loadOptions: async () => ({})
   }),
-  './PageElementsEditor': () => editor
+  './PageElementsEditor': () => editor,
+  /*
+   * v0.55：详情页元素行末多了「▶ 实时校验」，拉起的是同一个 SniffPanel。
+   * 本套件只渲染正常结构（不点校验），面板桩成空组件即可；
+   * 不补这行会直接抛「测试没有为这个依赖准备桩」。
+   */
+  './SniffPanel': () => ({
+    __esModule: true,
+    default: noopComp,
+    describeResult: () => ({ lines: [], tone: 'muted' }),
+    phaseLabel: () => '',
+    browserLabel: () => ''
+  })
 });
 
 /* ============================================================
@@ -351,6 +369,26 @@ check('表格是只读的（没有任何输入框 / 编辑控件）', !!table &&
 }
 
 {
+  // v0.55：行末的「▶ 实时校验」是图标按钮，不占表格列（说明列里靠右），也不进编辑
+  const trs = table
+    ? collect(table, [])
+        .filter((n) => n.type === 'tr')
+        .filter((tr) => Array.isArray(tr.props.children) && tr.props.children[0] && tr.props.children[0].type === 'td')
+    : [];
+  const verifyBtns = trs.map((tr) => collect(tr, []).filter((n) => compName(n) === 'Button' && n.props && n.props['aria-label'] === '实时校验这一行'));
+  check(
+    '每个元素行末都有一个「▶ 实时校验」按钮（只读入口）',
+    trs.length === 3 && verifyBtns.every((list) => list.length === 1),
+    verifyBtns.map((l) => l.length)
+  );
+  check(
+    '「▶ 实时校验」是图标按钮（无文字、无输入控件）',
+    verifyBtns.every((list) => list.every((b) => !b.props.children && !!b.props.icon)),
+    verifyBtns.map((l) => l.map((b) => Object.keys(b.props)))
+  );
+}
+
+{
   const dataRows = table
     ? collect(table, [])
         .filter((n) => n.type === 'tr')
@@ -414,6 +452,16 @@ check('表格是只读的（没有任何输入框 / 编辑控件）', !!table &&
 const detailSrc = stripComments(fs.readFileSync(DETAIL, 'utf8'));
 
 check('RecordDetail 从 PageElementsEditor 导入 parseElements（复用纯函数）', /import\s*\{[^}]*\bparseElements\b[^}]*\}\s*from\s*'\.\/PageElementsEditor'/.test(detailSrc), 'no parseElements import');
+check(
+  '详情页复用 SniffPanel 做实时校验（不另造一套面板）',
+  /import\s+SniffPanel[^;]*from\s*'\.\/SniffPanel'/.test(detailSrc) && /<SniffPanel/.test(detailSrc),
+  'no SniffPanel import/render'
+);
+check(
+  '校验会话由详情页自己管（挂载 sniffStart / 关闭 sniffStop）',
+  /sniffStart/.test(detailSrc) && /sniffStop/.test(detailSrc) && /const stopAndClose/.test(detailSrc),
+  'session lifecycle missing'
+);
 check('elements 分支用 parseElements(raw) 解析，不自己再解析一遍', /const rows = parseElements\(raw\)/.test(detailSrc), 'not using parseElements');
 check('elements 走独立渲染分支（f.type === elements）', /f\.type === 'elements' \?/.test(detailSrc) || /case 'elements'/.test(detailSrc), 'no elements branch');
 check('复制按钮调用 elementsToText（不是 JSON.stringify / markdown）', /copy\(elementsToText\(raw\)/.test(detailSrc), 'copy not using elementsToText');

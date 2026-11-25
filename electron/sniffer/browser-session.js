@@ -33,8 +33,14 @@ const { createCdpClient, isClosedError } = require('./cdp');
 /** 调试端口范围（需求指定：10000-60000 的随机空闲端口） */
 const PORT_MIN = 10000;
 const PORT_MAX = 60000;
-/** 拉起浏览器后等调试端口就绪的上限 */
-const READY_TIMEOUT_MS = 15000;
+/** 拉起浏览器后等调试端口就绪的上限
+ *
+ * 为什么从 15 秒提到 45 秒（v0.54.1 真机 bug）：
+ *   冷启动 + 首次建 profile 的机器上实测要 10 秒以上，15 秒的余量太薄，
+ *   一旦超时就会「浏览器刚拉起来就退出了」，用户看到的是一脸疑惑 + 空白页。
+ *   宁可多等一会儿，也不要误杀一个正在起来的浏览器。
+ */
+const READY_TIMEOUT_MS = 45000;
 /** 轮询间隔 */
 const POLL_INTERVAL_MS = 150;
 /** 单条 CDP 命令默认超时 */
@@ -43,6 +49,27 @@ const CDP_TIMEOUT_MS = 15000;
 const NAV_LOAD_TIMEOUT_MS = 8000;
 
 const DEFAULT_MODE = 'css';
+
+/**
+ * 两个地址是不是「同一个页面」。
+ *
+ * 只比 origin + pathname + search，忽略结尾斜杠和 hash：
+ *   https://a.com/x 与 https://a.com/x/ 算同一个页面（很多站点会补斜杠）。
+ */
+function samePage(a, b) {
+  const norm = (u) => {
+    try {
+      const x = new URL(String(u || ''));
+      const pathName = x.pathname.replace(/\/+$/, '') || '/';
+      return x.origin + pathName + (x.search || '');
+    } catch (e) {
+      return '';
+    }
+  };
+  const na = norm(a);
+  const nb = norm(b);
+  return !!na && na === nb;
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -179,6 +206,63 @@ async function pickFreePort(rand, maxTries) {
 }
 
 /**
+ * 调试端口发现：**不再自己猜端口**。
+ *
+ * 传 `--remote-debugging-port=0` 让浏览器自己挑，然后读它写在 profile 目录里的
+ * `DevToolsActivePort`（第一行是端口，第二行是 ws 路径）。这是 Chrome/Edge 的
+ * 官方约定，好处：
+ *   · 不会「我们 bind 一个空闲端口 → 关掉 → 浏览器去 bind 时被别人抢走」；
+ *   · 浏览器想用别的端口也照样能连上；
+ *   · 拿不到文件本身就是**明确信号**（浏览器没起来 / 被转发给已有实例了）。
+ */
+function devToolsPortPath(profileDir) {
+  return path.join(profileDir, 'DevToolsActivePort');
+}
+
+/** 启动前必须清掉上一轮留下的 DevToolsActivePort，否则会读到旧端口 */
+function clearDevToolsPort(profileDir) {
+  try {
+    fs.unlinkSync(devToolsPortPath(profileDir));
+  } catch (e) {
+    /* 本来就不存在 */
+  }
+}
+
+/** 等 DevToolsActivePort 写出来（同时在等的时候盯着进程有没有提前退出） */
+async function waitDevToolsPort(profileDir, child, timeoutMs) {
+  const file = devToolsPortPath(profileDir);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (child && child.exitCode !== null) {
+      // 进程提前退出：典型是「同一 profile 已有实例在跑，命令被转发过去，自己退了」
+      return {
+        ok: false,
+        handoff: true,
+        message: '浏览器刚拉起来就退出了（通常是因为上次的浏览器进程还占着配置目录）'
+      };
+    }
+    let text = '';
+    try {
+      text = fs.readFileSync(file, 'utf8');
+    } catch (e) {
+      text = '';
+    }
+    if (text) {
+      const lines = text.trim().split(/\r?\n/);
+      const port = Number(lines[0]);
+      if (Number.isInteger(port) && port > 0) return { ok: true, port, wsPath: String(lines[1] || '') };
+      // 文件已出现但还没写完：下一轮再读
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+  return {
+    ok: false,
+    handoff: false,
+    message: '等了 ' + Math.round(timeoutMs / 1000) + ' 秒，浏览器调试端口还没准备好'
+  };
+}
+
+/**
  * 浏览器启动参数（**纯函数**，可单测）。
  *
  * 只加必要开关：
@@ -269,6 +353,15 @@ function createSession(options) {
   const current = { url: '', name: '', mode: DEFAULT_MODE, selector: '' };
   /** 标签页里实际加载的地址（用来判断「url 不同才导航」） */
   let loadedUrl = '';
+  /**
+   * 拉起浏览器时**作为启动参数**交给它的地址（不是自己点出来的空白页）。
+   *
+   * 有这个值就说明「浏览器一打开就已经在目标页面上了」，start() 里就不用再
+   * 用 CDP naviate 一次（少一次整页重载）；只需要等 readyState 到 complete。
+   */
+  let launchedUrl = '';
+  /** 本次会话要额外告诉用户的一句话（比如「换用干净配置，需要重新登录」） */
+  let notice = '';
 
   function isRunning() {
     return !!proc && !exited && proc.exitCode === null;
@@ -277,6 +370,12 @@ function createSession(options) {
   /** 统一返回形状（5 个通道全用它，前端只需要认一套） */
   function result(ok, message, over) {
     const facts = lastFacts || emptyFacts();
+    /**
+     * notice 是「这次会话的额外说明」（比如换用干净 profile，需要重新登录）。
+     * 必须拼进 message 一起回给界面——只写进日志等于没告诉用户。
+     */
+    const base = String(message === undefined || message === null ? '' : message);
+    const text = notice ? (base ? base + '（' + notice + '）' : notice) : base;
     return Object.assign(
       {
         ok: !!ok,
@@ -291,7 +390,7 @@ function createSession(options) {
         visible: facts.visible,
         inIframe: facts.inIframe,
         reason: facts.reason,
-        message: String(message === undefined || message === null ? '' : message)
+        message: text
       },
       over || {}
     );
@@ -311,6 +410,8 @@ function createSession(options) {
     scriptId = '';
     lastFacts = null;
     loadedUrl = '';
+    launchedUrl = '';
+    notice = '';
   }
 
   function closeCdp() {
@@ -437,7 +538,7 @@ function createSession(options) {
     };
   }
 
-  async function ensureBrowser() {
+  async function ensureBrowser(openUrl) {
     if (isRunning()) {
       if (!cdp || cdp.closed) {
         const reconnected = await connect();
@@ -450,17 +551,58 @@ function createSession(options) {
     if (!found.ok) return { ok: false, message: found.message };
     if (!dataDir) return { ok: false, message: '数据目录没准备好，浏览器配置存不下来' };
 
-    const profileDir = path.join(dataDir, 'sniff-profile');
+    /**
+     * 启动时直接把目标地址交给浏览器（而不是 about:blank 再导航）：
+     *   1. 用户看到的就是目标页面，不会先闪一下空白页；
+     *   2. 万一 CDP 连不上，页面也已经打开了，至少不是「一片白」；
+     *   3. 地址非法（不是 http/https）时退回 about:blank，不把脏值交给命令行。
+     */
+    const targetUrl = isHttpUrl(openUrl) ? String(openUrl) : 'about:blank';
+
+    /**
+     * 先试稳定 profile（登录态能留下来）。
+     * 如果浏览器「刚拉起来就退出」——典型是上次没退干净、还活着的实例占着这个目录，
+     * 新进程把命令转发过去然后自己退了（调试端口根本不会开）——就用干净 profile 重试一次。
+     */
+    const stableProfile = path.join(dataDir, 'sniff-profile');
+    let launched = await launchWith(stableProfile, found, targetUrl);
+
+    if (!launched.ok && launched.handoff) {
+      const cleanProfile = path.join(dataDir, 'sniff-profile-clean');
+      try {
+        fs.rmSync(cleanProfile, { recursive: true, force: true });
+      } catch (e) {
+        /* 删不掉就算了，反正马上要重建 */
+      }
+      log('sniff: 稳定 profile 起不来（疑似被占用），改用干净 profile 重试');
+      launched = await launchWith(cleanProfile, found, targetUrl);
+      if (launched.ok) {
+        notice = '上次的浏览器进程还占着配置目录，已换用干净配置启动，这次需要重新登录一次';
+        log('sniff: ' + notice);
+      }
+    }
+    if (!launched.ok) return { ok: false, message: launched.message };
+    return { ok: true, message: launched.message || '' };
+  }
+
+  /**
+   * 用指定 profile 拉起一次浏览器并等到 CDP 可用。
+   *
+   * 端口不再猜：传 `--remote-debugging-port=0`，读 profile 里的 DevToolsActivePort
+   * 拿到浏览器实际用的端口（见 waitDevToolsPort 的注释）。
+   *
+   * @returns {Promise<{ok:boolean, message?:string, handoff?:boolean}>}
+   */
+  async function launchWith(profileDir, found, targetUrl) {
     try {
       fs.mkdirSync(profileDir, { recursive: true });
     } catch (e) {
       return { ok: false, message: '建浏览器配置目录失败：' + String((e && e.message) || e) };
     }
+    // 上一轮残留的端口文件必须清掉，否则会连到一个早就没了的端口
+    clearDevToolsPort(profileDir);
 
-    const port = await pickFreePort();
-    if (!port) return { ok: false, message: '分配不到空闲端口（' + PORT_MIN + '-' + PORT_MAX + ' 都被占了？）' };
-
-    const args = buildLaunchArgs({ port, userDataDir: profileDir, headless, url: 'about:blank' });
+    const args = buildLaunchArgs({ port: 0, userDataDir: profileDir, headless, url: targetUrl });
     let child;
     try {
       child = spawnImpl(found.path, args, { stdio: 'ignore', windowsHide: headless, detached: false });
@@ -471,7 +613,7 @@ function createSession(options) {
 
     proc = child;
     exited = false;
-    debugPort = port;
+    debugPort = 0;
     browserName = found.name;
     browserPath = found.path;
     browserVersion = '';
@@ -479,6 +621,7 @@ function createSession(options) {
     scriptId = '';
     lastFacts = null;
     loadedUrl = '';
+    launchedUrl = targetUrl === 'about:blank' ? '' : targetUrl;
 
     child.on('exit', () => {
       exited = true;
@@ -492,8 +635,18 @@ function createSession(options) {
       closeCdp();
     });
 
-    log('sniff browser launched: ' + found.name + ' pid=' + child.pid + ' port=' + port + (headless ? ' (headless)' : ''));
-    const ready = await waitForReady(port);
+    log('sniff browser launched: ' + found.name + ' pid=' + child.pid + ' profile=' + profileDir + (headless ? ' (headless)' : ''));
+
+    const found_port = await waitDevToolsPort(profileDir, child, readyTimeoutMs);
+    if (!found_port.ok) {
+      await killProcess();
+      resetRuntime();
+      return { ok: false, handoff: !!found_port.handoff, message: found_port.message };
+    }
+    debugPort = found_port.port;
+    log('sniff devtools port: ' + debugPort);
+
+    const ready = await waitForReady(debugPort);
     if (!ready.ok) {
       await killProcess();
       resetRuntime();
@@ -510,6 +663,25 @@ function createSession(options) {
       return { ok: false, message: connected.message };
     }
     return { ok: true };
+  }
+
+  /**
+   * 等页面加载完（只在「浏览器启动时就已经打开目标页」这条路径上用）。
+   *
+   * 为什么不挂 Page.loadEventFired：启动参数打开的页面，导航在我们连上 CDP 之前
+   * 就可能已经开始了，load 事件有机会错过。轮询 readyState 更保险。
+   *
+   * @returns {Promise<boolean>} 是否等到 complete（超时不算失败，只是早点高亮）
+   */
+  async function waitDocumentReady(timeoutMs) {
+    const deadline = Date.now() + (Number(timeoutMs) || NAV_LOAD_TIMEOUT_MS);
+    while (Date.now() < deadline) {
+      const state = await evaluate('document.readyState', 1200);
+      if (state.ok && state.value === 'complete') return true;
+      if (state.dead) return false;
+      await sleep(120);
+    }
+    return false;
   }
 
   async function navigate(url) {
@@ -685,14 +857,30 @@ function createSession(options) {
     }
     if (!current.selector) return reject('定位值不能为空');
 
-    const ensured = await ensureBrowser();
+    const ensured = await ensureBrowser(current.url);
     if (!ensured.ok) return reject(ensured.message);
     if (ensured.message) log('sniff: ' + ensured.message);
 
     if (loadedUrl !== current.url) {
-      const nav = await navigate(current.url);
-      if (!nav.ok) return result(false, nav.message);
-      loadedUrl = current.url;
+      if (launchedUrl && launchedUrl === current.url) {
+        /**
+         * 浏览器启动时就已经把目标页面打开了：不再整页重载，只等加载完。
+         * 但要**核对一下真的在那个页面上**——干净 profile 首次启动时，浏览器可能
+         * 先落在新标签页上（我们连的就是那个空标签），那就得补一次导航。
+         */
+        await waitDocumentReady(NAV_LOAD_TIMEOUT_MS);
+        const href = await evaluate('location.href', 2000);
+        const same = href.ok && samePage(String(href.value || ''), current.url);
+        if (!same) {
+          const nav = await navigate(current.url);
+          if (!nav.ok) return result(false, nav.message);
+        }
+        loadedUrl = current.url;
+      } else {
+        const nav = await navigate(current.url);
+        if (!nav.ok) return result(false, nav.message);
+        loadedUrl = current.url;
+      }
     }
     const applied = await applyHighlight();
     return result(applied.ok, applied.message);

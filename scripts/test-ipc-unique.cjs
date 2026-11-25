@@ -23,11 +23,12 @@ const ELECTRON_DIR = path.join(__dirname, '..', 'electron');
  *   +1 jmx 局部编辑写回（v0.52.0 L2）：jmx:writeback → 当前实际 115
  *   +5 页面元素实时校验（v0.54.0，新域 electron/ipc/ipc-sniff.js）：
  *       sniff:status / -start / -highlight / -reopen / -stop → 当前实际 120
+ *   +1 拉起 Playwright codegen（v0.54.1）：sniff:codegen → 当前实际 121
  *
  * 注意：这个数字是**整个 electron/ 目录的通道总数**，多人并行改不同域时
  * 以最后一次实测为准（合并后跑一遍 node scripts/test-ipc-unique.cjs 对一下）。
  */
-const EXPECTED_CHANNELS = 120;
+const EXPECTED_CHANNELS = 121;
 
 /**
  * 递归列出 electron/ 下所有 .js。

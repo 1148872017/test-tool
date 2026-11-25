@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Input, Select, Space, Tag } from 'antd';
+import { Button, Input, Modal, Select, Space, Tag } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { LOCATOR_MODES, previewLocatorCode } from '../../shared/locatorModes';
 import api from '../api';
 import SniffPanel, { type SniffPhase, type SniffTarget } from './SniffPanel';
+import { parsePlaywrightSnippet } from '../utils/playwrightSnippet';
 
 /**
  * 定位方式。
@@ -76,6 +77,58 @@ export function normalizeMode(mode: any): LocatorMode {
     .trim()
     .toLowerCase();
   return LOCATOR_MODES.indexOf(v) >= 0 ? (v as LocatorMode) : 'css';
+}
+
+/* ============================================================
+ * codegen 录制 / 解析语言（v0.55）
+ *
+ * 事实前提（别误解）：
+ *   · `python -m playwright codegen` **只能出 Python**（官方没有 --target）；
+ *   · Java 代码必须用 Node 版的 `npx playwright codegen --target java`。
+ * 所以这里记住用户选的语言，拉起录制器时原样告诉主进程；
+ * 解析端不按语言分流 —— Java / Python / JS 的语法形态各认各的。
+ *
+ * 存 localStorage：不引入新依赖，也不给测试的手工 require 桩加负担。
+ * ============================================================ */
+export type RecordLang = 'python' | 'pytest' | 'java';
+
+export const RECORD_LANG_OPTIONS: { value: RecordLang; label: string }[] = [
+  { value: 'python', label: 'Python' },
+  { value: 'pytest', label: 'Python（pytest）' },
+  { value: 'java', label: 'Java（需要 Node 版 Playwright）' }
+];
+
+export const RECORD_LANG_LABEL: Record<RecordLang, string> = {
+  python: 'Python',
+  pytest: 'Python（pytest）',
+  java: 'Java'
+};
+
+const RECORD_LANG_KEY = 'test-tool.codegen.lang';
+
+/** localStorage 在浏览器预览 / 单测里都可能不存在，读写一律兜底 */
+function langStorage(): Storage | null {
+  try {
+    return typeof window !== 'undefined' && window.localStorage ? window.localStorage : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function readRecordLang(): RecordLang {
+  const s = langStorage();
+  const v = s ? String(s.getItem(RECORD_LANG_KEY) || '') : '';
+  return v === 'java' || v === 'pytest' ? (v as RecordLang) : 'python';
+}
+
+export function writeRecordLang(lang: RecordLang) {
+  const s = langStorage();
+  if (!s) return;
+  try {
+    s.setItem(RECORD_LANG_KEY, lang);
+  } catch (e) {
+    /* 存不进去只影响下次默认值，不影响这一次录制 */
+  }
 }
 
 /**
@@ -333,6 +386,16 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
    * ============================================================ */
   const [sniff, setSniff] = useState<SniffSession>(() => SNIFF_IDLE);
 
+  /** codegen 录制小窗的状态（文本/提示都在里面，关掉即清） */
+  const [codegen, setCodegen] = useState<{ open: boolean; busy: boolean; text: string; msg: string; err: string; lang: RecordLang }>({
+    open: false,
+    busy: false,
+    text: '',
+    msg: '',
+    err: '',
+    lang: 'python'
+  });
+
   /** 卸载时要不要顺手关浏览器：面板开着就说明这一轮还没收尾 */
   const sniffOpen = useRef<boolean>(false);
 
@@ -466,17 +529,96 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
     applyResponse(res);
   };
 
+  /**
+   * 「结束校验」按钮：**手动关掉浏览器和进程，并收起面板**。
+   *
+   * 和右上角 X 的区别只是明不明显（X 太小，用户找不到"怎么关掉那个浏览器"）。
+   * 关不掉时（stillRunning）保留面板并显示原因，别把错误一起收走。
+   */
   const stopBrowser = async () => {
     patchSniff({ busy: true, error: '' });
     const res = await request('sniffStop');
     const stillRunning = !!(res && res.ok !== false && res.running);
-    patchSniff({
-      busy: false,
-      phase: 'idle',
-      seq: false,
-      resp: res,
-      error: stillRunning ? String(res.message || '浏览器没有关掉') : ''
-    });
+    if (stillRunning) {
+      patchSniff({
+        busy: false,
+        phase: 'idle',
+        seq: false,
+        resp: res,
+        error: String(res.message || '浏览器没有关掉，可到任务管理器结束 msedge/chrome 进程')
+      });
+      return;
+    }
+    sniffOpen.current = false;
+    patchSniff(Object.assign({}, SNIFF_IDLE));
+  };
+
+  /* -------------------- Playwright codegen 录制 -------------------- */
+
+  /** 打开录制小窗（不自动拉起，用户先看清要做什么） */
+  const openCodegen = () => {
+    setCodegen({ open: true, busy: false, text: '', msg: '', err: '', lang: readRecordLang() });
+  };
+
+  /** 拉起录制器：Python 系用配置的 Python；Java 用本机 Node 版 Playwright（主进程先探测） */
+  const launchCodegen = async () => {
+    const url = String(pageUrl || '').trim();
+    if (!url) {
+      setCodegen((s) => Object.assign({}, s, { err: '这条记录还没有页面地址（url），先填上再录制' }));
+      return;
+    }
+    setCodegen((s) => Object.assign({}, s, { busy: true, err: '', msg: '' }));
+    try {
+      const fn = (api as any).sniffCodegen;
+      if (typeof fn !== 'function') throw new Error('当前版本没有 sniffCodegen，请用安装版');
+      const res = await fn({ url, lang: codegen.lang });
+      setCodegen((s) =>
+        Object.assign({}, s, {
+          busy: false,
+          msg: res && res.ok ? String(res.message || '录制器已启动') : '',
+          err: res && res.ok ? '' : String((res && res.message) || '拉起失败')
+        })
+      );
+    } catch (e: any) {
+      setCodegen((s) => Object.assign({}, s, { busy: false, err: String((e && e.message) || e) }));
+    }
+  };
+
+  /**
+   * 把贴回来的 codegen 代码解析成元素行，追加到现有行后面。
+   * 去重按「定位方式 + 定位值」：同一行重复粘贴不会翻倍。
+   */
+  const importSnippet = () => {
+    const parsed = parsePlaywrightSnippet(codegen.text);
+    if (!parsed.rows.length) {
+      setCodegen((s) =>
+        Object.assign({}, s, {
+          err: '没从这段代码里认出定位器。录完请点录制器里的「Copy」复制完整代码再贴'
+        })
+      );
+      return;
+    }
+    const existing = new Set(rows.filter((r) => r.name.trim()).map((r) => r.mode + '\u0000' + r.selector));
+    const added = parsed.rows.filter((r) => !existing.has(r.mode + '\u0000' + r.selector));
+    const next = rows
+      .filter((r) => r.name.trim() || r.selector.trim())
+      .concat(added.map((r) => ({ name: r.name, mode: r.mode as any, selector: r.selector, desc: r.desc })));
+    commit(next.length ? next : [blankRow()]);
+    /**
+     * 结果反馈就写在小窗里（不新增 toast 依赖，也不自动关闭）：
+     * 用户想接着贴第二段代码时不用重新打开窗口。
+     */
+    setCodegen((s) =>
+      Object.assign({}, s, {
+        text: '',
+        err: '',
+        msg:
+          '已添加 ' + added.length + ' 个元素' +
+          (parsed.duplicates ? '，跳过重复 ' + parsed.duplicates + ' 个' : '') +
+          (parsed.skipped ? '，忽略动作 ' + parsed.skipped + ' 行' : '') +
+          '。可以继续贴，或直接关掉这个窗口。'
+      })
+    );
   };
 
   /** 浏览器被关掉 / 应用重启后再来一次 */
@@ -494,8 +636,7 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
   };
 
   /** 关面板 = 结束这一轮；面板没了就没有控制入口，浏览器一并关掉 */
-  const closeSniff = () => {
-    sniffOpen.current = false;
+  const closeSniff = () => {    sniffOpen.current = false;
     patchSniff(Object.assign({}, SNIFF_IDLE));
     request('sniffStop');
   };
@@ -572,8 +713,11 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
         <Button size="small" onClick={startSequence} disabled={sniff.busy}>
           ▶ 按顺序校验
         </Button>
+        <Button size="small" onClick={openCodegen} disabled={sniff.busy}>
+          🎬 用 codegen 录制
+        </Button>
         <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-          从第一行开始逐行高亮；进度只在界面里，不写进台账
+          校验：从第一行开始逐行高亮；录制：拉起 Playwright codegen，录完把代码贴回来自动入库
         </span>
         {String(pageUrl || '').trim() ? null : (
           <Tag color="orange" style={{ fontSize: 11 }}>
@@ -718,6 +862,98 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
           onRestart={sniffRestart}
         />
       ) : null}
+
+      {/*
+        codegen 录制：平台只负责「拉起录制器」和「把贴回来的定位器解析成行」，
+        中间那段真实录制交给 Playwright 自己（它比我们做得好）。
+      */}
+      <Modal
+        open={codegen.open}
+        title="用 Playwright codegen 录制元素"
+        width={720}
+        onCancel={() => setCodegen((s) => Object.assign({}, s, { open: false }))}
+        footer={null}
+        destroyOnClose
+      >
+        <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.9, marginBottom: 10 }}>
+          {codegen.lang === 'java'
+            ? '1. 点「启动录制器」→ 用本机 Node 版 Playwright 拉起 npx playwright codegen --target java'
+            : '1. 点「启动录制器」→ 用你配置的 Python 拉起 python -m playwright codegen'}
+          <br />
+          2. 在录制器窗口里正常操作页面（它会实时生成定位器代码）
+          <br />
+          3. 点录制器里的 <b>Copy</b> 复制代码，粘到下面的框里 → 「识别并添加」
+          <br />
+          <span style={{ color: 'var(--text-2)' }}>
+            只会识别定位器，动作（click / fill / press…）会被忽略；中文名称会先落成 el1/el2，你改个名字即可。
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>录制 / 解析语言</span>
+          <Select
+            size="small"
+            style={{ width: 240 }}
+            value={codegen.lang}
+            options={RECORD_LANG_OPTIONS}
+            onChange={(v) => {
+              const lang = v as RecordLang;
+              writeRecordLang(lang);
+              setCodegen((s) => Object.assign({}, s, { lang, err: '', msg: '' }));
+            }}
+          />
+          {codegen.lang === 'java' ? (
+            <span style={{ fontSize: 12, color: '#d46b08' }}>
+              注意：python -m playwright codegen 只能出 Python；Java 必须用 Node 版。
+              平台只探测本机有没有，不会自动安装、也不会联网下载。
+            </span>
+          ) : null}
+        </div>
+
+        {codegen.err ? (
+          <div style={{ marginBottom: 10 }}>
+            <Tag color="red" style={{ fontSize: 11 }}>
+              失败
+            </Tag>
+            <span style={{ fontSize: 12 }}>{codegen.err}</span>
+          </div>
+        ) : null}
+        {codegen.msg ? (
+          <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text-2)' }}>{codegen.msg}</div>
+        ) : null}
+
+        <Space style={{ marginBottom: 10 }} wrap>
+          <Button size="small" type="primary" loading={codegen.busy} onClick={launchCodegen} disabled={!String(pageUrl || '').trim()}>
+            启动录制器
+          </Button>
+          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+            {String(pageUrl || '').trim() ? '目标：' + String(pageUrl).trim() : '这条记录还没填页面地址（url）'}
+          </span>
+        </Space>
+
+        <Input.TextArea
+          rows={10}
+          value={codegen.text}
+          onChange={(ev) => setCodegen((s) => Object.assign({}, s, { text: ev.target.value, err: '' }))}
+          placeholder={
+            codegen.lang === 'java'
+              ? '把 codegen（Java）复制的代码贴在这里，例如：\npage.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("登录")).click();'
+              : '把 codegen 复制的代码贴在这里，例如：\npage.get_by_role("button", name="登 录").click()'
+          }
+          style={{ fontFamily: 'Consolas, Monaco, monospace', fontSize: 12 }}
+        />
+
+        <div style={{ marginTop: 10, textAlign: 'right' }}>
+          <Space>
+            <Button size="small" onClick={() => setCodegen((s) => Object.assign({}, s, { text: '' }))} disabled={!codegen.text}>
+              清空
+            </Button>
+            <Button size="small" type="primary" onClick={importSnippet} disabled={!codegen.text.trim()}>
+              识别并添加
+            </Button>
+          </Space>
+        </div>
+      </Modal>
     </div>
   );
 }

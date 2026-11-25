@@ -144,6 +144,11 @@ contextBridge.exposeInMainWorld('api', {
   sniffHighlight: (payload) => invoke('sniff:highlight', payload),
   sniffReopen: (url) => invoke('sniff:reopen', { url }),
   sniffStop: () => invoke('sniff:stop'),
+  // 拉起 Playwright codegen 录制器；入参 { url, lang }
+  //   lang='python'|'pytest' → 本机 Python 录制器（只能出 Python）
+  //   lang='java'            → Node 版 Playwright（npx playwright codegen --target java），
+  //                            主进程先探测，没装就回 ok:false，不自动安装、不联网
+  sniffCodegen: (payload) => invoke('sniff:codegen', payload),
 
   reportScan: (root) => invoke('report:scan', { root }),
   reportPick: () => invoke('report:pick'),

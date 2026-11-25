@@ -61,6 +61,31 @@ try {
 }
 
 /**
+ * 统一代码块（语法高亮 + 行号）。
+ *
+ * 同样走「受保护的 require」：scripts/test-elements.cjs / test-ui-bricks.cjs /
+ * test-bricks-save.cjs 会用一个白名单 require 桩现场加载本文件（为了测 groupTargets
+ * 之类的纯逻辑），桩表里没登记的模块一律抛错 —— 静态 import 会让那几个套件在
+ * **载入阶段**就崩。真打包时 esbuild 不看 try/catch，照样把组件打进 dist/app.js。
+ * 桩环境拿不到组件时退回原来的裸 <pre>（只影响测试，不影响用户看到的样子）。
+ */
+let CodeBlockLazy: any = null;
+try {
+  CodeBlockLazy = require('../components/CodeBlock').default;
+} catch (e) {
+  CodeBlockLazy = null;
+}
+
+/** 渲染代码预览：有统一组件就用组件（高亮 + 行号），否则退回裸 <pre>（测试桩环境） */
+function renderCodePreview(text: string, lang: string) {
+  if (CodeBlockLazy) {
+    // copyable=false：「复制」按钮在工具条上已经有了，别出两个
+    return <CodeBlockLazy code={text} lang={lang} copyable={false} maxHeight="none" />;
+  }
+  return <pre className="codegen-code mono">{text}</pre>;
+}
+
+/**
  * 接口目标下的两个视图：单个接口（原有「接口测试类骨架」）/ 接口流程（积木）。
  *
  * 只有这两个 REST Assured / pytest 目标有「流程」概念；
@@ -960,7 +985,7 @@ export default function CodegenPage() {
             ) : null}
           </div>
           {code ? (
-            <pre className="codegen-code mono">{code}</pre>
+            renderCodePreview(code, previewLang)
           ) : (
             <div className="codegen-empty">
               <Empty description="选好数据源，点「生成预览」" image={Empty.PRESENTED_IMAGE_SIMPLE} />

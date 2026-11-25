@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Segmented, Button, Tooltip, Tag } from 'antd';
 import { toTable } from '../../shared/jsonTable.js';
+import CodeBlock from './CodeBlock';
 
 type Props = {
   /** 字段名（headers / body / paramTable） */
@@ -29,11 +30,8 @@ function ParamTable({ raw }: { raw: string }) {
   }, [raw]);
 
   if (!rows.length) {
-    return (
-      <div className="code-block">
-        <pre className="mono">{String(raw)}</pre>
-      </div>
-    );
+    // 表化失败（不是合法 JSON 数组）：原样展示，语言自动识别（能当 JSON 就按 JSON 染）
+    return <CodeBlock code={String(raw)} maxHeight={260} />;
   }
 
   const shown = expanded ? rows : rows.slice(0, COLLAPSE_AT);
@@ -104,13 +102,9 @@ export default function JsonTableToggle({ fieldKey, raw }: Props) {
   const [view, setView] = useState<'table' | 'json'>(table.canTable ? 'table' : 'json');
   const [expanded, setExpanded] = useState(false);
 
-  // 不能表格化：直接显示原文
+  // 不能表格化：直接显示原文（自动识别 json / 纯文本）
   if (!table.canTable) {
-    return (
-      <div className="code-block">
-        <pre className="mono">{String(raw)}</pre>
-      </div>
-    );
+    return <CodeBlock code={String(raw)} maxHeight={260} />;
   }
 
   const rows = expanded ? table.rows : table.rows.slice(0, COLLAPSE_AT);
@@ -169,9 +163,12 @@ export default function JsonTableToggle({ fieldKey, raw }: Props) {
           ) : null}
         </>
       ) : (
-        <div className="code-block">
-          <pre className="mono">{String(raw)}</pre>
-        </div>
+        /*
+         * 原文视图：和表格视图共用同一份原文，只是不再折叠（表格视图负责折叠）。
+         * 语言交给自动识别而不是写死 json —— 这个组件也用在 headers 上
+         * （`Key: Value` 每行一条，不是 JSON），写死会让徽标和染色都在说谎。
+         */
+        <CodeBlock code={String(raw)} maxHeight={260} />
       )}
     </div>
   );

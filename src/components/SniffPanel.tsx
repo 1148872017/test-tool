@@ -279,9 +279,11 @@ export default function SniffPanel(props: SniffPanelProps) {
             <Button size="small" icon={<ReloadOutlined />} loading={busy} onClick={props.onReopen}>
               重新打开页面
             </Button>
-            <Button size="small" danger icon={<StopOutlined />} onClick={props.onStopBrowser}>
-              关闭浏览器
-            </Button>
+            <Tooltip title="关掉这次拉起的浏览器进程，并收起这个面板">
+              <Button size="small" danger icon={<StopOutlined />} onClick={props.onStopBrowser}>
+                结束校验
+              </Button>
+            </Tooltip>
           </div>
           {sequential ? (
             <div style={ROW}>

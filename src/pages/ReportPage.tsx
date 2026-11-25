@@ -19,6 +19,7 @@ import { toast } from '../msg';
 import StateEmpty from '../components/states/StateEmpty';
 import StepsList, { AllureStep, StepSummary } from '../components/StepsList';
 import AllureArchive from '../components/AllureArchive';
+import CodeBlock from '../components/CodeBlock';
 import { useAllureHandoff } from '../features/allure/handoff';
 
 type Test = {
@@ -772,23 +773,13 @@ export default function ReportPage({ onNavigate }: { onNavigate?: (route: any) =
                                 <summary style={{ fontSize: 12, color: 'var(--primary)', cursor: 'pointer' }}>
                                   展开 trace
                                 </summary>
-                                <pre
-                                  style={{
-                                    maxHeight: 220,
-                                    overflow: 'auto',
-                                    background: '#fff',
-                                    border: '1px solid #eceef5',
-                                    borderRadius: 6,
-                                    padding: '8px 10px',
-                                    fontSize: 11.5,
-                                    lineHeight: 1.6,
-                                    marginTop: 6,
-                                    whiteSpace: 'pre-wrap',
-                                    wordBreak: 'break-all'
-                                  }}
-                                >
-                                  {t.trace}
-                                </pre>
+                                {/*
+                                  堆栈：统一代码块（行号 + 语法高亮）。语言自动识别 ——
+                                  Java 堆栈会被认成 java，其它语言的堆栈退化成纯文本，不会染色出错。
+                                */}
+                                <div style={{ marginTop: 6 }}>
+                                  <CodeBlock code={t.trace} copyable={false} maxHeight={220} />
+                                </div>
                               </details>
                             ) : null}
                           </div>

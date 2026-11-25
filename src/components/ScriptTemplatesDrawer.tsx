@@ -20,6 +20,7 @@ import {
 } from '../../shared/scriptTemplates';
 import { extractVars } from '../utils';
 import VarFillModal from './VarFillModal';
+import CodeBlock from './CodeBlock';
 
 /** 「填入附加代码」的目标位置：和 shared/jmxgen.js 的 extraElements.type 对齐 */
 export type TemplateInsertKind = 'assertion' | 'pre' | 'post';
@@ -329,7 +330,12 @@ export default function ScriptTemplatesDrawer({
                   注释里标了「↓ 改成你的…」的地方就是要改的
                 </span>
               </div>
-              <pre className="tpl-code mono">{active.code}</pre>
+              {/*
+                Groovy 代码：统一走 CodeBlock（语法高亮 + 行号 + 跟随主题的浅底）。
+                复制/填变量仍然走右上角那颗「复制代码 / 填写并复制」，所以这里 copyable={false}；
+                原来的 .tpl-code 是写死深色底的，切主题时和周围不搭，这次一并收掉。
+              */}
+              <CodeBlock code={active.code} lang="groovy" copyable={false} maxHeight={460} />
 
               {active.gotcha ? (
                 <Alert

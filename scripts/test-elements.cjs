@@ -20,6 +20,8 @@ const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: con
 const skip = (name) => results.push({ name, ok: true, extra: '', skipped: true });
 
 const ROOT = path.join(__dirname, '..');
+/** codegen 片段解析器的真模块（懒加载，editor 的 require 桩里回填） */
+let snippetMod = null;
 const EDITOR = path.join(ROOT, 'src', 'components', 'PageElementsEditor.tsx');
 const CODEGEN_PAGE = path.join(ROOT, 'src', 'pages', 'CodegenPage.tsx');
 
@@ -202,6 +204,14 @@ function loadTsxModule(file, extraStubs) {
       //   ../api        —— 组件里只会在「点按钮 / 面板开着轮询」时调它，这里给空桩（调用会走 request 的兜底）
       //   ./SniffPanel  —— 面板只做展示，桩成占位组件，断言不碰它
       '../api': () => ({ __esModule: true, default: {} }),
+      /**
+       * codegen 片段解析器：**用真模块**（纯函数、无依赖），顺便在这里做它的断言。
+       * 懒加载避免 loadTsxModule 自己在定义前被调用。
+       */
+      '../utils/playwrightSnippet': () => {
+        if (!snippetMod) snippetMod = loadTsxModule(path.join(ROOT, 'src', 'utils', 'playwrightSnippet.ts'));
+        return snippetMod;
+      },
       './SniffPanel': () => ({
         __esModule: true,
         default: (props) => ({ __comp: 'SniffPanel', props: props || {} }),
@@ -500,6 +510,83 @@ function mount(initialValue) {
   check('两个输入框缩到 200 / 180', /addonBefore="页面名"[\s\S]{0,160}width: 200/.test(src) && /addonBefore="路径"[\s\S]{0,160}width: 180/.test(src), 'width');
   check('清空页面下拉时不把 undefined 当 id 查', /if \(!v\) \{[\s\S]{0,120}setPageId\(''\)/.test(src), 'no clear guard');
   check('生成时过滤掉没有名字的元素行', /filledElements/.test(src), 'no filter');
+}
+
+/* ---------- codegen 片段解析（v0.54.1） ---------- */
+{
+  const py = [
+    'page.goto("https://www.runoob.com")',
+    'page.get_by_role("button", name="登 录").click()',
+    'page.get_by_test_id("submit").click()',
+    'page.get_by_label("用户名").fill("admin")',
+    'page.get_by_placeholder("请输入密码").fill("123")',
+    'page.locator("#loginBtn").click()',
+    "page.locator(\"//div[@id='x']\").click()",
+    'page.get_by_text("提交").click()',
+    'page.wait_for_timeout(1000)'
+  ].join('\n');
+  const js = [
+    "await page.goto('https://www.runoob.com');",
+    "await page.getByRole('button', { name: '登录' }).click();",
+    "await page.getByTestId('submit').click();",
+    "await page.locator('#loginBtn').click();"
+  ].join('\n');
+
+  const r1 = snippetMod.parsePlaywrightSnippet(py);
+  check('codegen(Python)：认出 7 条定位器', r1.rows.length === 7, r1.rows.length);
+  check('codegen(Python)：goto / wait 这类动作被忽略', r1.skipped === 2, r1.skipped);
+  check('codegen(Python)：role 存成「角色:可访问名」', r1.rows.some((x) => x.mode === 'role' && x.selector === 'button:登 录'), r1.rows.map((x) => x.selector));
+  check('codegen(Python)：testid / label / placeholder 都认', ['testid', 'label', 'placeholder'].every((m) => r1.rows.some((x) => x.mode === m)), r1.rows.map((x) => x.mode));
+  check('codegen(Python)：// 开头识别成 xpath', r1.rows.some((x) => x.mode === 'xpath' && x.selector.indexOf('//div') === 0));
+  check('codegen(Python)：#id 识别成 css', r1.rows.some((x) => x.mode === 'css' && x.selector === '#loginBtn'));
+  check('codegen(Python)：产出的 name 都是合法标识符', r1.rows.every((x) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(x.name)), r1.rows.map((x) => x.name));
+
+  const r2 = snippetMod.parsePlaywrightSnippet(js);
+  check('codegen(JS)：认出 3 条定位器（goto 忽略）', r2.rows.length === 3, r2.rows.length);
+  check('codegen(JS)：getByRole 的 { name } 也能取出来', r2.rows.some((x) => x.mode === 'role' && x.selector === 'button:登录'));
+
+  /**
+   * Java 是 v0.55 新加的支持：codegen --target java 的产物是
+   *   page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("登录"))
+   *   page.getByTestId("submit") / page.locator("#loginBtn")
+   * 断言行（assertThat(...)）里也会出现定位器，同样要认出来。
+   */
+  const java = [
+    'page.navigate("https://www.runoob.com");',
+    'page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("登录")).click();',
+    'page.getByTestId("submit").click();',
+    'page.locator("#loginBtn").click();',
+    'assertThat(page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("提交"))).isVisible();',
+    'assertThat(page.getByLabel("用户名")).hasValue("admin");'
+  ].join('\n');
+  const r3 = snippetMod.parsePlaywrightSnippet(java);
+  check('codegen(Java)：认出 5 条定位器（navigate 被忽略）', r3.rows.length === 5, r3.rows.length);
+  check('codegen(Java)：navigate 不计入定位器', r3.skipped === 1, r3.skipped);
+  check(
+    'codegen(Java)：AriaRole.BUTTON + setName 拼成「button:登录」',
+    r3.rows.some((x) => x.mode === 'role' && x.selector === 'button:登录'),
+    r3.rows.map((x) => x.mode + '|' + x.selector)
+  );
+  check(
+    'codegen(Java)：断言行里的 getByRole 也能认出来',
+    r3.rows.some((x) => x.mode === 'role' && x.selector === 'button:提交'),
+    r3.rows.map((x) => x.selector)
+  );
+  check(
+    'codegen(Java)：getByTestId / locator(#id) / getByLabel 都认',
+    ['testid', 'css', 'label'].every((m) => r3.rows.some((x) => x.mode === m)),
+    r3.rows.map((x) => x.mode)
+  );
+  check('codegen(Java)：产出的 name 也是合法标识符', r3.rows.every((x) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(x.name)), r3.rows.map((x) => x.name));
+
+  const dup = snippetMod.parsePlaywrightSnippet(py + '\n' + 'page.get_by_test_id("submit").click()');
+  check('codegen：同一定位器重复粘贴会被去重', dup.duplicates === 1 && dup.rows.length === 7, [dup.duplicates, dup.rows.length]);
+
+  const empty = snippetMod.parsePlaywrightSnippet('page.goto("https://x.com")\npage.keyboard.press("Enter")');
+  check('codegen：一段没有任何定位器时返回空且不抛错', empty.rows.length === 0 && empty.skipped === 2, empty);
+
+  check('codegen：中文描述兜底成 elN（可当变量名）', snippetMod.toIdentifier('登录', 3) === 'el3', snippetMod.toIdentifier('登录', 3));
+  check('codegen：英文短语转驼峰', snippetMod.toIdentifier('login button', 1) === 'loginButton', snippetMod.toIdentifier('login button', 1));
 }
 
 /* ---------- 汇总 ---------- */

@@ -10,8 +10,8 @@
 
 | 项 | 值 |
 |---|---|
-| 当前版本 | **v0.54.0** |
-| 测试基线 | **63 个套件 / 4619 项**（unit 59 + env 4） |
+| 当前版本 | **v0.55.0** |
+| 测试基线 | **64 个套件 / 4834 项**（unit 60 + env 4） |
 | 运行环境 | Windows 10/11（x64），安装包约 120 MB |
 | 数据位置 | `%APPDATA%\测试工作台\` |
 
@@ -124,6 +124,9 @@
 | **JSON 工具** | 格式化 / 压缩 / 转义 / 校验 | 否 |
 | **工具箱** | Base64 / 时间戳 / 哈希 / UUID | 否 |
 
+> 平台里所有代码块都带**行号 + 语法高亮**（java / python / json / xml / sql / bash / groovy 自动识别），
+> 行号不参与复制——复制出去的就是纯代码。
+
 ---
 
 ## 三、资产库：存你自己的东西
@@ -169,6 +172,8 @@ Playwright 定位器台账——表格里一行一个元素，生成 POM 时直�
 
 **9 种定位方式**：CSS、XPath、Role、Label、Placeholder、Text、AltText、Title、TestId。
 
+**项目词表**：`新增` 旁的 `⋯ → 管理项目…`，小窗里增删改只影响「所属项目」这一套（v0.55 从设置页搬过来）。
+
 **注意**
 
 > - 选 Role 时要填 ARIA 角色（button / textbox / link…），生成出来是
@@ -182,7 +187,7 @@ Playwright 定位器台账——表格里一行一个元素，生成 POM 时直�
 
 **怎么用**
 
-1. 页面元素编辑器里，某一行的右端点 **▶ 校验**
+1. 页面元素编辑器里，某一行的右端点 **▶ 校验**（**查看详情页**的元素行末尾也有一个，只读、不用进编辑）
 2. 平台用**你本机的 Edge**（没装就用 Chrome）打开这条记录的 `url`
 3. 页面上的目标元素被框出来（会滚动到可见位置）
 4. 你在浏览器里**自己点它、看请求、看跳转、看弹窗** —— 平台不替你做判断
@@ -208,7 +213,36 @@ Playwright 定位器台账——表格里一行一个元素，生成 POM 时直�
 > - **第一次要在弹出的浏览器里登录一次**：用的是独立 profile（`%APPDATA%\测试工作台\sniff-profile`），之后 cookie 留着，不用反复登。
 > - **浏览器只会收到“打开这个地址 + 框住这个元素”**：不读 cookie、不读 storage、不读页面内容。
 > - 平台起的浏览器会在退出应用时一起关掉；你自己关掉它也行，面板会变成「会话已结束，可重新开始」。
+> - 面板上的「结束校验」= 关掉浏览器进程 + 收起面板（一次性收干净）。
 > - 只在**安装版**里可用：浏览器预览模式（`build -- --preview`）没有这套能力，会直接说明。
+
+#### 用 Playwright codegen 录制（录入交给它，平台负责入库）
+
+如果你更习惯用 Playwright 自带的录制器，那条路径也接好了。
+
+**怎么用**
+
+1. 页面元素编辑器顶栏点 **🎬 用 codegen 录制**
+2. 点「启动录制器」→ 平台用**「设置 → 开发环境」里配的那个 Python** 执行
+   `python -m playwright codegen <记录的 url>`
+3. 在录制器窗口里正常操作页面，它会实时生成定位器代码
+4. 点录制器里的 **Copy**，把代码粘回平台的小窗 → **识别并添加**
+
+**它只认定位器**：`get_by_role / get_by_test_id / get_by_label / …` 会被解析成台账行，
+`click / fill / press` 这类动作忽略；同一行重复粘贴会去重。
+
+**注意**
+
+> - 需要那个 Python 里装了 Playwright（`pip install playwright`）。没装时点「启动录制器」会直接告诉你，
+>   不会出现黑窗口一闪而过。
+> - `python -m playwright codegen` 是 Playwright Python 自带的，**不需要联网下载**；平台不自动走 `npx`。
+> - **想录 Java 代码**：Python 的录制器只出 Python（官方没有语言参数）。切到「⋯ → 录制 / 解析语言 → Java」后，
+>   平台会先探测本机有没有 Node 版 Playwright（`npx playwright --version`），有才用
+>   `npx playwright codegen --target java`，**没有就明确告诉你，不会自动安装、也不会联网**。
+> - 「录制 / 解析语言」也决定**粘贴解析**按哪种语法走：Python 和 Java 的 codegen 写法完全不同
+>   （Java 是 `getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("登录"))`）。
+> - 中文文本会先落成 `el1 / el2` 这种占位名（生成的 POM 要合法标识符），你按需改成 `loginBtn` 这类名字。
+> - 录制器和「实时校验」是两条独立的路：前者用来**录入**，后者用来**点验**。
 
 ### 接口记录
 
@@ -224,6 +258,8 @@ Playwright 定位器台账——表格里一行一个元素，生成 POM 时直�
 
 > - **按钮叫「同步」，实际是「导入导出文件」**：Apifox 那边要你手动导出 `openapi.json`（或 yaml），
 >   平台只读文件、不联网、不调 Apifox 接口。所以文件不新，镜像就不新。
+> - **模块词表在「新增」旁的 `⋯` 里维护**：`⋯ → 管理模块…` 打开一个小窗，增删改都只影响模块这一套
+>   （原来在设置页，v0.55 搬到这里，贴着用到它的地方）。
 > - Swagger 2.0 会被拒并提示「请重新导出为 OpenAPI 3」。
 > - `headers` / `body` 支持「表格 / JSON」两种视图切换，超 5 行自动折叠。
 > - 重复导入同一份文件是安全的：接口不会翻倍，只会更新变化了的字段并列出变更。
@@ -810,7 +846,7 @@ v0.51 起的行为：解不开的字段不显示成空串，而是提示「本�
 | 前端 | React 18.3 + antd 5.29 + TypeScript（esbuild 转译，不跑 tsc） |
 | 数据 | sql.js（WASM SQLite）→ `data.db`，整库重写 + tmp/fsync/rename |
 | 打包 | electron-builder（NSIS） |
-| 测试 | 自研轻量脚本，**63 套件 / 4619 项**，分 unit / env 两档 |
+| 测试 | 自研轻量脚本，**64 套件 / 4834 项**，分 unit / env 两档 |
 
 ### 常用命令
 
@@ -821,9 +857,9 @@ npm install
 node scripts/build.mjs        # 生产构建
 node scripts/build.mjs -- --preview   # 预览构建（含 mock，浏览器可开）
 
-npm test                      # unit 档 59 套件 / 4476 项（自检先跑）
+npm test                      # unit 档 60 套件 / 4691 项（自检先跑）
 npm run test:env              # env 档 4 套件 / 127 项（需设 4 个目录变量）
-npm run test:all              # 全量 63 套件 / 4619 项
+npm run test:all              # 全量 64 套件 / 4834 项
 npm run test:gui              # 只跑 GUI 冒烟（19 路由 + 5 类交互，约 26 秒）
 npm run check                 # 只跑提交前自检
 npm run dist:installer        # 打 NSIS 安装包

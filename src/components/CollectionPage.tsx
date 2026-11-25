@@ -19,13 +19,17 @@ import {
   ImportOutlined,
   FileTextOutlined,
   MenuFoldOutlined,
-  MenuUnfoldOutlined
+  MenuUnfoldOutlined,
+  SettingOutlined,
+  CheckOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
 import { buildCurl, fmtTime, recordToText } from '../utils';
 import RecordForm from './RecordForm';
 import RecordDetail from './RecordDetail';
+import OptionEditor from './OptionEditor';
+import { RECORD_LANG_LABEL, RECORD_LANG_OPTIONS, readRecordLang, writeRecordLang, type RecordLang } from './PageElementsEditor';
 import VarFillModal from './VarFillModal';
 import SyncResultModal from './SyncResultModal';
 import ChangeImpactModal from './ChangeImpactModal';
@@ -129,6 +133,12 @@ const HEADER_ACTION_META: Record<HeaderAction, { label: string; icon: React.Reac
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
+/** 「⋯」里的两套选项集管理入口（接口记录 → 模块，页面元素 → 项目） */
+const OPTION_MANAGE_LABEL: Record<'module' | 'project', string> = {
+  module: '管理模块…',
+  project: '管理项目…'
+};
+
 /** 时间戳 → HH:mm（状态栏「上次同步 12:03」） */
 function clockText(ts: number): string {
   if (!ts) return '';
@@ -183,9 +193,26 @@ export default function CollectionPage({
   const [impactOpen, setImpactOpen] = useState(false);
   /** 左侧标签栏可折叠（窄窗口时把 176px 让给表格） */
   const [asideOpen, setAsideOpen] = useState(true);
+  /** 「⋯ → 管理模块… / 管理项目…」弹窗（只嵌 OptionEditor 的单套件模式） */
+  const [manageKind, setManageKind] = useState<'module' | 'project' | ''>('');
+  /** 「⋯ → 录制 / 解析语言」当前选择（下次打开 codegen 录制小窗时生效） */
+  const [recordLang, setRecordLang] = useState<RecordLang>(() => readRecordLang());
   const searchRef = useRef<InputRef>(null);
 
   const caps = useMemo(() => capabilitiesOf(conf), [conf]);
+
+  /**
+   * 本页有没有「模块 / 项目」这一套选项集？
+   *
+   * 只看字段声明，不写 `conf.key === 'apis'`：接口记录挂 module、页面元素挂 project，
+   * 以后别的集合也要用同一套管理入口时，这里不用改。
+   */
+  const optionManageKind = useMemo<'module' | 'project' | ''>(() => {
+    const hit = (conf.fields || []).find(
+      (f: any) => f && f.type === 'selectOrCreate' && (f.optionsKey === 'module' || f.optionsKey === 'project')
+    );
+    return hit ? (hit.optionsKey as 'module' | 'project') : '';
+  }, [conf]);
 
   /**
    * 关联报告：字段名 + 「什么条件下才显示」都由 capabilities.linkedReport 决定。
@@ -609,6 +636,28 @@ export default function CollectionPage({
     else if (key === 'impact') setImpactOpen(true);
   };
 
+  /** 「⋯」统一分发：管理入口 / 录制语言不混进集合动作 */
+  const runHeaderMenuClick = ({ key }: { key: string }) => {
+    if (key.indexOf('manage:') === 0) {
+      setManageKind(key.slice('manage:'.length) as 'module' | 'project');
+      return;
+    }
+    if (key.indexOf('codegen:') === 0) {
+      const next = key.slice('codegen:'.length) as RecordLang;
+      writeRecordLang(next);
+      setRecordLang(next);
+      toast('录制语言已切换：' + RECORD_LANG_LABEL[next] + '（下次打开「用 codegen 录制」生效）');
+      return;
+    }
+    runHeaderAction(key);
+  };
+
+  /** 关掉管理弹窗后刷新本页的选项缓存（筛选条 / 下拉可能刚被改过） */
+  const closeManage = () => {
+    setManageKind('');
+    loadOptions(true).then(setOpts).catch(() => {});
+  };
+
   /** 菜单项说明：保留原来 hover 提示里的「导什么 / 什么格式 / 会不会覆盖」 */
   const headerActionDesc = (action: HeaderAction): React.ReactNode => {
     if (action === 'importData') {
@@ -660,7 +709,13 @@ export default function CollectionPage({
     return <div>重新读取列表</div>;
   };
 
-  const headerMenuItems = caps.headerActions
+  /**
+   * 「⋯」菜单 = 原有集合动作 + 管理模块/项目 + 录制语言。
+   *
+   * 为什么都塞进同一个「⋯」：新增按钮旁只放得下一个菜单按钮（两个一样的 ⋯ 按钮
+   * 用户分不清点哪个）；管理入口和录制语言都属于「不常用但要知道在哪」的动作。
+   */
+  const headerMenuItems: any[] = caps.headerActions
     .filter((action) => action !== 'impact' || !!(impact && impact.changed && impact.changed.length))
     .map((action) => {
       const meta = HEADER_ACTION_META[action];
@@ -680,7 +735,56 @@ export default function CollectionPage({
           </div>
         )
       };
-    });
+    })
+    .concat(
+      optionManageKind
+        ? ([
+            { type: 'divider' },
+            {
+              key: 'manage:' + optionManageKind,
+              icon: <SettingOutlined />,
+              label: (
+                <div className="pg-menu-item">
+                  <div className="pg-menu-title">{OPTION_MANAGE_LABEL[optionManageKind]}</div>
+                  <div className="pg-menu-help">
+                    {optionManageKind === 'module'
+                      ? '维护接口记录里「模块 / 目录」的候选：只改下拉，不动已有记录的值'
+                      : '维护页面元素里「所属项目」的候选：只改下拉，不动已有记录的值'}
+                  </div>
+                </div>
+              )
+            }
+          ] as any[])
+        : []
+    )
+    .concat(
+      // 录制语言只在「接口记录 / 页面元素」这类有模块管理的页面出现（其余集合没有 codegen 入口）
+      optionManageKind
+        ? ([
+            { type: 'divider' },
+            {
+              type: 'group',
+              label: '录制 / 解析语言',
+              children: RECORD_LANG_OPTIONS.map((o) => ({
+                key: 'codegen:' + o.value,
+                icon: recordLang === o.value ? <CheckOutlined /> : null,
+                label: (
+                  <div className="pg-menu-item">
+                    <div className="pg-menu-title">{o.label}</div>
+                    <div className="pg-menu-help">
+                      {o.value === 'java'
+                        ? 'Java 代码必须用 Node 版 Playwright 录制（npx playwright codegen --target java）；本机没装时明确提示，不自动安装、不联网'
+                        : o.value === 'pytest'
+                          ? '仍是 Python 录制器；贴回来的代码按 pytest 风格继续用'
+                          : '用你配置的 Python 拉起 python -m playwright codegen（官方只能出 Python）'}
+                    </div>
+                  </div>
+                )
+              }))
+            }
+          ] as any[])
+        : []
+    );
 
   const copy = async (text: string, secret = false, label = '已复制') => {
     if (!text) {
@@ -1008,7 +1112,7 @@ export default function CollectionPage({
           <Dropdown
             trigger={['click']}
             placement="bottomRight"
-            menu={{ items: headerMenuItems, onClick: ({ key }) => runHeaderAction(key) }}
+            menu={{ items: headerMenuItems, onClick: runHeaderMenuClick }}
           >
             <Button icon={<MoreOutlined />} aria-label="更多操作" title="更多操作" />
           </Dropdown>
@@ -1276,6 +1380,23 @@ export default function CollectionPage({
       ) : null}
 
       <CurlImportModal open={curlOpen} onClose={() => setCurlOpen(false)} onImport={onCurlImport} />
+
+      {/* 「⋯ → 管理模块… / 管理项目…」：只嵌那一套选项集，保存也只保存那一套 */}
+      <Modal
+        open={!!manageKind}
+        title={manageKind === 'module' ? '管理接口模块' : '管理页面项目'}
+        footer={null}
+        width={560}
+        destroyOnClose
+        onCancel={closeManage}
+      >
+        <div className="muted" style={{ fontSize: 12, marginBottom: 10, lineHeight: 1.8 }}>
+          {manageKind === 'module'
+            ? '这里维护接口记录「模块 / 目录」的候选：保存后新增 / 编辑接口时立即可选。删除或改名只改候选，不会改已有记录里的值。'
+            : '这里维护页面元素「所属项目」的候选：保存后新增 / 编辑页面时立即可选。删除或改名只改候选，不会改已有记录里的值。'}
+        </div>
+        {manageKind ? <OptionEditor only={manageKind} /> : null}
+      </Modal>
 
       {/* 一键启动：多个账号且没设默认时，选一个 */}
       <Modal

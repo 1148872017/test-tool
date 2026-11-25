@@ -38,6 +38,7 @@ const unit = [
   'test-brand.cjs',
   'test-bricks-save.cjs',
   'test-bundle.cjs',
+  'test-code-highlight.cjs',
   'test-codegen.cjs',
   'test-codelab.cjs',
   'test-codescan.cjs',

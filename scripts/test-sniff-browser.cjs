@@ -226,7 +226,12 @@ const BOX_PROBE = `(function () {
     check('message 里带上了元素名（事实文案）', String(started.message).indexOf('登录') >= 0, started.message);
 
     const port = session.debugPort();
-    check('调试端口落在 10000-60000 且真的开着', bs.isPortInRange(port) && port > 0, port);
+    /**
+     * v0.54.1 起不再由平台挑端口：传 --remote-debugging-port=0 让浏览器自己挑，
+     * 平台从 profile 里的 DevToolsActivePort 读回来（避开「先 bind 再交给浏览器」的竞态）。
+     * 所以这里不断言「落在 10000-60000」，只要求是个合法端口且真能连上。
+     */
+    check('调试端口是个合法端口且真能连上', Number.isInteger(port) && port > 0 && port < 65536, port);
     check('调试端口只绑 127.0.0.1（用 127.0.0.1 能连）', await (async () => {
       try {
         const r = await fetch('http://127.0.0.1:' + port + '/json/version');

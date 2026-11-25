@@ -30,8 +30,17 @@ type UsageProbe = {
  *
  * 接口模块和页面项目是「字符串选项集」：下拉候选 + 手输新值都算数，
  * 这里管的是候选列表本身 —— 删除 / 改名都不会改已有记录。
+ *
+ * v0.55 起支持 `only`：接口记录页 / 页面元素页的「⋯ → 管理模块 / 管理项目」
+ * 只嵌**一套**，所以这里必须能只渲染那一套、只保存那一套（设置页仍用完整版）。
+ * 只在前端控制展示，shared/collections.js 的选项集契约一个字不动。
  */
-export default function OptionEditor() {
+type Props = {
+  /** 只渲染并只保存这一套（不传 = 设置页的完整版：环境 / 角色 / 标签） */
+  only?: 'module' | 'project';
+};
+
+export default function OptionEditor({ only }: Props = {}) {
   const [env, setEnv] = useState<EnvItem[]>([]);
   const [role, setRole] = useState<string[]>([]);
   const [tags, setTags] = useState<string[]>([]);
@@ -211,6 +220,9 @@ export default function OptionEditor() {
 
   return (
     <div>
+      {/* 设置页的完整版：环境 / 角色 / 标签（only 模式下整块不渲染） */}
+      {only ? null : (
+        <>
       {/* 环境 */}
       <div className="opt-group">
         <div className="opt-group-head">
@@ -358,8 +370,11 @@ export default function OptionEditor() {
         </div>
       </div>
 
-      {/* 接口模块：接口记录里的「模块 / 目录」 */}
-      {renderStringGroup({
+        </>
+      )}
+
+      {/* 接口模块：接口记录里的「模块 / 目录」（只在 only='module' 时单独渲染） */}
+      {only === 'module' ? renderStringGroup({
         key: 'module',
         title: '接口模块',
         list: modules,
@@ -374,10 +389,10 @@ export default function OptionEditor() {
           // 用户最怕「删了选项 = 清空字段」：明确说记录不会被改
           text: (n: number) => `有 ${n} 条接口用了这个模块，删除选项不会改它们的值`
         }
-      })}
+      }) : null}
 
-      {/* 页面项目：页面元素里的「所属项目」 */}
-      {renderStringGroup({
+      {/* 页面项目：页面元素里的「所属项目」（只在 only='project' 时单独渲染） */}
+      {only === 'project' ? renderStringGroup({
         key: 'project',
         title: '页面项目',
         list: projects,
@@ -391,7 +406,7 @@ export default function OptionEditor() {
           field: 'project',
           text: (n: number) => `有 ${n} 个页面用了这个项目，删除选项不会改它们的值`
         }
-      })}
+      }) : null}
     </div>
   );
 }

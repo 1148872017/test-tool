@@ -206,6 +206,60 @@ check(
 );
 
 /* ------------------------------------------------------------------ *
+ * 七-B、v0.55：模块 / 项目搬进功能页（OptionEditor 单套件模式）
+ *
+ * 真踩过的回归：把两套的显示条件写成 `only === 'project' ? null : …`，
+ * 于是「不传 only」的设置页反而把两套都渲染出来了。这里把条件钉死。
+ * ------------------------------------------------------------------ */
+check('OptionEditor 支持 only: module | project 参数', /only\?:\s*'module'\s*\|\s*'project'/.test(editorSrc), 'no only prop');
+check(
+  'only 模式只渲染对应的那一套（不是「不是另一个就渲染」）',
+  /only === 'module' \? renderStringGroup\(\{/.test(editorSrc) && /only === 'project' \? renderStringGroup\(\{/.test(editorSrc),
+  'only gating wrong'
+);
+check(
+  '默认模式（设置页）只渲染环境 / 角色 / 标签，不再出模块 / 项目',
+  /only \? null : \(/.test(editorSrc) && !/only === 'project' \? null/.test(editorSrc) && !/only === 'module' \? null/.test(editorSrc),
+  'default mode still renders module/project'
+);
+
+const settingsSrc = readSrc('src/pages/SettingsPage.tsx');
+check(
+  '设置页文案不再声称模块 / 项目在这里维护',
+  !/「环境」「角色 \/ 权限」「标签」「接口模块」「页面项目」/.test(settingsSrc),
+  'old settings copy still present'
+);
+check(
+  '设置页文案指向各自功能页的 ⋯ → 管理模块 / 管理项目',
+  /已经搬回各自的功能页/.test(settingsSrc) && /管理模块…/.test(settingsSrc) && /管理项目…/.test(settingsSrc),
+  'no pointer to feature pages'
+);
+
+const collectionSrc = readSrc('src/components/CollectionPage.tsx');
+/** 去掉注释再做「不写死集合 key」的守卫：注释里正举着反例 */
+const collectionCode = collectionSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+check(
+  '集合页 ⋯ 菜单有「管理模块…」和「管理项目…」',
+  /module: '管理模块…'/.test(collectionSrc) && /project: '管理项目…'/.test(collectionSrc),
+  'no manage menu labels'
+);
+check(
+  '管理弹窗只嵌 OptionEditor 的那一套（only={manageKind}）',
+  /<OptionEditor only=\{manageKind\}/.test(collectionSrc),
+  'modal not using only mode'
+);
+check(
+  '管理入口按字段声明出现（不写死 conf.key === apis/pages）',
+  /f\.optionsKey === 'module' \|\| f\.optionsKey === 'project'/.test(collectionCode) && !/conf\.key === 'apis'/.test(collectionCode),
+  'manage entry hardcoded by collection key'
+);
+check(
+  '「⋯」菜单里有录制 / 解析语言三项（Python / pytest / Java）',
+  /RECORD_LANG_OPTIONS\.map/.test(collectionSrc) && /codegen:/.test(collectionSrc),
+  'no language menu'
+);
+
+/* ------------------------------------------------------------------ *
  * 八、空值显示：列表 / 详情都是占位符
  * ------------------------------------------------------------------ */
 const detailSrc = readSrc('src/components/RecordDetail.tsx');

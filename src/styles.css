@@ -11,6 +11,7 @@
  *   08 设置页 ..................... 目录层级 / 选项配置 / 外观
  *   09 状态组件 ................... .state-* / .loading-*
  *   10 antd 局部覆盖 .............. 只在 .panel / .pg-surface 内生效
+ *   11 代码块（CodeBlock） ........ .code-block-* / token 配色
  *
  * 约定：
  *   - 颜色一律走 :root 变量，不在组件里写死十六进制；
@@ -1796,7 +1797,6 @@ body {
 .tpl-when, .tpl-where { display: flex; gap: 10px; font-size: 12.5px; margin-bottom: 10px; align-items: baseline; }
 .tpl-when .muted, .tpl-where .muted { flex: 0 0 84px; }
 .tpl-code-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 14px 0 6px; font-size: 12.5px; color: #3c4256; }
-.tpl-code { background: #1e2233; color: #d8dee9; padding: 14px 16px; border-radius: 9px; font-size: 12px; line-height: 1.7; overflow: auto; max-height: 460px; white-space: pre; margin: 0; }
 .tpl-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .tpl-table th { text-align: left; color: var(--text-3); font-weight: 500; padding: 7px 8px; border-bottom: 1px solid #eef0f6; }
 .tpl-table td { padding: 8px; border-bottom: 1px solid #f4f5fa; vertical-align: top; }
@@ -3405,17 +3405,7 @@ body {
   font-weight: 600;
   color: #4a5165;
 }
-.scriptgen-code {
-  flex: 1;
-  margin: 0;
-  padding: 12px 14px;
-  overflow: auto;
-  font-size: 12px;
-  line-height: 1.7;
-  background: #fff;
-  white-space: pre;
-  tab-size: 2;
-}
+/* SQL 预览原来是 <pre class="scriptgen-code">，现在走统一的 CodeBlock（见第 11 节） */
 /* ===== 测试数据：多字段表格 ===== */
 .data-multi-table {
   width: 100%;
@@ -3591,3 +3581,194 @@ body {
   background: #f7f8fc;
   border: 1px solid var(--line-soft);
 }
+
+/* ================= 11 代码块（CodeBlock 统一组件） ================= */
+/*
+ * 全站代码展示只走 src/components/CodeBlock.tsx，类名统一 .code-block 前缀：
+ *
+ *   .code-block.is-hl        根（is-hl 是「高亮版」标记）
+ *   .code-block-bar          头栏（标题 / 语言徽标 / 复制）
+ *   .code-block-body         滚动区（高度由组件的 maxHeight / 父容器决定）
+ *   .code-block-inner        行号槽 + 代码列（两列同一行高，靠 flex 对齐）
+ *   .code-block-gutter       行号槽（右对齐、灰色、不参与复制、横向滚动时 sticky）
+ *   .code-block-code         代码列（真换行 + white-space: pre，不折行）
+ *   .code-block-tok.is-*     token 配色
+ *
+ * 为什么根上要带 is-hl：接口镜像（RecordDetail）里还有一个裸 .code-block
+ * （只有 max-height / padding 的老样式），两者共用类名但结构不同 ——
+ * 用 is-hl 把新样式限定在本组件内，不去动别处的只读原文块。
+ *
+ * 配色约定：
+ *   - 中性色（底、边框、行号）一律取变量，5 套主题切换时整体跟着走；
+ *   - keyword 直接吃 --primary-text，所以换主题时「关键字」跟着换色，这是刻意的；
+ *   - 其余语法色是「浅底深字」一套，全部压在 --panel（白）上验过 ≥4.5:1，别随手调浅；
+ *   - 背景不写深色：原来模板抽屉的 .tpl-code 写死 #1e2233，在浅色界面里像块补丁。
+ */
+.code-block.is-hl {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* 覆盖旧 .code-block 的 max-height / padding：高度交给组件，行号要贴着边 */
+  max-height: none;
+  padding: 0;
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+
+.code-block-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px 3px 10px;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12px;
+  color: var(--muted);
+}
+.code-block-bar-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 600;
+}
+.code-block-bar-lang {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--primary-soft);
+  color: var(--primary-text);
+  font-size: 11px;
+  line-height: 17px;
+}
+.code-block-copy {
+  margin-left: auto;
+  height: 22px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.code-block-copy:hover {
+  color: var(--primary-text) !important;
+}
+
+.code-block-body {
+  flex: 1;
+  min-height: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 6px 0;
+  color: var(--text);
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Microsoft YaHei', monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  tab-size: 2;
+}
+/*
+ * 行号槽 + 一段带真换行的代码文本。
+ * 不做「一行一个 div」是刻意的：块级 div 之间的空行在拖选复制时会被浏览器吞掉
+ * （"aaa / 空行 / ccc" 复制出来是 "aaa\r\nccc"），粘回 IDE 就是两行被合上了。
+ * 现在文本里的 \n 是真实字符，空行就是连续两个 \n，复制天然无损。
+ */
+.code-block-inner {
+  display: flex;
+  align-items: flex-start;
+  min-width: max-content;
+  padding-right: 12px;
+}
+.code-block-gutter {
+  /* 横向滚动时行号贴在左边，不被代码盖走 */
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: 0 0 auto;
+  min-width: 3.2em;
+  padding: 0 8px 0 10px;
+  text-align: right;
+  color: var(--text-3);
+  background: var(--panel);
+  /* 行号不进选区：拖选复制出来的只有代码 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.code-block-ln {
+  /* 和 .code-block-code 的行高一致，行号才会跟代码严格对齐 */
+  line-height: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.code-block-code {
+  /* code 默认是 monospace + 略小字号，这里统一回代码块的行高/字号 */
+  flex: 0 0 auto;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  /* 不折行：折行会让一行源码变成两行视觉行，行号就对不上了 */
+  white-space: pre;
+}
+.code-block-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.code-block-more {
+  padding: 1px 8px;
+  text-align: right;
+  background: var(--bg-subtle);
+  border-top: 1px solid var(--line-soft);
+}
+.code-block-more-hint {
+  margin-right: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---- token 配色（浅底深字；换主题时 keyword 跟着 accent 走） ---- */
+.code-block-tok.is-keyword {
+  color: var(--primary-text);
+  font-weight: 600;
+}
+.code-block-tok.is-string {
+  color: #116329;
+}
+.code-block-tok.is-comment {
+  color: #6e7781;
+  font-style: italic;
+}
+.code-block-tok.is-number {
+  color: #0550ae;
+}
+.code-block-tok.is-func {
+  color: #8250df;
+}
+.code-block-tok.is-tag {
+  color: #0b5f8a;
+}
+.code-block-tok.is-attr {
+  color: #953800;
+}
+.code-block-tok.is-punct {
+  color: #57606a;
+}
+.code-block-tok.is-plain {
+  color: inherit;
+}
+
+/* ---- 页面里让代码块撑满面板（滚动交给 .code-block-body） ----
+ * 代码生成 / 脚本生成的右侧预览面板都是「头栏 + 撑满 + 内部滚动」的 flex 列，
+ * 以前靠 <pre class="codegen-code"> 的 flex:1 撑；换成组件后由这两条接上。
+ */
+.codegen-output .code-block.is-hl,
+.scriptgen-output .code-block.is-hl {
+  flex: 1;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+}
+.codegen-output .code-block.is-hl .code-block-body,
+.scriptgen-output .code-block.is-hl .code-block-body {
+  max-height: none;
+}
+

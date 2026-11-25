@@ -53,7 +53,9 @@ function loadTsxModule(file, extraStubs) {
        * 不补这两行会直接抛「测试没有为这个依赖准备桩」。
        */
       '../api': () => ({ __esModule: true, default: { sniffStatus: async () => ({ ok: true, running: false }), sniffStart: async () => ({ ok: false }), sniffHighlight: async () => ({ ok: false }), sniffReopen: async () => ({ ok: false }), sniffStop: async () => ({ ok: true }) } }),
-      './SniffPanel': () => ({ __esModule: true, default: () => null, describeResult: () => ({ lines: [], tone: 'muted' }), phaseLabel: () => '', browserLabel: () => '' })
+      './SniffPanel': () => ({ __esModule: true, default: () => null, describeResult: () => ({ lines: [], tone: 'muted' }), phaseLabel: () => '', browserLabel: () => '' }),
+      // v0.54.1：编辑器多了「codegen 录制」入口（用不到解析器，给最小桩）
+      '../utils/playwrightSnippet': () => ({ __esModule: true, parsePlaywrightSnippet: () => ({ rows: [], skipped: 0, duplicates: 0 }), toIdentifier: () => 'el1' })
     },
     extraStubs || {}
   );

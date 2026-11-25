@@ -1903,6 +1903,22 @@ const isTrashed = (id: string) => {
       sniffRunning = false;
       return Object.assign(sniffBase(), { running: false, message: '浏览器已关闭' });
     },
+    /**
+     * 拉起 Playwright codegen：预览模式没有 Python / Node 子进程，如实说不行。
+     * （打开 ?sniff=... 调试开关时给一个假的成功回执，好把弹窗交互看全。）
+     */
+    sniffCodegen: async (payload?: any) => {
+      const lang = String((payload && payload.lang) || 'python');
+      if (!sniffDebug()) {
+        return { ok: false, lang, message: '浏览器预览模式不能拉起 Playwright codegen，请在安装版里使用' };
+      }
+      return {
+        ok: true,
+        pid: 0,
+        lang,
+        message: lang === 'java' ? 'Playwright codegen（Java · Node 版）已启动（预览模拟）' : 'Playwright codegen（Python）已启动（预览模拟）'
+      };
+    },
 
     reportScan: async () => ({
       root: 'D:\\demo\\jmx\\report（预览模式模拟）',

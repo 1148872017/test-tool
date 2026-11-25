@@ -38,6 +38,7 @@
  */
 
 const sessionModule = require('../sniffer/browser-session');
+const { spawn, spawnSync } = require('child_process');
 
 /** process exit 钩子只挂一次（多次 require/register 不重复挂） */
 let exitHooked = false;
@@ -47,8 +48,50 @@ const liveSessions = [];
 /** 非法 url 的统一回执文案 */
 const URL_REJECT = '只支持 http:// 或 https:// 开头的链接';
 
+/** Java 录制走 npx（cmd 子进程），地址里不能带会破坏命令行的字符 */
+const JAVA_URL_REJECT = '这个页面地址里有不能安全传给命令行的字符（双引号 / 百分号 / 换行）。请先手动运行 npx playwright codegen --target java 后再把代码贴回来';
+
+/**
+ * 探测本机有没有 Node 版 Playwright（Java 录制必须用它）。
+ *
+ * **绝不联网、绝不自动安装**：
+ *   · npm_config_offline=true —— 没装时直接失败，不会去 registry 拉包；
+ *   · npm_config_yes=false    —— 不替用户回答 npx 的安装确认；
+ *   · 超时 20s，失败只返回探测详情，不弹任何窗口。
+ *
+ * Windows 上 npx 是 npx.cmd，Node 18.20+ 不允许 spawn 批处理不走 shell，
+ * 所以这里显式用 cmd.exe /d /s /c 跑一条**没有用户拼接**的固定命令。
+ */
+function probeNodePlaywright() {
+  const isWin = process.platform === 'win32';
+  const env = Object.assign({}, process.env, {
+    npm_config_offline: 'true',
+    npm_config_yes: 'false',
+    npm_config_loglevel: 'error'
+  });
+  const probe = isWin
+    ? spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npx playwright --version'], {
+        encoding: 'utf8',
+        timeout: 20000,
+        windowsHide: true,
+        env
+      })
+    : spawnSync('npx', ['playwright', '--version'], {
+        encoding: 'utf8',
+        timeout: 20000,
+        windowsHide: true,
+        env
+      });
+  const stdout = String((probe && probe.stdout) || '').trim();
+  const stderr = String((probe && probe.stderr) || (probe && probe.error && probe.error.message) || '').trim();
+  if (probe && !probe.error && probe.status === 0 && /playwright/i.test(stdout)) {
+    return { ok: true, version: stdout };
+  }
+  return { ok: false, detail: stderr || stdout };
+}
+
 function register(deps) {
-  const { handle, assertUnlocked, dataDir, app, logStartup } = deps;
+  const { handle, assertUnlocked, dataDir, app, logStartup, getSettings } = deps;
 
   /**
    * 一个 IPC 域一个会话（模块级单例，但不放全局）：
@@ -124,6 +167,134 @@ function register(deps) {
   handle('sniff:stop', async () => {
     assertUnlocked();
     return sniffer.stop();
+  });
+
+  /**
+   * 拉起 Playwright codegen（v0.54.1 / v0.55 加 lang）。
+   *
+   * 语言语义（已核实的事实）：
+   *   · `python -m playwright codegen` **只能出 Python**，官方没有 --target；
+   *   · Java 代码必须用 Node 版的 `npx playwright codegen --target java`。
+   * 所以：
+   *   lang = python / pytest → 走本机配置的 Python（原路径不变）；
+   *   lang = java            → 先探测 npx playwright，**不自动安装、不联网**；
+   *                            可用才拉起，不可用就回 ok:false + 明确文案。
+   *
+   * 安全：url 只放行 http/https；Python 用 spawn 数组参数不过 shell；
+   * Java 走 npx.cmd 时必须过 shell，所以额外拒绝 `" % 换行` 这类会破坏命令行的字符。
+   * codegen 是独立进程（detached + unref），平台退出不连带杀它 —— 录制器是用户自己的窗口。
+   */
+  handle('sniff:codegen', async (e, payload = {}) => {
+    assertUnlocked();
+    const url = String((payload && payload.url) || '').trim();
+    if (!sniffer.isHttpUrl(url)) return { ok: false, message: URL_REJECT };
+
+    const langRaw = String((payload && payload.lang) || 'python')
+      .trim()
+      .toLowerCase();
+    const lang = langRaw === 'java' ? 'java' : langRaw === 'pytest' ? 'pytest' : 'python';
+
+    const settings = typeof getSettings === 'function' ? getSettings() || {} : {};
+    const python = String(settings.pythonPath || process.env.PYTHON || '').trim();
+    const exe = python || 'python';
+
+    /* ---------------- Java：Node 版 Playwright（先探测，不装不联网） ---------------- */
+    if (lang === 'java') {
+      if (/["%\r\n]/.test(url)) {
+        return { ok: false, code: 'UNSAFE_URL', lang, message: JAVA_URL_REJECT };
+      }
+      const node = probeNodePlaywright();
+      if (!node.ok) {
+        const detail = String(node.detail || '').trim();
+        return {
+          ok: false,
+          code: 'NO_NODE_PLAYWRIGHT',
+          lang,
+          message:
+            'Java 录制需要 Node 版 Playwright（npx playwright codegen --target java），但本机没探测到可用的 npx playwright' +
+            (detail ? '（' + detail + '）' : '') +
+            '。平台不会自动安装、也不会联网下载：请先在装了 Node 的环境里执行 npm i -D playwright，再点一次；' +
+            '或者把「录制 / 解析语言」切回 Python 系，用本机 Python 录制器（它只能出 Python）。'
+        };
+      }
+
+      const isWin = process.platform === 'win32';
+      const nodeEnv = Object.assign({}, process.env, { npm_config_offline: 'true', npm_config_yes: 'false' });
+      let child;
+      try {
+        if (isWin) {
+          // 固定前缀 + 只把已校验的 url 放进双引号里（& | < > 在引号内是普通字符）
+          child = spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npx playwright codegen --target java "' + url + '"'], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: false,
+            env: nodeEnv
+          });
+        } else {
+          child = spawn('npx', ['playwright', 'codegen', '--target', 'java', url], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: false,
+            env: nodeEnv
+          });
+        }
+      } catch (err) {
+        return { ok: false, code: 'CODEGEN_SPAWN_FAILED', lang, message: '拉起 Java codegen 失败：' + String((err && err.message) || err) };
+      }
+      if (child && typeof child.unref === 'function') child.unref();
+
+      return {
+        ok: true,
+        pid: child && child.pid ? child.pid : 0,
+        lang,
+        nodePlaywright: node.version,
+        message: 'Playwright codegen（Java · Node 版）已启动。录完在录制器里点「Copy」，把 Java 代码贴回下面的框里。'
+      };
+    }
+
+    /* ---------------- Python 系：原路径（python -m playwright codegen） ---------------- */
+    /**
+     * 先探一下这个解释器里有没有 playwright。
+     * 不探的话，用户点下去只会看到一个黑窗口闪一下 —— 那种失败最难排查。
+     */
+    const probe = spawnSync(exe, ['-m', 'playwright', '--version'], {
+      encoding: 'utf8',
+      timeout: 10000,
+      windowsHide: true
+    });
+    if (probe.error || probe.status !== 0) {
+      const detail = String((probe.stderr || '') || (probe.error && probe.error.message) || '').trim();
+      return {
+        ok: false,
+        code: 'NO_PLAYWRIGHT',
+        lang,
+        message:
+          '这个 Python 里没有 Playwright（' + exe + '）' + (detail ? '：' + detail : '') + '。' +
+          '先在命令行跑 pip install playwright，再到「设置 → 开发环境」把 Python 指向装了它的那个解释器。'
+      };
+    }
+
+    let child;
+    try {
+      child = spawn(exe, ['-m', 'playwright', 'codegen', url], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false
+      });
+    } catch (err) {
+      return { ok: false, lang, message: '拉起 codegen 失败：' + String((err && err.message) || err) };
+    }
+    if (child && typeof child.unref === 'function') child.unref();
+
+    return {
+      ok: true,
+      pid: child && child.pid ? child.pid : 0,
+      python: exe,
+      lang,
+      message:
+        'Playwright codegen（Python 录制器 · ' + exe + '）已启动。录完在录制器里点「Copy」，把代码贴回下面的框里。' +
+        (lang === 'pytest' ? '（pytest 用同一个录制器，贴回来照样识别）' : '')
+    };
   });
 }
 
