@@ -10,8 +10,8 @@
 
 | 项 | 值 |
 |---|---|
-| 当前版本 | **v0.56.0** |
-| 测试基线 | **64 个套件 / 5007 项**（unit 60 + env 4） |
+| 当前版本 | **v0.58.0** |
+| 测试基线 | **64 个套件 / 5018 项**（unit 60 + env 4） |
 | 运行环境 | Windows 10/11（x64），安装包约 120 MB |
 | 数据位置 | `%APPDATA%\测试工作台\` |
 
@@ -167,8 +167,10 @@ Playwright 定位器台账——表格里一行一个元素，生成 POM 时直�
 **怎么用**
 
 1. **页面元素 → 新增** → 填页面名、所属项目
-2. 表格里逐行填：名称 / 定位方式 / 定位值 / 说明
-3. 到「代码生成」选 **Playwright POM** → 从已有页面载入 → 生成
+2. **页面地址**要填**带协议的完整地址**（`https://www.example.com/login`）——
+   只填 `/login` 这种相对路径不行，实时校验要拿它当起始地址起浏览器
+3. 表格里逐行填：名称 / 定位方式 / 定位值 / 说明
+4. 到「代码生成」选 **Playwright POM** → 从已有页面载入 → 生成
 
 **9 种定位方式**：CSS、XPath、Role、Label、Placeholder、Text、AltText、Title、TestId。
 
@@ -244,16 +246,17 @@ Playwright 定位器台账——表格里一行一个元素，生成 POM 时直�
 
 **注意**
 
-> - 需要那个 Python 里装了 Playwright（`pip install playwright`）。没装时点「启动录制器」会直接告诉你，
->   不会出现黑窗口一闪而过。
-> - `python -m playwright codegen` 是 Playwright Python 自带的，**不需要联网下载**；平台不自动走 `npx`。
-> - **想录 Java 代码**：Python 的录制器只出 Python（官方没有语言参数）。切到「⋯ → 录制 / 解析语言 → Java」后，
->   平台会先探测本机有没有 Node 版 Playwright（`npx playwright --version`），有才用
->   `npx playwright codegen --target java`，**没有就明确告诉你，不会自动安装、也不会联网**。
-> - 「录制 / 解析语言」也决定**粘贴解析**按哪种语法走：Python 和 Java 的 codegen 写法完全不同
->   （Java 是 `getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("登录"))`）。
+> - **不用选语言**：平台会自己挑一个能用的录制器（Python 录制器 → 本机 Maven 缓存里的 jar → 你的项目 → Node 版），
+>   粘贴回来的代码 Python / Java / JS 三种写法都认。Inspector 右上角的 **Target** 还能随时切输出语言。
+> - **录制器会直接用你系统里的 Chrome / Edge**（`--channel`），所以**不会**因为你装的 Playwright 版本和
+>   浏览器内核版本对不上而打不开——那种情况下老版本会报 `Executable doesn't exist at ...chromium-XXXX`。
+>   万一还是失败：平台给 3 秒宽限期，秒退就把退出码 + 日志尾部贴回界面（完整日志在 `%APPDATA%\测试工作台\codegen.log`），
+>   按提示跑一次 `python -m playwright install chromium` 也能补上。
+> - **想原生录 Java**：不需要你的项目——平台会直接跑本机 Maven 缓存里那套 Playwright jar
+>   （`~/.m2/.../com/microsoft/playwright/{playwright,driver,driver-bundle}-<ver>.jar`）；
+>   缓存里没有时才退到「你的 Maven 项目」→「Node 版」。
 > - 中文文本会先落成 `el1 / el2` 这种占位名（生成的 POM 要合法标识符），你按需改成 `loginBtn` 这类名字。
-> - 录制器和「实时校验」是两条独立的路：前者用来**录入**，后者用来**点验**。
+> - 录制器和「实时校验」是两条独立的路：前者用来**录入**，后者用来**点验**；两者共用同一个「浏览器」偏好。
 
 ### 接口记录
 
@@ -872,7 +875,7 @@ v0.56 修的就是这个：以前平台用「启动的进程是否还活着」�
 | 前端 | React 18.3 + antd 5.29 + TypeScript（esbuild 转译，不跑 tsc） |
 | 数据 | sql.js（WASM SQLite）→ `data.db`，整库重写 + tmp/fsync/rename |
 | 打包 | electron-builder（NSIS） |
-| 测试 | 自研轻量脚本，**64 套件 / 5007 项**，分 unit / env 两档 |
+| 测试 | 自研轻量脚本，**64 套件 / 5018 项**，分 unit / env 两档 |
 
 ### 常用命令
 
@@ -883,9 +886,9 @@ npm install
 node scripts/build.mjs        # 生产构建
 node scripts/build.mjs -- --preview   # 预览构建（含 mock，浏览器可开）
 
-npm test                      # unit 档 60 套件 / 4864 项（自检先跑）
+npm test                      # unit 档 60 套件 / 4875 项（自检先跑）
 npm run test:env              # env 档 4 套件 / 127 项（需设 4 个目录变量）
-npm run test:all              # 全量 64 套件 / 5007 项
+npm run test:all              # 全量 64 套件 / 5018 项
 npm run test:gui              # 只跑 GUI 冒烟（19 路由 + 5 类交互，约 26 秒）
 npm run check                 # 只跑提交前自检
 npm run dist:installer        # 打 NSIS 安装包
@@ -941,6 +944,9 @@ $env:ELECTRON_RUN_AS_NODE="1"
 #      latest.yml                       （electron-builder 生成，含安装包 sha512）
 #      test-tool-docs-<ver>.zip         （文档包）
 #    ⚠️ 漏了 latest.yml，应用内「检查更新」能查到新版本，但下载会被完整性校验拒绝
+# 8. 清理旧产物，只留最新一版（先 --dry-run 看一眼再删）
+node scripts/clean-release.cjs --dry-run
+node scripts/clean-release.cjs
 ```
 
 ### 加一个集合 / 工具

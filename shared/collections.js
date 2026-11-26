@@ -342,10 +342,15 @@ const COLLECTIONS = [
       },
       {
         key: 'url',
-        label: '页面路径',
+        label: '页面地址',
         type: 'text',
         required: true,
-        placeholder: '/login'
+        /**
+         * v0.57：以前 label 叫「页面路径」、placeholder 只写 `/login`，
+         * 让人以为填相对路径就行——但「实时校验」拿它当起始地址起浏览器，必须是**带协议的完整地址**。
+         * 这里直接示范完整写法，并把「相对路径不行」写进占位符。
+         */
+        placeholder: 'https://www.example.com/login（完整地址；/login 这种相对路径不行）'
       },
       {
         key: 'project',

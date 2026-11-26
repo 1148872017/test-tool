@@ -650,14 +650,69 @@ check('归一化：null / undefined / 空串都当 css', hl.normalizeMode(null) 
   check('cdp.js 只发我们自己的命令（没有 Network/Storage/Cookie 域）', !/Network\.|Storage\.|Cookie/.test(CDP_SRC), 'forbidden domain');
   check('browser-session 里没有裸的 ipcMain.handle', !/ipcMain\.handle\(/.test(BS_SRC));
 
-  /* ---- v0.55：codegen 录制语言（Python 系 / Java）---- */
-  check('ipc：codegen 接受 lang 参数（python / pytest / java）', /payload[\s\S]{0,120}lang/.test(IPC_SRC) && IPC_SRC.indexOf("'java'") >= 0, 'no lang');
+  /* ---- v0.55：codegen 录制（v0.59 改成「不传语言、自动挑录制器」）---- */
+  check(
+    'ipc：codegen 默认不传 lang 时走 auto（Python 不可用自动落到 Java 链）',
+    /autoMode/.test(IPC_SRC) && /forceJava = true/.test(IPC_SRC) && IPC_SRC.indexOf("|| 'auto'") >= 0,
+    'no auto mode'
+  );
+  check('ipc：仍然接受显式 lang（兼容老调用方）', /langRaw === 'java'/.test(IPC_SRC) && IPC_SRC.indexOf("'pytest'") >= 0, 'explicit lang dropped');
   check('ipc：Java 录制先探测 npx playwright（spawnSync）', /probeNodePlaywright/.test(IPC_SRC) && /npx playwright --version/.test(IPC_SRC), 'no probe');
   check('ipc：探测绝不联网/自动安装（npm_config_offline + yes=false）', /npm_config_offline/.test(IPC_SRC) && /npm_config_yes/.test(IPC_SRC), 'probe may go online');
-  check('ipc：Java 探测失败回 NO_NODE_PLAYWRIGHT + 明确降级文案', /NO_NODE_PLAYWRIGHT/.test(IPC_SRC) && /不会自动安装、也不会联网下载/.test(IPC_SRC), 'no fallback message');
+  /**
+   * v0.58：Java 录制改成「先试你自己的 Maven 项目」（exec:exec + com.microsoft.playwright.CLI），
+   * 再退 Node 版；两条都不通才报 NO_JAVA_RECORDER。断言跟着改成守这两条路。
+   */
+  check(
+    'ipc：Java 先试用户 Maven 项目（exec:exec + playwright CLI）',
+    /detectJavaCodegenProject/.test(IPC_SRC) && /exec:exec/.test(IPC_SRC) && /com\.microsoft\.playwright\.CLI/.test(IPC_SRC),
+    'no maven path'
+  );
+  check(
+    'ipc：Java 第一优先是「直跑 ~/.m2 里的 jar」（不依赖项目）',
+    /function findM2JarSet/.test(IPC_SRC) &&
+      /via:\s*'m2-jar'/.test(IPC_SRC) &&
+      IPC_SRC.indexOf('findM2JarSet(process.env)') < IPC_SRC.indexOf('detectJavaCodegenProject(settings.projectDir)'),
+    'm2 path not first'
+  );
+  check(
+    'ipc：直跑 jar 的命令带 -cp 与 com.microsoft.playwright.CLI',
+    /buildM2CodegenCommand/.test(IPC_SRC) && /'-cp',\s*classpath/.test(IPC_SRC) && /'-Dfile.encoding=UTF-8'/.test(IPC_SRC),
+    'bad m2 command'
+  );
+  check(
+    'ipc：用 exec:exec 而不是 exec:java（pom 里 mainClass 会盖住 -Dexec.mainClass）',
+    (() => {
+      // 注释里会提到 exec:java（解释为什么不用它），先把注释去掉再断言
+      const code = IPC_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '');
+      return /'exec:exec'/.test(code) && !/'exec:java'/.test(code);
+    })(),
+    'still uses exec:java'
+  );
+  check(
+    'ipc：两条路都不通回 NO_JAVA_RECORDER + 说清原因 + 给命令',
+    /NO_JAVA_RECORDER/.test(IPC_SRC) && /不会自动安装、也不会联网下载/.test(IPC_SRC) && /command:/.test(IPC_SRC),
+    'no fallback message'
+  );
   check('ipc：Java 录制命令是 npx playwright codegen --target java', /playwright codegen --target java/.test(IPC_SRC), 'no java command');
   check('ipc：python 系仍走 python -m playwright codegen（原路径不变）', /'playwright',\s*'codegen'/.test(IPC_SRC) && /'-m',\s*'playwright',\s*'codegen'/.test(IPC_SRC), 'python command changed');
   check('ipc：Java 走 shell 前先挡掉引号/百分号/换行（UNSAFE_URL）', /UNSAFE_URL/.test(IPC_SRC) && /\["%\\r\\n\]/.test(IPC_SRC), 'unsafe url guard missing');
+
+  /* ---- v0.57：录制器「黑窗口一闪」——必须给宽限期 + 落日志 + 秒退如实报错 ---- */
+  check(
+    '录制器：不再 bare spawn + stdio:ignore 后直接回成功',
+    /function spawnDetached/.test(IPC_SRC) && !/stdio:\s*'ignore'/.test(IPC_SRC),
+    'still spawns blindly'
+  );
+  check('录制器：控制台窗口隐藏（windowsHide），不再黑窗口一闪', /windowsHide:\s*true/.test(IPC_SRC), 'console may flash');
+  check('录制器：输出落到 codegen.log', /codegen\.log/.test(IPC_SRC) && /codegenLogPath/.test(IPC_SRC), 'no log file');
+  check('录制器：秒退带回退出码与日志尾部（CODEGEN_EXITED）', /CODEGEN_EXITED/.test(IPC_SRC) && /logTail/.test(IPC_SRC), 'no exit report');
+  check(
+    '录制器：Executable 不存在时提示 playwright install',
+    /codegenFailureHint/.test(IPC_SRC) && /playwright install chromium/.test(IPC_SRC),
+    'no install hint'
+  );
+  check('Java 录制：明确「JDK/Maven 不算录制器」并给可复制命令', /Node 版 Playwright/.test(IPC_SRC) && /command:/.test(IPC_SRC), 'no java guidance');
 
   /* ---- v0.56：浏览器选择（bug3）---- */
   check(

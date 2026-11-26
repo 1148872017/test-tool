@@ -368,28 +368,37 @@ export default function SniffPanel(props: SniffPanelProps) {
         bugA：「结束校验」在**任何阶段**都要在（启动中除外 —— 正在拉进程时点它容易留下半截会话）。
         未启动 / 出错 / 会话已结束时浏览器可能还在后台跑，这里是没有面板控制入口前唯一的关闭按钮。
         调用方（PageElementsEditor / DetailElementSniff）都保证点了会先 sniffStop 再收面板。
-      */}
-      <div style={ROW}>
-        {canRestart ? (
-          <Button size="small" type="primary" loading={busy} disabled={busy} onClick={props.onRestart}>
-            重新开始
-          </Button>
-        ) : null}
-        <Tooltip title="关掉这次拉起的浏览器进程，并收起这个面板">
-          <Button
-            size="small"
-            danger
-            icon={<StopOutlined />}
-            onClick={props.onStopBrowser}
-            disabled={busy && phase === 'starting'}
-          >
-            结束校验
-          </Button>
-        </Tooltip>
-        {canRestart ? <span style={MUTED}>浏览器若还在后台，点「结束校验」关掉</span> : null}
-      </div>
 
-      <div style={{ ...MUTED, marginTop: 8 }}>进度只在界面内存里，关掉面板即结束，不会写进台账</div>
+        v0.57 布局：按钮单独钉在**右下角**，左边的说明文字用 flex:1 + minWidth:0 自己换行/省略，
+        不会因为底部文字变长把按钮挤走（全屏/非全屏、窄抽屉都成立）。
+      */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginTop: 6 }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {canRestart ? (
+            <div>
+              <Button size="small" type="primary" loading={busy} disabled={busy} onClick={props.onRestart}>
+                重新开始
+              </Button>
+            </div>
+          ) : null}
+          <div style={{ ...MUTED, fontSize: 11, lineHeight: '15px' }}>
+            进度只在界面内存里，关掉面板即结束，不会写进台账
+          </div>
+        </div>
+        <div style={{ flexShrink: 0, marginLeft: 'auto' }}>
+          <Tooltip title="关掉这次拉起的浏览器进程，并收起这个面板">
+            <Button
+              size="small"
+              danger
+              icon={<StopOutlined />}
+              onClick={props.onStopBrowser}
+              disabled={busy && phase === 'starting'}
+            >
+              结束校验
+            </Button>
+          </Tooltip>
+        </div>
+      </div>
     </div>
   );
 }

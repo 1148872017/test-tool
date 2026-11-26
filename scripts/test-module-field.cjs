@@ -253,10 +253,14 @@ check(
   /f\.optionsKey === 'module' \|\| f\.optionsKey === 'project'/.test(collectionCode) && !/conf\.key === 'apis'/.test(collectionCode),
   'manage entry hardcoded by collection key'
 );
+/**
+ * v0.59：录制语言菜单**整组删掉**了（Inspector 的 Target 下拉本来就能切语言，
+ * 粘贴解析三种语法都认）。这条改成反向守卫：菜单不许再回来。
+ */
 check(
-  '「⋯」菜单里有录制 / 解析语言三项（Python / pytest / Java）',
-  /RECORD_LANG_OPTIONS\.map/.test(collectionSrc) && /codegen:/.test(collectionSrc),
-  'no language menu'
+  '「⋯」菜单里不再有「录制 / 解析语言」（语言由 Inspector 的 Target 决定）',
+  !/RECORD_LANG_OPTIONS/.test(collectionSrc) && !/codegen:/.test(collectionSrc),
+  'language menu came back'
 );
 
 /* ------------------------------------------------------------------ *

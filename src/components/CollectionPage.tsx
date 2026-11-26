@@ -20,8 +20,7 @@ import {
   FileTextOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  SettingOutlined,
-  CheckOutlined
+  SettingOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
@@ -29,7 +28,6 @@ import { buildCurl, fmtTime, recordToText } from '../utils';
 import RecordForm from './RecordForm';
 import RecordDetail from './RecordDetail';
 import OptionEditor from './OptionEditor';
-import { RECORD_LANG_LABEL, RECORD_LANG_OPTIONS, readRecordLang, writeRecordLang, type RecordLang } from './PageElementsEditor';
 import VarFillModal from './VarFillModal';
 import SyncResultModal from './SyncResultModal';
 import ChangeImpactModal from './ChangeImpactModal';
@@ -195,8 +193,6 @@ export default function CollectionPage({
   const [asideOpen, setAsideOpen] = useState(true);
   /** 「⋯ → 管理模块… / 管理项目…」弹窗（只嵌 OptionEditor 的单套件模式） */
   const [manageKind, setManageKind] = useState<'module' | 'project' | ''>('');
-  /** 「⋯ → 录制 / 解析语言」当前选择（下次打开 codegen 录制小窗时生效） */
-  const [recordLang, setRecordLang] = useState<RecordLang>(() => readRecordLang());
   const searchRef = useRef<InputRef>(null);
 
   const caps = useMemo(() => capabilitiesOf(conf), [conf]);
@@ -642,13 +638,6 @@ export default function CollectionPage({
       setManageKind(key.slice('manage:'.length) as 'module' | 'project');
       return;
     }
-    if (key.indexOf('codegen:') === 0) {
-      const next = key.slice('codegen:'.length) as RecordLang;
-      writeRecordLang(next);
-      setRecordLang(next);
-      toast('录制语言已切换：' + RECORD_LANG_LABEL[next] + '（下次打开「用 codegen 录制」生效）');
-      return;
-    }
     runHeaderAction(key);
   };
 
@@ -756,35 +745,16 @@ export default function CollectionPage({
             }
           ] as any[])
         : []
-    )
-    .concat(
-      // 录制语言只在「接口记录 / 页面元素」这类有模块管理的页面出现（其余集合没有 codegen 入口）
-      optionManageKind
-        ? ([
-            { type: 'divider' },
-            {
-              type: 'group',
-              label: '录制 / 解析语言',
-              children: RECORD_LANG_OPTIONS.map((o) => ({
-                key: 'codegen:' + o.value,
-                icon: recordLang === o.value ? <CheckOutlined /> : null,
-                label: (
-                  <div className="pg-menu-item">
-                    <div className="pg-menu-title">{o.label}</div>
-                    <div className="pg-menu-help">
-                      {o.value === 'java'
-                        ? 'Java 代码必须用 Node 版 Playwright 录制（npx playwright codegen --target java）；本机没装时明确提示，不自动安装、不联网'
-                        : o.value === 'pytest'
-                          ? '仍是 Python 录制器；贴回来的代码按 pytest 风格继续用'
-                          : '用你配置的 Python 拉起 python -m playwright codegen（官方只能出 Python）'}
-                    </div>
-                  </div>
-                )
-              }))
-            }
-          ] as any[])
-        : []
     );
+
+  /**
+   * v0.59：原来的「⋯ → 录制 / 解析语言」整组删掉了。
+   *
+   * 原因：Playwright Inspector 右上角的 **Target 下拉本来就能切输出语言**，
+   * 而粘贴解析一直是「Python / Java / JS 三种语法都认」的。
+   * 所以「语言」既不该是启动器的属性，也不需要用户先选一遍。
+   * 现在主进程会自己挑一个能用的录制器（Python → 本机 jar → 你的项目 → Node）。
+   */
 
   const copy = async (text: string, secret = false, label = '已复制') => {
     if (!text) {

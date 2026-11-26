@@ -80,30 +80,30 @@ export function normalizeMode(mode: any): LocatorMode {
 }
 
 /* ============================================================
- * codegen 录制 / 解析语言（v0.55）
+ * codegen 录制 / 解析语言（v0.55，v0.58 改口径）
  *
  * 事实前提（别误解）：
- *   · `python -m playwright codegen` **只能出 Python**（官方没有 --target）；
- *   · Java 代码必须用 Node 版的 `npx playwright codegen --target java`。
- * 所以这里记住用户选的语言，拉起录制器时原样告诉主进程；
+ *   · `python -m playwright codegen` 的**命令行**没有目标语言参数；
+ *   · 但 Inspector 右上角的 **Target 下拉能切输出语言**（Node/Python/Java…），
+ *     所以「Python 录制器只能出 Python」只在参数层面成立；
+ *   · 要原生录 Java，平台优先直跑本机 Maven 缓存里的 Playwright jar
+ *     （`java -cp ... com.microsoft.playwright.CLI codegen`），不依赖用户项目。
+ * 这里记住用户选的语言，拉起录制器时原样告诉主进程；
  * 解析端不按语言分流 —— Java / Python / JS 的语法形态各认各的。
  *
  * 存 localStorage：不引入新依赖，也不给测试的手工 require 桩加负担。
  * ============================================================ */
-export type RecordLang = 'python' | 'pytest' | 'java';
-
-export const RECORD_LANG_OPTIONS: { value: RecordLang; label: string }[] = [
-  { value: 'python', label: 'Python' },
-  { value: 'pytest', label: 'Python（pytest）' },
-  { value: 'java', label: 'Java（需要 Node 版 Playwright）' }
-];
-
-export const RECORD_LANG_LABEL: Record<RecordLang, string> = {
-  python: 'Python',
-  pytest: 'Python（pytest）',
-  java: 'Java'
-};
-
+/**
+ * v0.59：**录制语言选择已经删掉**。
+ *
+ * 事实：Playwright Inspector 右上角的 Target 下拉本身就能切输出语言，
+ * 而粘贴解析是「Python / Java / JS 三种写法都认」的——所以「语言」既不该由用户先选，
+ * 也不该是启动器的属性。主进程会自己挑一个能用的录制器
+ * （Python 录制器 → 本机 Maven 缓存里的 jar → 你的项目 → Node 版）。
+ *
+ * 这里只保留一个可选的**旧值读取函数**：老版本存在 localStorage 里的
+ * `test-tool.codegen.lang` 不再影响任何行为，留着是给需要排查的人看的。
+ */
 const RECORD_LANG_KEY = 'test-tool.codegen.lang';
 
 /** localStorage 在浏览器预览 / 单测里都可能不存在，读写一律兜底 */
@@ -115,19 +115,13 @@ function langStorage(): Storage | null {
   }
 }
 
-export function readRecordLang(): RecordLang {
+/** 只读：返回老版本留下的语言偏好（可能为 ''），当前逻辑不再使用它 */
+export function readLegacyRecordLang(): string {
   const s = langStorage();
-  const v = s ? String(s.getItem(RECORD_LANG_KEY) || '') : '';
-  return v === 'java' || v === 'pytest' ? (v as RecordLang) : 'python';
-}
-
-export function writeRecordLang(lang: RecordLang) {
-  const s = langStorage();
-  if (!s) return;
   try {
-    s.setItem(RECORD_LANG_KEY, lang);
+    return s ? String(s.getItem(RECORD_LANG_KEY) || '') : '';
   } catch (e) {
-    /* 存不进去只影响下次默认值，不影响这一次录制 */
+    return '';
   }
 }
 
@@ -449,13 +443,24 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
   const [sniffBrowser, setSniffBrowser] = useState<SniffBrowser>(() => readSniffBrowser());
 
   /** codegen 录制小窗的状态（文本/提示都在里面，关掉即清） */
-  const [codegen, setCodegen] = useState<{ open: boolean; busy: boolean; text: string; msg: string; err: string; lang: RecordLang }>({
+  const [codegen, setCodegen] = useState<{
+    open: boolean;
+    busy: boolean;
+    text: string;
+    msg: string;
+    err: string;
+    /** 后端给的可直接运行的命令（一条路都不通时用来「复制命令」） */
+    command: string;
+    /** 实际走通的录制器来源：python / m2-jar / maven / node（界面回显，省得用户猜） */
+    route: string;
+  }>({
     open: false,
     busy: false,
     text: '',
     msg: '',
     err: '',
-    lang: 'python'
+    command: '',
+    route: ''
   });
 
   /** 卸载时要不要顺手关浏览器：面板开着就说明这一轮还没收尾 */
@@ -695,7 +700,7 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
 
   /** 打开录制小窗（不自动拉起，用户先看清要做什么） */
   const openCodegen = () => {
-    setCodegen({ open: true, busy: false, text: '', msg: '', err: '', lang: readRecordLang() });
+    setCodegen({ open: true, busy: false, text: '', msg: '', err: '', command: '', route: '' });
   };
 
   /** 拉起录制器：Python 系用配置的 Python；Java 用本机 Node 版 Playwright（主进程先探测） */
@@ -705,20 +710,25 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
       setCodegen((s) => Object.assign({}, s, { err: '这条记录还没有页面地址（url），先填上再录制' }));
       return;
     }
-    setCodegen((s) => Object.assign({}, s, { busy: true, err: '', msg: '' }));
+    setCodegen((s) => Object.assign({}, s, { busy: true, err: '', msg: '', command: '' }));
     try {
       const fn = (api as any).sniffCodegen;
       if (typeof fn !== 'function') throw new Error('当前版本没有 sniffCodegen，请用安装版');
-      const res = await fn({ url, lang: codegen.lang });
+      // 不传 lang：主进程按「Python → 本机 jar → 你的项目 → Node」自己挑；
+      // 带上 browser 偏好，让录制器也用你选的那个浏览器（--channel=chrome|msedge）
+      const res = await fn({ url, browser: readSniffBrowser() });
       setCodegen((s) =>
         Object.assign({}, s, {
           busy: false,
           msg: res && res.ok ? String(res.message || '录制器已启动') : '',
-          err: res && res.ok ? '' : String((res && res.message) || '拉起失败')
+          err: res && res.ok ? '' : String((res && res.message) || '拉起失败'),
+          // 失败时后端可能给一条可直接跑的命令（例如 Java 录制一条路都不通）
+          command: res && res.ok ? '' : String((res && res.command) || ''),
+          route: res && res.ok ? String(res.via || (res.python ? 'python' : '')) : ''
         })
       );
     } catch (e: any) {
-      setCodegen((s) => Object.assign({}, s, { busy: false, err: String((e && e.message) || e) }));
+      setCodegen((s) => Object.assign({}, s, { busy: false, err: String((e && e.message) || e), command: '' }));
     }
   };
 
@@ -1027,38 +1037,22 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
         destroyOnClose
       >
         <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.9, marginBottom: 10 }}>
-          {codegen.lang === 'java'
-            ? '1. 点「启动录制器」→ 用本机 Node 版 Playwright 拉起 npx playwright codegen --target java'
-            : '1. 点「启动录制器」→ 用你配置的 Python 拉起 python -m playwright codegen'}
+          1. 点「启动录制器」→ 平台<b>自动挑一个能用的录制器</b>
+          （Python 录制器 → 本机 Maven 缓存里的 Playwright jar → 你的 Maven 项目 → Node 版）
           <br />
-          2. 在录制器窗口里正常操作页面（它会实时生成定位器代码）
+          2. 在录制器窗口里正常操作页面；<b>Inspector 右上角的 Target 可以切输出语言</b>
+          （Node / Python / Java…），录完点 <b>Copy</b>
           <br />
-          3. 点录制器里的 <b>Copy</b> 复制代码，粘到下面的框里 → 「识别并添加」
+          3. 把复制的代码粘到下面的框里 → 「识别并添加」
           <br />
           <span style={{ color: 'var(--text-2)' }}>
-            只会识别定位器，动作（click / fill / press…）会被忽略；中文名称会先落成 el1/el2，你改个名字即可。
+            只会识别定位器，动作（click / fill / press…）会被忽略；Python、Java、JS 三种写法都认，不用事先声明语言。
+            中文名称会先落成 el1/el2，你改个名字即可。
           </span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>录制 / 解析语言</span>
-          <Select
-            size="small"
-            style={{ width: 240 }}
-            value={codegen.lang}
-            options={RECORD_LANG_OPTIONS}
-            onChange={(v) => {
-              const lang = v as RecordLang;
-              writeRecordLang(lang);
-              setCodegen((s) => Object.assign({}, s, { lang, err: '', msg: '' }));
-            }}
-          />
-          {codegen.lang === 'java' ? (
-            <span style={{ fontSize: 12, color: '#d46b08' }}>
-              注意：python -m playwright codegen 只能出 Python；Java 必须用 Node 版。
-              平台只探测本机有没有，不会自动安装、也不会联网下载。
-            </span>
-          ) : null}
+        <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 8 }}>
+          平台不会自动安装、也不会联网下载；一条路都起不来时会告诉你差什么，并给出可直接跑的命令。
         </div>
 
         {codegen.err ? (
@@ -1066,11 +1060,52 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
             <Tag color="red" style={{ fontSize: 11 }}>
               失败
             </Tag>
-            <span style={{ fontSize: 12 }}>{codegen.err}</span>
+            <span style={{ fontSize: 12, whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{codegen.err}</span>
+          </div>
+        ) : null}
+        {/*
+          v0.57：Java 录制装不了时后端会给一条可直接跑的命令（command），
+          这里给个「复制命令」——比让用户从一大段说明里挑命令靠谱。
+        */}
+        {codegen.command ? (
+          <div
+            style={{
+              marginBottom: 10,
+              padding: '8px 10px',
+              background: 'var(--bg-subtle, #f6f7fb)',
+              border: '1px solid var(--line-soft, #e8eaf2)',
+              borderRadius: 6,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8
+            }}
+          >
+            <code style={{ flex: 1, minWidth: 0, fontSize: 12, wordBreak: 'break-all', fontFamily: 'Consolas, Monaco, monospace' }}>
+              {codegen.command}
+            </code>
+            <Button
+              size="small"
+              onClick={() => {
+                try {
+                  navigator.clipboard.writeText(codegen.command);
+                } catch (e) {
+                  /* 剪贴板不可用就算了，命令就在上面，可以手选 */
+                }
+              }}
+            >
+              复制命令
+            </Button>
           </div>
         ) : null}
         {codegen.msg ? (
-          <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text-2)' }}>{codegen.msg}</div>
+          <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text-2)' }}>
+            {codegen.route ? (
+              <Tag color="green" style={{ fontSize: 11, marginInlineEnd: 6 }}>
+                {{ 'm2-jar': '本机 jar', maven: '你的 Maven 项目', node: 'Node 版', python: 'Python' }[codegen.route] || codegen.route}
+              </Tag>
+            ) : null}
+            {codegen.msg}
+          </div>
         ) : null}
 
         <Space style={{ marginBottom: 10 }} wrap>
@@ -1087,9 +1122,9 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
           value={codegen.text}
           onChange={(ev) => setCodegen((s) => Object.assign({}, s, { text: ev.target.value, err: '' }))}
           placeholder={
-            codegen.lang === 'java'
-              ? '把 codegen（Java）复制的代码贴在这里，例如：\npage.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("登录")).click();'
-              : '把 codegen 复制的代码贴在这里，例如：\npage.get_by_role("button", name="登 录").click()'
+            '把 codegen 复制的代码贴在这里，Python / Java / JS 都行，例如：\n' +
+            'page.get_by_role("button", name="登 录").click()\n' +
+            'page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("登录")).click();'
           }
           style={{ fontFamily: 'Consolas, Monaco, monospace', fontSize: 12 }}
         />
