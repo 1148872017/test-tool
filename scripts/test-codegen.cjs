@@ -210,26 +210,74 @@ check('有 codegen:save', /handle\('codegen:save'/.test(mainSrc), 'no save');
   );
 }
 
-/* ---------- 9.4 v0.64：Java · Playwright 测试基类（不需要数据源） ---------- */
+/* ---------- 9.4 v0.64/0.65：Java · Playwright 测试基类（不需要数据源） ---------- */
 {
   const r = cg.generate('java-playwright-base', {});
   check('基类：默认类名 BaseTest，文件名对得上', !!r.ok && r.filename === 'BaseTest.java', r.filename);
   check(
-    '基类：有 @BeforeClass / @AfterClass（起 + 收）',
-    /@BeforeClass/.test(r.code) && /@AfterClass/.test(r.code),
-    'no lifecycle annotations'
+    '基类：四个生命周期方法都在（@BeforeClass / @BeforeMethod / @AfterMethod / @AfterClass）',
+    /@BeforeClass/.test(r.code) &&
+      /@BeforeMethod/.test(r.code) &&
+      /@AfterMethod/.test(r.code) &&
+      /@AfterClass/.test(r.code),
+    'missing lifecycle annotation'
   );
   check(
-    '基类：按用户要求简化成 chromium + headless=false + slowMo=500',
-    /playwright\.chromium\(\)\.launch\(/.test(r.code) &&
-      /setHeadless\(false\)/.test(r.code) &&
-      /setSlowMo\(500\)/.test(r.code),
-    'launch not simplified'
+    '基类：headless/slowMo 支持 -D 覆盖，默认仍是 false / 500',
+    /System\.getProperty\("headless",\s*"false"\)/.test(r.code) &&
+      /System\.getProperty\("slowMo",\s*"500"\)/.test(r.code),
+    'no -D override'
+  );
+
+  /* ---- v0.65 架构评审提出的三条硬伤，逐条守 ---- */
+  check('基类：类声明是 abstract（否则 TestNG 扫包会当空测试类跑一遍）', /public abstract class /.test(r.code), 'not abstract');
+  check(
+    '基类：playwright / browser 是实例字段，不是 static（static 在基类上 JVM 级共享，parallel 会互相关浏览器）',
+    /protected Playwright playwright;/.test(r.code) &&
+      /protected Browser browser;/.test(r.code) &&
+      !/static\s+Playwright/.test(r.code) &&
+      !/static\s+Browser/.test(r.code),
+    'still static'
+  );
+
+  /** 取某个注解方法的方法体，用来断言「context 是在哪个生命周期里建的」 */
+  function bodyOf(code, annotation) {
+    const at = code.indexOf(annotation);
+    if (at < 0) return '';
+    const open = code.indexOf('{', at);
+    if (open < 0) return '';
+    let depth = 0;
+    for (let i = open; i < code.length; i += 1) {
+      if (code[i] === '{') depth += 1;
+      else if (code[i] === '}') {
+        depth -= 1;
+        if (depth === 0) return code.slice(open + 1, i);
+      }
+    }
+    return '';
+  }
+  const beforeMethodBody = bodyOf(r.code, '@BeforeMethod');
+  const beforeClassBody = bodyOf(r.code, '@BeforeClass');
+  check(
+    '基类：context / page 建在 @BeforeMethod 里（每用例一套，方法间不污染）',
+    /newContext\(\)/.test(beforeMethodBody) && /newPage\(\)/.test(beforeMethodBody),
+    beforeMethodBody.slice(0, 120)
   );
   check(
-    '基类：建了 context / page（原稿只起 browser，方法体里用 page 会 NPE）',
-    /context = browser\.newContext\(\)/.test(r.code) && /page = context\.newPage\(\)/.test(r.code),
-    'no context/page'
+    '基类：@BeforeClass 里不再建 context（只起 browser）',
+    !/newContext\(\)/.test(beforeClassBody),
+    beforeClassBody.slice(0, 120)
+  );
+  check(
+    '基类：收尾打日志而不是静默吞掉（否则浏览器没关掉看不见）',
+    /System\.err\.println\("关闭 context 失败/.test(r.code) &&
+      /System\.err\.println\("关闭 browser 失败/.test(r.code),
+    'silent swallow'
+  );
+  check(
+    '基类：示例用绝对地址（相对路径需要 context 设 baseURL，基类没设）',
+    /page\.navigate\("https:\/\//.test(r.code),
+    'relative url example'
   );
   check(
     '基类：简化后不再有 Properties / loadConfig',
@@ -243,6 +291,51 @@ check('有 codegen:save', /handle\('codegen:save'/.test(mainSrc), 'no save');
   );
   check('基类：自定义类名生效', cg.generate('java-playwright-base', { className: 'BaseUi' }).filename === 'BaseUi.java', 'name not applied');
   check('基类：kind=base 且不进积木视图（页面元素那套与它无关）', r.target.kind === 'base', r.target.kind);
+  check(
+    '基类：desc 不再写「配置读取」（v0.65 前是假描述，代码里根本没有配置读取）',
+    !/配置读取/.test(r.target.desc),
+    r.target.desc
+  );
+}
+
+/* ---------- 9.5 v0.65：类名校验（堵路径穿越 + 非法标识符） ---------- */
+{
+  check('isSafeIdent 放行正常类名', cg.isSafeIdent('BaseTest') === true, cg.isSafeIdent('BaseTest'));
+  check('isSafeIdent 放行中文（Java 允许 Unicode 标识符）', cg.isSafeIdent('我的基类') === true, cg.isSafeIdent('我的基类'));
+  check('isSafeIdent 拦路径穿越', cg.isSafeIdent('../evil') === false, cg.isSafeIdent('../evil'));
+  check('isSafeIdent 拦空格 / 连字符 / 数字开头 / 斜杠', ['Base Test', 'my-base', '2024Test', 'a/b', 'a\\b'].every((n) => cg.isSafeIdent(n) === false), ['Base Test', 'my-base', '2024Test', 'a/b']);
+  check('isSafeIdent 拦空串', cg.isSafeIdent('') === false && cg.isSafeIdent(undefined) === false, [cg.isSafeIdent(''), cg.isSafeIdent(undefined)]);
+
+  /** 端到端：非法类名不许生成出可写盘的 filename */
+  const traversal = cg.generate('java-playwright-base', { className: '../evil' });
+  check('生成器拒绝非法类名（不再产出 ../evil.java）', traversal.ok === false, traversal.filename || traversal.message);
+  check('拒绝时给出人话提示', /类名/.test(String(traversal.message || '')), traversal.message);
+
+  /** 生成名分支也必须过文件名守卫（v0.60 只守了 inline 分支） */
+  const ipcSrc2 = fs.readFileSync(path.join(__dirname, '..', 'electron', 'ipc', 'ipc-codegen.js'), 'utf8');
+  check(
+    'codegen:save 的生成名分支也过 checkInlineFilename',
+    /checkInlineFilename\(gen\.filename, targetKey\)/.test(ipcSrc2),
+    'generate-name branch not guarded'
+  );
+  check('保存已存在文件时会先问（不静默覆盖）', /showMessageBox/.test(ipcSrc2) && /文件已存在/.test(ipcSrc2), 'no overwrite confirm');
+  check('按生成目标记住上次保存目录', /lastDirByTarget/.test(ipcSrc2), 'no dir memory');
+}
+
+/* ---------- 9.6 v0.65：生成目标排序（语言分组 + 接口 → POJO → UI） ---------- */
+{
+  const order = cg.listTargets().map((t) => t.lang + ':' + t.kind);
+  check(
+    '目标顺序：Java 全在前，组内 接口 → POJO → UI → 基类',
+    order.slice(0, 4).join(',') === 'java:api,java:model,java:page,java:base',
+    order
+  );
+  check(
+    '目标顺序：Python 组在 Java 之后，组内 接口 → POJO → UI',
+    order.slice(4).join(',') === 'python:api,python:model,python:page',
+    order
+  );
+  check('排序不丢目标（7 个都在）', order.length === 7, order.length);
 }
 
 const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');

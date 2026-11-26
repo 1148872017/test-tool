@@ -11,7 +11,7 @@ import {
   FolderOpenOutlined
 } from '@ant-design/icons';
 import { UI_ACTIONS, UI_ACTION_CATEGORIES, actionById } from '../../../shared/uiActions';
-import { generateSteps, pomClassNameFromPage } from '../../../shared/uiStepGen';
+import { generateSteps, pomClassNameFromPage, wrapAsFile } from '../../../shared/uiStepGen';
 
 /**
  * 统一的代码块组件（高亮 + 行号 + 折叠）。
@@ -187,6 +187,11 @@ export default function BricksPanel(props: Props) {
    */
   const [editing, setEditing] = useState(false);
   /**
+   * v0.65：可选包名。空 = 不写 package 行（用户自己粘进项目时补）。
+   * 填了就会写在完整文件的第一行，粘进 IDE 直接能放对应目录。
+   */
+  const [packageName, setPackageName] = useState('');
+  /**
    * v0.63：「选择已有类」点「选文件」后的结果提示。
    * ok = 从文件里读到了 class 声明；warn = 只用文件名推的（可能不准）；error = 读不了。
    */
@@ -225,9 +230,10 @@ export default function BricksPanel(props: Props) {
         pomVar,
         pageName,
         pageUrl,
-        className
+        className,
+        packageName
       } as any),
-    [steps, elList, lang, pomMode, effectiveClass, pomVar, pageName, pageUrl, className]
+    [steps, elList, lang, pomMode, effectiveClass, pomVar, pageName, pageUrl, className, packageName]
   );
 
   // 代码变了就把手改的内容交还给生成器（否则用户改一次，后面所有步骤都停在旧文本上）
@@ -236,7 +242,26 @@ export default function BricksPanel(props: Props) {
   }, [gen.code]);
 
   const shown = manual === null ? gen.code : manual;
-  const copyText = gen.imports.length ? gen.imports.join('\n') + '\n\n' + shown : shown;
+  /**
+   * 交给 IDE 的文本（复制 / 保存到文件）—— v0.65 起是**完整文件**。
+   *
+   * 以前这里是 `gen.imports.join('\n') + '\n\n' + shown`：
+   * imports 是裸全限定名（没有 import 关键字），shown 是一个孤立方法（没有 class），
+   * 粘进 IDE 编译不过。用户就是这么撞上的。
+   *
+   * 手改过（manual !== null）就用手改的内容重新包一次，
+   * 否则直接用生成器算好的 fileCode。
+   */
+  const copyText =
+    manual === null
+      ? gen.fileCode || shown
+      : wrapAsFile({
+          code: shown,
+          imports: gen.imports,
+          className: gen.testClassName,
+          packageName,
+          lang
+        });
 
 
   /* ---------------- 流程模板：保存 / 载入 ---------------- */
@@ -596,6 +621,26 @@ export default function BricksPanel(props: Props) {
               value={pomVar}
               onChange={(e) => setPomVar(e.target.value)}
               placeholder={lang === 'python' ? 'login_page' : 'loginPage'}
+              allowClear
+            />
+          </>
+        ) : null}
+
+        {/*
+          v0.65：可选包名。
+          空着 = 生成的文件不写 package 行（用户自己粘进项目时补）；
+          填了 = 写在文件第一行，复制/保存出去就是能直接放到对应目录的完整文件。
+          Java 用点分包名，Python 不用（所以 Python 下不显示）。
+        */}
+        {lang === 'java' ? (
+          <>
+            <span className="muted">包名</span>
+            <Input
+              size="small"
+              style={{ width: 150 }}
+              value={packageName}
+              onChange={(e) => setPackageName(e.target.value)}
+              placeholder="可选，如 com.test.test"
               allowClear
             />
           </>

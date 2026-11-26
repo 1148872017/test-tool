@@ -53,6 +53,7 @@ const unit = [
   'test-fixes-361.cjs',
   'test-gaps.cjs',
   'test-gaps2.cjs',
+  'test-generated-syntax.cjs',
   'test-groovy-templates.cjs',
   'test-guard-paths.cjs',
   'test-gui-smoke.cjs',

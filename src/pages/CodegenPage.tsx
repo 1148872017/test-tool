@@ -387,6 +387,9 @@ export default function CodegenPage() {
           return;
         }
         payload.page = { name: pageName, url: pageUrl, elements: els };
+      } else if (isBaseTarget) {
+        // v0.65：基类目标不需要数据源。以前会掉进下面的 else 白传一份 jsonText
+        // （后端 base 分支不读它，所以没出错，但语义是脏的）。
       } else if (modelSource === 'sql') {
         payload.sql = sqlText;
       } else {
@@ -436,6 +439,8 @@ export default function CodegenPage() {
           return;
         }
         payload.page = { name: pageName, url: pageUrl, elements: els };
+      } else if (isBaseTarget) {
+        // v0.65：基类不需要数据源（见 doPreview 同处注释）
       } else if (modelSource === 'sql') payload.sql = sqlText;
       else payload.json = jsonText;
 
@@ -1018,17 +1023,61 @@ export default function CodegenPage() {
             </>
           ) : null}
 
+          {/*
+            v0.65：说明区重排成「卡片 + 编号列表」。
+            原来是一段 5 行的流水文字，扫一眼抓不到重点；
+            现在先把「不需要数据源」这个最重要的事实做成 Tag，再列三件事。
+          */}
           {isBaseTarget ? (
-            <div className="codegen-desc muted" style={{ lineHeight: 1.9 }}>
-              这个目标<b>不需要数据源</b>：生成的是一个完整的基础类文件，
-              里面有起浏览器（<span className="mono">chromium + headless=false + slowMo=500</span>）
-              和收尾两件事。新建自动化项目时先生成它，之后的测试类继承它就能直接用
-              <span className="mono"> page</span>。
-              <br />
-              上面「类名」填什么，文件就叫什么（默认 <span className="mono">BaseTest</span>）。
-              <br />
-              想改行为就改生成结果里那两行注释处：<span className="mono">setHeadless(...)</span> /
-              <span className="mono"> setSlowMo(...)</span>。
+            <div
+              style={{
+                border: '1px solid var(--line-soft, #e8eaf2)',
+                borderRadius: 8,
+                padding: '12px 14px',
+                background: 'var(--bg-subtle, #f8f9fc)'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 9 }}>
+                <Tag color="geekblue" style={{ marginInlineEnd: 0 }}>
+                  不需要数据源
+                </Tag>
+                <span style={{ fontSize: 12.5, fontWeight: 600 }}>
+                  生成一个完整的基础类文件
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {[
+                  ['起浏览器', 'chromium · headless 与 slowMo 可用 -D 覆盖'],
+                  ['每个用例一套 context', '用例之间 cookie / 弹窗互不污染'],
+                  ['收尾', 'context → browser → playwright 依次关闭']
+                ].map(function (row, i) {
+                  return (
+                    <div
+                      key={row[0]}
+                      style={{ display: 'flex', gap: 8, fontSize: 12, lineHeight: 1.7 }}
+                    >
+                      <span style={{ color: 'var(--text-3)', minWidth: 12 }}>{i + 1}</span>
+                      <span style={{ fontWeight: 600, minWidth: 130 }}>{row[0]}</span>
+                      <span style={{ color: 'var(--text-2)' }}>{row[1]}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div
+                style={{
+                  marginTop: 10,
+                  paddingTop: 8,
+                  borderTop: '1px dashed var(--line-soft, #e8eaf2)',
+                  fontSize: 11.5,
+                  lineHeight: 1.7,
+                  color: 'var(--text-3)'
+                }}
+              >
+                「类名」填什么，文件就叫什么（默认 <span className="mono">BaseTest</span>）；
+                只能字母或下划线开头，不能有空格。
+              </div>
             </div>
           ) : null}
 

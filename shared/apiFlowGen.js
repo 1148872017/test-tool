@@ -460,6 +460,64 @@ function snake(s) {
     .toLowerCase();
 }
 
+/**
+ * 测试类名（v0.65）：testOrderFlow → OrderFlowTest。
+ *
+ * 和 methodName 分开：方法名是 testOrderFlow，类名是 OrderFlowTest。
+ * 用 camel/pascal 的直觉规则：去掉 test / test_ 前缀，再 PascalCase + Test。
+ */
+function flowClassName(input) {
+  const explicit = String((input && input.testName) || '').trim() || 'testFlow';
+  let base = explicit.replace(/^test_?/i, '');
+  if (!base) base = 'Flow';
+  const pascal = base
+    .replace(/[^A-Za-z0-9]+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join('');
+  return (pascal || 'Flow') + 'Test';
+}
+
+/**
+ * 把「方法 + import 清单」包成真正能编译的文件（v0.65）。
+ *
+ * 和 uiStepGen.wrapAsFile 是同一个问题的同一套修法 ——
+ * 接口积木以前也只交出去 `imports.join('\n') + '\n\n' + code`，
+ * imports 是裸全限定名、code 是孤立方法，粘进 IDE 编译不过。
+ *
+ * ⚠️ **两门语言的处理不同，别统一**：
+ *   · Java：TestNG 要求 @Test 在类里 → 补 package + import + class 包裹；
+ *   · Python：这边的产物是**模块级函数**（`def test_xxx():` 且没有 self，
+ *     用的是 requests 而不是 self.page）。pytest 直接收集顶层 test_ 函数即可，
+ *     包进 class 反而变成「缺 self 参数」的错方法。
+ */
+function wrapAsFlowFile(o) {
+  const lang = (o && o.lang) === 'python' ? 'python' : 'java';
+  const code = String((o && o.code) || '');
+  if (!code.trim()) return '';
+  const imports = Array.isArray(o.imports) ? o.imports.filter(Boolean) : [];
+  const className = String((o && o.className) || 'FlowTest');
+  const pkg = String((o && o.packageName) || '').trim();
+
+  if (lang === 'java') {
+    const importLines = imports.map((i) => 'import ' + i + ';');
+    const head = [];
+    if (pkg) head.push('package ' + pkg + ';', '');
+    if (importLines.length) head.push.apply(head, importLines.concat(['']));
+    const body = code
+      .split('\n')
+      .map((l) => (l.trim() === '' ? '' : '    ' + l))
+      .join('\n');
+    // head 已以空串结尾，再补一个换行才是「import 块 + 空行 + class」
+    return head.join('\n') + '\npublic class ' + className + ' {\n\n' + body + '\n}\n';
+  }
+
+  // Python：implicitly 模块级函数 —— 只补 imports，**不包 class**
+  const head = imports.length ? imports.join('\n') + '\n\n' : '';
+  return head + code + '\n';
+}
+
 /** 测试方法名：显式 testName 优先；Python 一律 test_ 开头 + 下划线 */
 function methodName(input, lang) {
   const explicit = String((input && input.testName) || '').trim();
@@ -604,9 +662,28 @@ function generateApiFlow(o) {
     if (has('extract-regex')) imports.push('import re');
   }
 
+  const finalImports = Array.from(new Set(imports)).sort();
+
+  /**
+   * v0.65：同时给出完整文件（package + import + class 包裹）。
+   * code 保持原样（很多测试逐字比对），复制 / 保存到文件用 fileCode。
+   */
+  const clsName = flowClassName(input);
+  const fileCode = wrapAsFlowFile({
+    code: lines.join('\n'),
+    imports: finalImports,
+    className: clsName,
+    packageName: input.packageName,
+    lang
+  });
+
   return {
     code: lines.join('\n'),
-    imports: Array.from(new Set(imports)).sort(),
+    /** 完整可编译文件；空步骤时为 '' */
+    fileCode,
+    /** 推导出来的测试类名 */
+    testClassName: clsName,
+    imports: finalImports,
     warnings,
     variables: ctx.varList.map((v) => ({ name: v.name, fromStep: v.fromStep, type: v.type }))
   };
@@ -614,6 +691,8 @@ function generateApiFlow(o) {
 
 module.exports = {
   generateApiFlow,
+  flowClassName,
+  wrapAsFlowFile,
   // 拆出来给单测 / 前端复用（不重复实现一遍转义和引用解析）
   splitVars,
   normalizeRefs,

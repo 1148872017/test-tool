@@ -447,15 +447,20 @@ class <%= className %>(BaseModel):
  * ============================================================ */
 
 /**
- * v0.64：自动化测试基类（Java + Playwright）。
+ * v0.65：自动化测试基类（Java + Playwright）—— 按架构评审重写过。
  *
- * 用户那段「每个自动化启动的第一步」的代码，做成一个生成目标。
- * 为什么不放积木里：积木产物是**一个方法体**，而这段是**类级别**的东西
- * （静态字段 + 生命周期方法），塞进方法体会编译不过。
+ * 相对 v0.64 的四点改动（都是评审指出的硬伤）：
+ *   1. 类改 abstract：TestNG 扫包时不会把它当「空测试类」跑一遍（以前会白起一次浏览器）；
+ *   2. 字段去 static：static 在基类上是 JVM 级共享，parallel="classes" 时
+ *      B 类的 @BeforeClass 会覆盖 A 的 browser，A 的 @AfterClass 又会去关 B 的浏览器。
+ *      改成实例字段后，每个测试类各有一份；
+ *   3. context/page 搬进 @BeforeMethod：以前建在 @BeforeClass 里，
+ *      整个类的用例共用一个 context —— 上一个用例留下的 cookie / 弹窗会污染下一个。
+ *      现在每个方法一个新 context（newContext 不启浏览器，很轻）；
+ *   4. headless / slowMo 支持 -D 覆盖：默认仍是「边调边看」，但 CI 上能
+ *      -Dheadless=true -DslowMo=0，否则无显示环境会启动即失败。
  *
- * 按用户要求做得尽量短：不读配置文件、不做 firefox/webkit 分支，
- * 就是 chromium + headless=false + slowMo=500（边调边看）。想改行为改这两行注释处。
- * 比原稿多的只有 @AfterClass —— 不然每跑一次就留一个浏览器进程。
+ * 为什么不放积木：积木产物是一个方法体，而这是类级别的东西（字段 + 生命周期方法）。
  */
 const TPL_JAVA_PLAYWRIGHT_BASE = `package com.test.base;
 
@@ -466,26 +471,40 @@ import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
 
 import org.testng.annotations.AfterClass;
+import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeClass;
+import org.testng.annotations.BeforeMethod;
 
 /**
- * 自动化测试基类：起浏览器 + 收尾。
+ * 自动化测试基类：浏览器生命周期 + 每个用例独立上下文。
  *
- * 用法：测试类继承它，方法体里直接用 page / context：
+ * 用法：测试类继承它，方法体里直接用 page：
  *   public class LoginTest extends <%= className %> {
  *       @Test
  *       public void testLogin() {
- *           page.navigate("/login");
+ *           page.navigate("https://example.com/login");
  *       }
  *   }
+ *
+ * 可选启动参数（不传就用默认值）：
+ *   -Dheadless=true    无头模式（CI 必传，默认 false = 看得见窗口）
+ *   -DslowMo=0         每步延迟毫秒（默认 500，方便看；正式跑建议 0）
+ *
+ * 也可以在自己的 @BeforeMethod 里覆盖 setUpMethod，改成带 baseURL 的 context：
+ *   context = browser.newContext(new Browser.NewContextOptions()
+ *           .setBaseURL("https://example.com"));
+ * 设了 baseURL 之后，方法体里就能写 page.navigate("/login")。
  */
-public class <%= className %> {
+public abstract class <%= className %> {
 
-    // 整个测试类共享：Playwright / Browser 起一次就够（很重）
-    protected static Playwright playwright;
-    protected static Browser browser;
+    /**
+     * 每个测试类一份（故意不用 static：static 在基类上是 JVM 级共享，
+     * 开 TestNG parallel="classes" 时会互相关掉对方的浏览器）。
+     */
+    protected Playwright playwright;
+    protected Browser browser;
 
-    // 每个测试方法一套
+    /** 每个测试方法一份：新 context 自带干净的 cookie / localStorage */
     protected BrowserContext context;
     protected Page page;
 
@@ -494,32 +513,54 @@ public class <%= className %> {
         playwright = Playwright.create();
         browser = playwright.chromium().launch(
                 new BrowserType.LaunchOptions()
-                        .setHeadless(false)   // 想后台跑就改 true
-                        .setSlowMo(500));     // 每步慢 500ms，方便看；正式跑改 0
+                        // 想后台跑：-Dheadless=true（CI 上必须，否则启动即失败）
+                        .setHeadless(Boolean.parseBoolean(System.getProperty("headless", "false")))
+                        // 每步慢 N 毫秒，方便看；正式跑：-DslowMo=0
+                        .setSlowMo(Double.parseDouble(System.getProperty("slowMo", "500"))));
+    }
+
+    /** 每个用例开始前：新上下文 + 新页面（用例之间互不污染） */
+    @BeforeMethod(alwaysRun = true)
+    public void setUpMethod() {
         context = browser.newContext();
         page = context.newPage();
     }
 
-    /**
-     * 收尾：先关 context（连带 page），再关 browser，最后关 playwright。
-     * 少关一层就留一个后台进程；alwaysRun 保证用例失败时也执行。
-     */
+    /** 每个用例结束后：关上下文（连带页面），浏览器留着给下一个用例 */
+    @AfterMethod(alwaysRun = true)
+    public void tearDownMethod() {
+        if (context == null) return;
+        try {
+            context.close();
+        } catch (Exception e) {
+            // 不往上抛（别让收尾异常盖住用例本身的失败），但要留痕
+            System.err.println("关闭 context 失败：" + e.getMessage());
+        } finally {
+            context = null;
+            page = null;
+        }
+    }
+
+    /** 整个测试类结束后：关浏览器和 Playwright */
     @AfterClass(alwaysRun = true)
     public void tearDownClass() {
-        try {
-            if (context != null) context.close();
-        } catch (Exception ignore) {
-            // 浏览器已经崩了也不影响收尾
+        if (browser != null) {
+            try {
+                browser.close();
+            } catch (Exception e) {
+                System.err.println("关闭 browser 失败：" + e.getMessage());
+            } finally {
+                browser = null;
+            }
         }
-        try {
-            if (browser != null) browser.close();
-        } catch (Exception ignore) {
-            // 同上
-        }
-        try {
-            if (playwright != null) playwright.close();
-        } catch (Exception ignore) {
-            // 同上
+        if (playwright != null) {
+            try {
+                playwright.close();
+            } catch (Exception e) {
+                System.err.println("关闭 playwright 失败：" + e.getMessage());
+            } finally {
+                playwright = null;
+            }
         }
     }
 }
@@ -535,34 +576,8 @@ const TARGETS = [
     ext: '.java',
     tpl: TPL_JAVA_RESTASSURED,
     kind: 'api'
-  },
-  {
-    key: 'python-pytest',
-    label: 'Python · pytest + requests',
-    desc: '接口测试类骨架（pytest + requests）',
-    lang: 'python',
-    ext: '.py',
-    tpl: TPL_PYTHON_PYTEST,
-    kind: 'api'
-  },
-  {
-    key: 'playwright-java',
-    label: 'Java · Playwright POM',
-    desc: '页面对象类（Page Object Model）',
-    lang: 'java',
-    ext: '.java',
-    tpl: TPL_PLAYWRIGHT_JAVA,
-    kind: 'page'
-  },
-  {
-    key: 'playwright-python',
-    label: 'Python · Playwright POM',
-    desc: '页面对象类（Page Object Model）',
-    lang: 'python',
-    ext: '.py',
-    tpl: TPL_PLAYWRIGHT_PYTHON,
-    kind: 'page'
-  },
+  }
+,
   {
     key: 'pojo-java',
     label: 'Java · POJO（Lombok）',
@@ -571,7 +586,42 @@ const TARGETS = [
     ext: '.java',
     tpl: TPL_POJO_JAVA,
     kind: 'model'
-  },
+  }
+,
+  {
+    key: 'playwright-java',
+    label: 'Java · Playwright POM',
+    desc: '页面对象类（Page Object Model）',
+    lang: 'java',
+    ext: '.java',
+    tpl: TPL_PLAYWRIGHT_JAVA,
+    kind: 'page'
+  }
+,
+  {
+    /**
+     * v0.64：自动化测试基类。
+     * 不需要任何数据源 —— 它就是「新建一个自动化项目时的第一个文件」。
+     */
+    key: 'java-playwright-base',
+    label: 'Java · Playwright 测试基类',
+    desc: '浏览器生命周期 + 每个用例独立上下文（新建自动化项目先要这个）',
+    lang: 'java',
+    ext: '.java',
+    tpl: TPL_JAVA_PLAYWRIGHT_BASE,
+    kind: 'base'
+  }
+,
+  {
+    key: 'python-pytest',
+    label: 'Python · pytest + requests',
+    desc: '接口测试类骨架（pytest + requests）',
+    lang: 'python',
+    ext: '.py',
+    tpl: TPL_PYTHON_PYTEST,
+    kind: 'api'
+  }
+,
   {
     key: 'dataclass-python',
     label: 'Python · Pydantic 模型',
@@ -580,19 +630,16 @@ const TARGETS = [
     ext: '.py',
     tpl: TPL_DATACLASS_PYTHON,
     kind: 'model'
-  },
+  }
+,
   {
-    /**
-     * v0.64：自动化测试基类。
-     * 不需要任何数据源 —— 它就是「新建一个自动化项目时的第一个文件」。
-     */
-    key: 'java-playwright-base',
-    label: 'Java · Playwright 测试基类',
-    desc: '浏览器生命周期 + 配置读取（新建自动化项目先要这个）',
-    lang: 'java',
-    ext: '.java',
-    tpl: TPL_JAVA_PLAYWRIGHT_BASE,
-    kind: 'base'
+    key: 'playwright-python',
+    label: 'Python · Playwright POM',
+    desc: '页面对象类（Page Object Model）',
+    lang: 'python',
+    ext: '.py',
+    tpl: TPL_PLAYWRIGHT_PYTHON,
+    kind: 'page'
   }
 ];
 
@@ -938,6 +985,28 @@ function generate(targetKey, input = {}) {
     return { ok: false, message: '未知的生成类型' };
   }
 
+  /**
+   * v0.65：类名必须能当 Java/Python 标识符，也必须能当**文件名**。
+   *
+   * 以前这里什么都不校验，两个后果都实测过：
+   *   · className = '../evil' → filename 变成 '../evil.java'，
+   *     path.join(dir, ...) 直接把文件写到用户所选目录之外（路径穿越）；
+   *   · className = 'Base Test' → 生成 `public class Base Test`，编译不过而且没有提示。
+   *
+   * 注意 Java 允许 Unicode 标识符，所以「我的基类」这种中文名是**合法**的，
+   * 这里不拦中文，只拦空格、数字开头、连字符、路径分隔符这些真不合法的。
+   */
+  if (ctx && typeof ctx.className === 'string') {
+    if (!isSafeIdent(ctx.className)) {
+      return {
+        ok: false,
+        message:
+          '类名「' + ctx.className + '」不能当标识符/文件名：' +
+          '要用字母或下划线开头，只能包含字母、数字、下划线（中文也可以），不能有空格或 / \\ .. 等符号'
+      };
+    }
+  }
+
   let code;
   try {
     // 代码生成不需要 HTML 转义（否则 List<Object> 会变成 List&lt;Object&gt;）
@@ -964,20 +1033,67 @@ function generate(targetKey, input = {}) {
   return { ok: true, code, filename, target };
 }
 
-/** 生成目标列表（给前端下拉） */
+/**
+ * 能不能当标识符 + 文件名（v0.65）。
+ *
+ * 允许：字母 / 下划线 / $ 开头，后面字母数字下划线 $，**含中文等 Unicode 字母**
+ * 不允许：空格、连字符、点、斜杠、反斜杠、冒号、星号、问号、引号、尖括号、竖线、
+ *         路径穿越片段（..）、以数字开头、空串
+ *
+ * 这套规则同时满足：Java 标识符、Python 标识符（放宽后）、单段文件名。
+ * 实测过的两个事故：className='../evil' 会把文件写到所选目录之外；
+ * className='Base Test' 会生成 `public class Base Test`，编译不过且没有提示。
+ */
+function isSafeIdent(name) {
+  const n = String(name === undefined || name === null ? '' : name).trim();
+  if (!n) return false;
+  if (n.indexOf('..') >= 0) return false;
+  if (/[\s/\\:*?"<>|]/.test(n)) return false;
+  // 首字符：Unicode 字母 / _ / $；其余：Unicode 字母 / 数字 / _ / $
+  return /^[\p{L}_$][\p{L}\p{N}_$]*$/u.test(n);
+}
+
+/**
+ * 生成目标列表（给前端下拉）。
+ *
+ * v0.65 起**显式排序**，不依赖 TARGETS 数组的书写顺序：
+ *   先按语言（Java 在前，Python 在后），同语言内按类别
+ *   接口类(api) → POJO(model) → UI类(page) → UI基类(base)。
+ *
+ * 这样以后新增目标只要 `kind` 填对，就自动落到该去的位置，
+ * 不用再手工挪数组（v0.64 就是随手 append 到末尾，UI 类的基类排在了 POJO 后面）。
+ */
+const TARGET_LANG_ORDER = { java: 0, python: 1 };
+const TARGET_KIND_ORDER = { api: 0, model: 1, page: 2, base: 3 };
+
+function targetSortKey(t) {
+  const l = TARGET_LANG_ORDER[t.lang];
+  const k = TARGET_KIND_ORDER[t.kind];
+  return [l === undefined ? 99 : l, k === undefined ? 99 : k];
+}
+
 function listTargets() {
-  return TARGETS.map((t) => ({
-    key: t.key,
-    label: t.label,
-    desc: t.desc,
-    lang: t.lang,
-    ext: t.ext,
-    kind: t.kind
-  }));
+  return TARGETS.slice()
+    .sort((a, b) => {
+      const [la, ka] = targetSortKey(a);
+      const [lb, kb] = targetSortKey(b);
+      if (la !== lb) return la - lb;
+      if (ka !== kb) return ka - kb;
+      return 0;
+    })
+    .map((t) => ({
+      key: t.key,
+      label: t.label,
+      desc: t.desc,
+      lang: t.lang,
+      ext: t.ext,
+      kind: t.kind
+    }));
 }
 
 module.exports = {
   generate,
+  isSafeIdent,
   listTargets,
   buildContext,
   fieldsFromJson,

@@ -10,7 +10,7 @@ import {
   SaveOutlined
 } from '@ant-design/icons';
 import { API_ACTIONS, API_ACTION_CATEGORIES, actionById } from '../../../shared/apiActions';
-import { generateApiFlow } from '../../../shared/apiFlowGen';
+import { generateApiFlow, wrapAsFlowFile } from '../../../shared/apiFlowGen';
 import {
   apiFlowRecordData,
   apiFlowsOnly,
@@ -115,6 +115,8 @@ export default function ApiBricksPanel(props: Props) {
   const [manual, setManual] = useState<string | null>(null);
   /** v0.62：默认高亮块，点「编辑」切 textarea（和 UI 积木面板保持一致） */
   const [editing, setEditing] = useState(false);
+  /** v0.65：可选包名（空 = 不写 package 行） */
+  const [packageName, setPackageName] = useState('');
   const [saveOpen, setSaveOpen] = useState(false);
   const [flowName, setFlowName] = useState('');
   const [flowNote, setFlowNote] = useState('');
@@ -132,9 +134,10 @@ export default function ApiBricksPanel(props: Props) {
         steps: toGeneratorSteps(steps),
         lang,
         baseUrl,
-        testName
+        testName,
+        packageName
       }),
-    [steps, lang, baseUrl, testName]
+    [steps, lang, baseUrl, testName, packageName]
   );
 
   // 代码变了就把手改的内容交还给生成器（否则用户改一次，后面所有步骤都停在旧文本上）
@@ -143,7 +146,23 @@ export default function ApiBricksPanel(props: Props) {
   }, [gen.code]);
 
   const shown = manual === null ? gen.code : manual;
-  const copyText = gen.imports.length ? gen.imports.join('\n') + '\n\n' + shown : shown;
+  /**
+   * 交给 IDE 的文本（复制 / 保存到文件）—— v0.65 起是完整文件。
+   *
+   * 以前是 `gen.imports.join('\n') + '\n\n' + shown`：imports 是裸全限定名、
+   * shown 是孤立方法，粘进 IDE 编译不过（和 UI 积木同一个病）。
+   * 手改过就用手改内容重新包一次。
+   */
+  const copyText =
+    manual === null
+      ? gen.fileCode || shown
+      : wrapAsFlowFile({
+          code: shown,
+          imports: gen.imports,
+          className: gen.testClassName,
+          packageName,
+          lang
+        });
 
 
   /* ---------------- 流程模板：保存 / 载入 ---------------- */
@@ -380,6 +399,20 @@ export default function ApiBricksPanel(props: Props) {
           allowClear
           onChange={(e) => setTestName(e.target.value)}
         />
+        {/* v0.65：可选包名（只有 Java 用得上；Python 是模块级函数，没有包的概念） */}
+        {lang === 'java' ? (
+          <>
+            <span className="muted">包名</span>
+            <Input
+              size="small"
+              style={{ width: 150 }}
+              value={packageName}
+              placeholder="可选，如 com.test.api"
+              allowClear
+              onChange={(e) => setPackageName(e.target.value)}
+            />
+          </>
+        ) : null}
         {allVars.length ? (
           <Tag color="blue">
             {'可用变量 ' + allVars.length + ' 个：' + allVars.map((v) => v.name).join('、')}

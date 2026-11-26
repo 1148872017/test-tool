@@ -123,6 +123,81 @@ function testMethodName(o, lang) {
   return lang === 'python' ? 'test_' + (snake(name) || 'flow') : 'test' + name;
 }
 
+/**
+ * 测试**类名**（v0.65）。
+ *
+ * 和 testMethodName 分开：方法名是 testHow2j，类名是 How2jTest。
+ * 注意别和 POM 的页面对象类名（pomClass，如 LoginPage）混了 ——
+ * 那个是**被调用**的类，这个是**装着测试方法的**类，两者不同。
+ *
+ * ⚠️ 两门语言的命名习惯正好相反：
+ *   · Java/TestNG：`How2jTest`（后缀）
+ *   · Python/pytest：`TestHow2j`（**前缀**）—— pytest 默认只收集 `Test*` 开头的类，
+ *     叫 `How2jTest` 的话类里的用例一个都不会被执行。这是实测踩到的坑。
+ */
+function testClassName(o, lang) {
+  const py = lang === 'python';
+  const explicit = String((o && o.className) || '').trim();
+  let base = '';
+  if (explicit) {
+    base = pascal(explicit.replace(/^Test/i, '').replace(/Test$/i, ''));
+  } else {
+    for (const c of [o && o.pageName, o && o.pageUrl]) {
+      const words = asciiWords(c);
+      if (words) {
+        base = pascal(words);
+        break;
+      }
+    }
+  }
+  base = base || 'Flow';
+  return py ? 'Test' + base : base + 'Test';
+}
+
+/**
+ * 把「方法 + import 清单」包成一个**真正能编译的文件**（v0.65）。
+ *
+ * 为什么必须这么做：
+ *   以前积木面板的「复制 / 保存到文件」交出去的是
+ *   `imports.join('\n') + '\n\n' + code` ——
+ *   而 imports 是**裸全限定名**（`com.microsoft.playwright.Page`，没有 import 关键字），
+ *   code 只是**一个孤立方法**（`@Test public void testX() {...}`，没有 class 包裹）。
+ *   粘进 IDE 的结果就是用户实际遇到的那个文件：前几行是裸名字、然后直接 @Test，
+ *   整个文件编译不过。v0.60 起说的「落盘即可编译」是错的，这里补正。
+ *
+ * @param {{code:string, imports:string[], className:string, packageName?:string, lang:string}} o
+ * @returns {string} 完整文件内容
+ */
+function wrapAsFile(o) {
+  const lang = (o && o.lang) === 'python' ? 'python' : 'java';
+  const code = String((o && o.code) || '');
+  if (!code.trim()) return '';
+  const imports = Array.isArray(o.imports) ? o.imports.filter(Boolean) : [];
+  const className = String((o && o.className) || (lang === 'python' ? 'TestFlow' : 'FlowTest'));
+  const pkg = String((o && o.packageName) || '').trim();
+
+  if (lang === 'java') {
+    const importLines = imports.map((i) => 'import ' + i + ';');
+    const head = [];
+    if (pkg) head.push('package ' + pkg + ';', '');
+    if (importLines.length) head.push.apply(head, importLines.concat(['']));
+    const body = code
+      .split('\n')
+      .map((l) => (l.trim() === '' ? '' : INDENT + l))
+      .join('\n');
+    // head 已经以空串结尾（join 后是 "\n"），再补一个换行才是「import 块 + 空行 + class」
+    return head.join('\n') + '\npublic class ' + className + ' {\n\n' + body + '\n}\n';
+  }
+
+  // Python：imports 本身就是完整语句（from ... import ...），不用加关键字
+  const head = imports.length ? imports.join('\n') + '\n\n' : '';
+  const body = code
+    .split('\n')
+    .map((l) => (l.trim() === '' ? '' : INDENT + l))
+    .join('\n');
+  return head + 'class ' + className + ':\n' + body + '\n';
+}
+
 /* ============================================================
  * 参数替换
  * ============================================================ */
@@ -384,9 +459,32 @@ function generateSteps(o) {
     imports.push('from playwright.sync_api import expect');
   }
 
+  const finalImports = Array.from(new Set(imports)).sort();
+
+  /**
+   * v0.65：同时给出 `fileCode` —— 一个**真正能编译的完整文件**。
+   *
+   * code 保持原样（一个方法体），因为：
+   *   · 很多测试逐字比对了 code（改了会大面积红）；
+   *   · 有些场景用户就是想拿一段方法体贴进自己已有类里。
+   * 而「复制 / 保存到文件」用的是 fileCode —— 那是要交给 IDE 的东西。
+   */
+  const clsName = testClassName(input, lang);
+  const fileCode = wrapAsFile({
+    code: lines.join('\n'),
+    imports: finalImports,
+    className: clsName,
+    packageName: input.packageName,
+    lang
+  });
+
   return {
     code: lines.join('\n'),
-    imports: Array.from(new Set(imports)).sort(),
+    /** 完整文件（package + import 语句 + class 包裹）；空步骤时为 '' */
+    fileCode,
+    /** 推导出来的测试类名（fileCode 里用的就是它） */
+    testClassName: clsName,
+    imports: finalImports,
     warnings,
   };
 }
@@ -396,6 +494,8 @@ module.exports = {
   generateSteps,
   pomClassNameFromPage,
   testMethodName,
+  testClassName,
+  wrapAsFile,
   camel,
   pascal,
   snake,

@@ -10,8 +10,8 @@
 
 | 项 | 值 |
 |---|---|
-| 当前版本 | **v0.64.0** |
-| 测试基线 | **64 个套件 / 5125 项**（unit 60 + env 4） |
+| 当前版本 | **v0.65.0** |
+| 测试基线 | **64 个套件 / 5204 项**（unit 61 + env 4） |
 | 运行环境 | Windows 10/11（x64），安装包约 120 MB |
 | 数据位置 | `%APPDATA%\测试工作台\` |
 
@@ -338,11 +338,39 @@ where order_no = {{orderNo}} and create_time > {{today}}
 
 | 按钮 | 作用 |
 |---|---|
-| **保存到文件** | 选一个目录，直接落盘成 `<页面名>Test.java` / `test_<页面名>.py`，**带 import，能直接编译** |
-| 复制 | 粘到 IDE 里自己建文件 |
+| **保存到文件** | 选一个目录，落盘成 `<页面名>Test.java` / `test_<页面名>.py`（**完整文件**：package + import + class 包裹） |
+| 复制 | 同样是完整文件，粘到 IDE 里就是一个能编译的类 |
 | 清空 | 清掉已拼的步骤 |
 
 > 保存写的就是**面板里当前那段代码**（手改过也按你改的存），不是重新生成一遍。
+
+**交出去的是完整文件，不是片段**（v0.65 修）。以前复制/保存出去的其实是：
+
+```
+com.microsoft.playwright.Page        ← 裸全限定名，没有 import 关键字
+@Test                                ← 孤立方法，没有 class 包裹
+```
+
+粘进 IDE 直接编译不过。现在出去的是：
+
+```java
+package com.test.test;               // 工具条「包名」填了才有
+
+import com.microsoft.playwright.Page;
+
+public class How2jTest {
+
+    @Test
+    public void testLogin() {
+        // 1. 打开地址 /login
+        page.navigate("/login");
+    }
+}
+```
+
+> 类名按语言习惯自动区分：Java 是 `How2jTest`（后缀），Python 是 `TestHow2j`（**前缀** ——
+> pytest 默认只收集 `Test*` 开头的类，叫 `How2jTest` 的话一个用例都不会跑）。
+> 工具条上的「包名」可选，空着就不写 package 行。
 
 **代码会带步骤注释**（v0.61）：每个积木生成的语句上方都有一行人话，序号和「已选步骤」对得上——
 
@@ -526,12 +554,13 @@ public class BaseTest {
 public class LoginTest extends BaseTest {
     @Test
     public void testLogin() {
-        page.navigate("/login");
+        page.navigate("https://example.com/login");
     }
 }
 ```
 
-> 生成的是**完整可编译的文件**（含 package 与 import），点「保存到文件」落盘即可。
+> 生成的是**完整文件**（package + import + class），点「保存到文件」落盘即可，用 `javac` 能过语法检查。
+> 示例用绝对地址：基类没设 `baseURL`，写 `"/login"` 是跑不起来的（注释里写了怎么加 baseURL）。
 > `@AfterClass` 是平台加的：不给收尾的话，每跑一次就留一个浏览器进程。
 
 **生成出来长什么样**（Java REST Assured，节选）：
@@ -998,7 +1027,7 @@ v0.56 修的就是这个：以前平台用「启动的进程是否还活着」�
 | 前端 | React 18.3 + antd 5.29 + TypeScript（esbuild 转译，不跑 tsc） |
 | 数据 | sql.js（WASM SQLite）→ `data.db`，整库重写 + tmp/fsync/rename |
 | 打包 | electron-builder（NSIS） |
-| 测试 | 自研轻量脚本，**64 套件 / 5125 项**，分 unit / env 两档 |
+| 测试 | 自研轻量脚本，**64 套件 / 5204 项**，分 unit / env 两档 |
 
 ### 常用命令
 
@@ -1009,9 +1038,9 @@ npm install
 node scripts/build.mjs        # 生产构建
 node scripts/build.mjs -- --preview   # 预览构建（含 mock，浏览器可开）
 
-npm test                      # unit 档 60 套件 / 4982 项（自检先跑）
+npm test                      # unit 档 60 套件 / 5061 项（自检先跑）
 npm run test:env              # env 档 4 套件 / 127 项（需设 4 个目录变量）
-npm run test:all              # 全量 64 套件 / 5125 项
+npm run test:all              # 全量 64 套件 / 5204 项
 npm run test:gui              # 只跑 GUI 冒烟（19 路由 + 5 类交互，约 26 秒）
 npm run check                 # 只跑提交前自检
 npm run dist:installer        # 打 NSIS 安装包

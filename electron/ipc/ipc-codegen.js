@@ -131,6 +131,24 @@ function attachApiInput(input, payload, store) {
 function register(deps) {
   const { handle, dialog, store, fs, path, getWindow, assertUnlocked, assertPathIn, rememberPicked } = deps;
 
+  /**
+   * v0.65：每个生成目标上次保存到哪个目录（会话级）。
+   * 不给记住的话，用户每次点「保存到文件」都要从 C:\ 一路翻，
+   * 而且很容易把同名文件存到三四个不同目录，最后 `duplicate class`。
+   */
+  const lastDirByTarget = new Map();
+
+  /** 写文件并包一层统一的错误信息（覆盖确认里「另存到别的目录」分支也用它） */
+  function writeCodeFile(full, code, filename) {
+    try {
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, code, 'utf8');
+      return { ok: true, file: full, filename };
+    } catch (err) {
+      return { ok: false, message: '写文件失败：' + (err && err.message) };
+    }
+  }
+
   /* ==================== 代码骨架生成 ==================== *
    * 从接口记录 / JSON / 页面元素生成 Java/Python 代码骨架。
    * 纯模板替换，不做 AST。
@@ -218,8 +236,23 @@ function register(deps) {
     const gen = inlineCode ? { ok: true, code: inlineCode, filename: inlineName } : codegen.generate(targetKey, input);
     if (!gen.ok) return gen;
 
-    // 选目录
-    let dir = wantDir;
+    /**
+     * v0.65：**生成名的 filename 也要过一遍守卫**。
+     *
+     * v0.60 加 checkInlineFilename 时只守了 inline 分支，生成名分支一直没守 ——
+     * 实测 className='../evil' 会让 filename 变成 '../evil.java'，
+     * path.join(dir, ...) 直接把文件写到用户所选目录之外。
+     * 现在 className 在 codegen 里已经会拦（isSafeIdent），这里是第二道防线。
+     */
+    const badGenName = checkInlineFilename(gen.filename, targetKey);
+    if (badGenName) return badGenName;
+
+    // 选目录：优先用上次给这个目标选过的目录（省得每次都翻）
+    let dir = wantDir || lastDirByTarget.get(targetKey) || '';
+    if (dir && wantDir) {
+      // 显式传了 dir，照旧记一下，下次同一目标默认用它
+      lastDirByTarget.set(targetKey, dir);
+    }
     if (!dir) {
       const picked = await dialog.showOpenDialog(getWindow(), {
         title: '选择保存目录',
@@ -230,10 +263,45 @@ function register(deps) {
       // 用户明确选过的目录 → 本会话可信根
       rememberPicked(dir);
     }
+    lastDirByTarget.set(targetKey, dir);
+
+    const full = path.join(dir, gen.filename);
+
+    /**
+     * v0.65：已存在就先问，别静默覆盖。
+     *
+     * 为什么必须问：模板注释和 README 都引导用户「改这两行」，也就是说
+     * 这个文件**注定会被手改**；而「保存到文件」很可能又被点一次
+     * （尤其目录被记住之后），writeFileSync 会无声地把用户改的内容抹掉。
+     */
+    if (fs.existsSync(full)) {
+      const answer = await dialog.showMessageBox(getWindow(), {
+        type: 'warning',
+        title: '文件已存在',
+        message: '这个目录里已经有 ' + gen.filename + ' 了',
+        detail: full + '\n\n覆盖会丢掉你对这个文件做过的修改（比如改过 setHeadless / setSlowMo）。',
+        buttons: ['覆盖', '另存到别的目录', '取消'],
+        defaultId: 1,
+        cancelId: 2,
+        noLink: true
+      });
+      if (answer.response === 2) return { ok: false, canceled: true };
+      if (answer.response === 1) {
+        const picked = await dialog.showOpenDialog(getWindow(), {
+          title: '另存为：选择目录',
+          properties: ['openDirectory']
+        });
+        if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+        dir = picked.filePaths[0];
+        rememberPicked(dir);
+        lastDirByTarget.set(targetKey, dir);
+        return writeCodeFile(path.join(dir, gen.filename), gen.code, gen.filename);
+      }
+      // response === 0：覆盖，往下走
+    }
 
     try {
       fs.mkdirSync(dir, { recursive: true });
-      const full = path.join(dir, gen.filename);
       fs.writeFileSync(full, gen.code, 'utf8');
       return { ok: true, file: full, filename: gen.filename };
     } catch (err) {
