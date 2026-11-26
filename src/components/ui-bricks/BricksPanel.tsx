@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Empty, Input, Radio, Select, Space, Tag } from 'antd';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Button, Empty, Input, Radio, Select, Space, Tag, Tooltip } from 'antd';
 import {
   PlusOutlined,
   ArrowUpOutlined,
@@ -7,7 +7,8 @@ import {
   DeleteOutlined,
   CopyOutlined,
   ClearOutlined,
-  SaveOutlined
+  SaveOutlined,
+  FolderOpenOutlined
 } from '@ant-design/icons';
 import { UI_ACTIONS, UI_ACTION_CATEGORIES, actionById } from '../../../shared/uiActions';
 import { generateSteps, pomClassNameFromPage } from '../../../shared/uiStepGen';
@@ -28,6 +29,7 @@ try {
 }
 import {
   POM_MODE_OPTIONS,
+  POM_MODE_HINTS,
   defaultFlowName,
   elementOptions,
   flowPom,
@@ -80,6 +82,16 @@ type Props = {
   onSave?: (text: string) => void;
   /** 「流程模板」集合的记录：工具条「载入流程」下拉从这里出 */
   flows?: any[];
+  /**
+   * v0.63：从「流程模板」编辑页点「去生成代码」跳过来时带的流程 id。
+   * 面板挂载后自动载入这条流程（不用再去下拉里找一遍）。
+   */
+  openFlowId?: string;
+  /**
+   * v0.63：「选择已有类」的「选文件」动作。
+   * 返回 { ok, className, source, message }；不传就不渲染那个按钮（测试里也不传）。
+   */
+  onPickClass?: () => Promise<any>;
   /**
    * 保存为流程：调用方负责写 flows 记录（组件不碰 api / toast，测试才好跑）。
    * 返回 false = 没存上，面板据此不关弹窗。
@@ -140,6 +152,8 @@ export default function BricksPanel(props: Props) {
     onCopy,
     onSave,
     flows,
+    openFlowId,
+    onPickClass,
     onSaveFlow,
     onNotify,
     pomReady,
@@ -172,6 +186,11 @@ export default function BricksPanel(props: Props) {
    * textarea 没有行号也没有高亮，同样是生成出来的代码，别处好看这里白底黑字。
    */
   const [editing, setEditing] = useState(false);
+  /**
+   * v0.63：「选择已有类」点「选文件」后的结果提示。
+   * ok = 从文件里读到了 class 声明；warn = 只用文件名推的（可能不准）；error = 读不了。
+   */
+  const [pickHint, setPickHint] = useState<{ tone: 'ok' | 'warn' | 'error'; text: string } | null>(null);
   /** 「保存为流程」弹窗 */
   const [saveOpen, setSaveOpen] = useState(false);
   const [flowName, setFlowName] = useState('');
@@ -291,8 +310,7 @@ export default function BricksPanel(props: Props) {
    * 页面还在就自动选中（元素从页面来）；页面被删了只提示、不清空步骤 ——
    * 步骤里带着选元素时的定位快照，换个页面重选元素仍能接着用。
    */
-  const loadFlow = (id: string) => {
-    const rec = flowList.find((f: any) => f && f.id === id);
+  const loadFlow = (id: string) => {    const rec = flowList.find((f: any) => f && f.id === id);
     if (!rec) return;
     const data = rec.data || {};
     const restored = parseFlowSteps(data.steps);
@@ -328,6 +346,22 @@ export default function BricksPanel(props: Props) {
   useEffect(() => {
     if (onStateChange) onStateChange({ steps, pomMode, pomClass, pomVar });
   }, [steps, pomMode, pomClass, pomVar]);
+
+  /**
+   * v0.63：从「流程模板」跳过来时自动载入那一条。
+   *
+   * 只在第一次成功载入后停止（appliedRef）：用户随后手动载入别的流程、
+   * 或者自己改步骤，都不该被这个 effect 又拉回原来那条。
+   * flows 是异步来的，所以依赖里带上它 —— 第一次渲染时可能还没数据。
+   */
+  const appliedOpenFlow = useRef(false);
+  useEffect(() => {
+    if (appliedOpenFlow.current || !openFlowId) return;
+    const rec = flowList.find((f: any) => f && String(f.id) === String(openFlowId));
+    if (!rec) return; // 流程列表还没加载完，等下一次
+    appliedOpenFlow.current = true;
+    loadFlow(String(openFlowId));
+  }, [openFlowId, flowList]);
 
   /* ---------------- 步骤增删改移 ---------------- */
   const openNew = (action: any) => {
@@ -489,26 +523,69 @@ export default function BricksPanel(props: Props) {
         <span className="muted" style={{ marginLeft: 6 }}>
           POM
         </span>
-        <Radio.Group
-          size="small"
-          optionType="button"
-          buttonStyle="solid"
-          value={pomMode}
-          options={POM_MODE_OPTIONS}
-          onChange={(e) => setPomMode(e.target.value)}
-        />
+        <Tooltip title={POM_MODE_HINTS[pomMode] || ''}>
+          <Radio.Group
+            size="small"
+            optionType="button"
+            buttonStyle="solid"
+            value={pomMode}
+            options={POM_MODE_OPTIONS}
+            onChange={(e) => setPomMode(e.target.value)}
+          />
+        </Tooltip>
         {pomMode === 'generated' ? (
           <Tag color="geekblue">{'自动类名：' + autoClass}</Tag>
         ) : null}
         {pomMode === 'existing' ? (
-          <Input
-            size="small"
-            style={{ width: 200 }}
-            value={pomClass}
-            onChange={(e) => setPomClass(e.target.value)}
-            placeholder="已有页面对象类名，如 MyLoginPage"
-            allowClear
-          />
+          <>
+            <Input
+              size="small"
+              style={{ width: 200 }}
+              value={pomClass}
+              onChange={(e) => setPomClass(e.target.value)}
+              placeholder="已有页面对象类名，如 MyLoginPage"
+              allowClear
+            />
+            {/*
+              v0.63：光靠手打类名，打错了要等生成出来才发现（生成器不知道你项目里有什么类）。
+              选文件 → 从文件里读出真实的 `class X` 填进来，顺手确认「这个类真的存在」。
+            */}
+            {onPickClass ? (
+              <Button
+                size="small"
+                icon={<FolderOpenOutlined />}
+                onClick={async () => {
+                  try {
+                    const res = await onPickClass();
+                    if (!res || !res.ok) {
+                      if (res && res.canceled) return;
+                      setPickHint({ tone: 'error', text: String((res && res.message) || '没读到类名') });
+                      return;
+                    }
+                    if (res.className) setPomClass(res.className);
+                    setPickHint({
+                      tone: res.source === 'declared' ? 'ok' : 'warn',
+                      text: String(res.message || '')
+                    });
+                  } catch (e: any) {
+                    setPickHint({ tone: 'error', text: String((e && e.message) || e) });
+                  }
+                }}
+              >
+                选文件
+              </Button>
+            ) : null}
+            {pickHint ? (
+              <span
+                style={{
+                  fontSize: 11.5,
+                  color: pickHint.tone === 'ok' ? '#389e0d' : pickHint.tone === 'warn' ? '#d46b08' : '#cf1322'
+                }}
+              >
+                {pickHint.text}
+              </span>
+            ) : null}
+          </>
         ) : null}
         {pomMode !== 'none' ? (
           <>

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Empty, Input, Select, Space, Tag } from 'antd';
 import {
   PlusOutlined,
@@ -58,6 +58,8 @@ type Props = {
   lang: 'java' | 'python';
   /** flows 集合的记录：面板自己按 kind === 'api' 过滤 */
   flows?: any[];
+  /** v0.63：从「流程模板」跳过来时带的流程 id，挂载后自动载入 */
+  openFlowId?: string;
   /** 复制走调用方的剪贴板（组件自己不做副作用） */
   onCopy?: (text: string) => void;
   /** 保存到文件（v0.60）：传出去的是带 import 的完整文本，调用方负责选目录 / 写盘 / toast */
@@ -93,7 +95,7 @@ const PANE_HEAD: React.CSSProperties = {
 };
 
 export default function ApiBricksPanel(props: Props) {
-  const { apis, lang, flows, onCopy, onSave, onSaveFlow, onNotify, initialState, onStateChange } = props;
+  const { apis, lang, flows, openFlowId, onCopy, onSave, onSaveFlow, onNotify, initialState, onStateChange } = props;
 
   /**
    * 初始状态：默认空，但支持从 initialState 恢复 ——
@@ -222,6 +224,16 @@ export default function ApiBricksPanel(props: Props) {
   useEffect(() => {
     if (onStateChange) onStateChange({ steps, baseUrl, testName });
   }, [steps, baseUrl, testName]);
+
+  /** v0.63：从「流程模板」跳过来时自动载入那一条（只生效一次，见 UI 侧同一段注释） */
+  const appliedOpenFlow = useRef(false);
+  useEffect(() => {
+    if (appliedOpenFlow.current || !openFlowId) return;
+    const rec = flowList.find((f: any) => f && String(f.id) === String(openFlowId));
+    if (!rec) return;
+    appliedOpenFlow.current = true;
+    loadFlow(String(openFlowId));
+  }, [openFlowId, flowList]);
 
   /* ---------------- 步骤增删改移 ---------------- */
 

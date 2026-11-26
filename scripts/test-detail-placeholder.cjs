@@ -556,9 +556,14 @@ check('CodegenPage 里扫到 5 个 Select（生成目标 / 接口记录 / 文件
 const missing = selects.filter((s) => !/placeholder=/.test(s));
 check('每个 Select 都有 placeholder（逐个检查，不是只查第一个）', missing.length === 0, missing.map((s) => s.split('\n')[0] + ' ...' + s.slice(-60)));
 
-const apiSelect = selects.find((s) => s.includes('选一个接口记录')) || '';
-check('接口记录下拉的 placeholder 含「接口」字样', /placeholder=\{[^}]*选一个接口记录/.test(apiSelect), apiSelect.slice(0, 200));
-check('接口记录下拉的 value 用 undefined 兜底（antd 的 "" 会吞 placeholder）', /value=\{apiId \|\| undefined\}/.test(apiSelect), apiSelect.slice(0, 200));
+// v0.63：接口记录改成多选，文案是「勾一个或多个接口记录…」，仍然必须含「接口」字样
+const apiSelect = selects.find((s) => s.includes('勾一个或多个接口记录')) || '';
+check('接口记录下拉的 placeholder 含「接口」字样', /placeholder=\{[^}]*勾一个或多个接口记录/.test(apiSelect), apiSelect.slice(0, 200));
+check(
+  '接口记录下拉的 value 用 undefined 兜底（antd 的 "" 会吞 placeholder）',
+  /value=\{apiIds\.length \? apiIds : undefined\}/.test(apiSelect),
+  apiSelect.slice(0, 200)
+);
 
 const fileSelect = selects.find((s) => s.includes('openapiItems.map')) || '';
 check('OpenAPI 文件分支的接口下拉也有 placeholder', /placeholder="[^"]*接口[^"]*"/.test(fileSelect), fileSelect.slice(0, 200));

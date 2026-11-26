@@ -20,6 +20,7 @@ import {
   type PageElement
 } from '../components/PageElementsEditor';
 import { previewLocatorCode } from '../../shared/locatorModes';
+import { takeFlowHandoff } from '../features/flows/handoff';
 
 /**
  * 积木面板用「受保护的 require」加载，而不是写在顶部的静态 import。
@@ -142,12 +143,21 @@ export function groupTargets(list: Target[]): { label: string; options: { value:
 }
 
 export default function CodegenPage() {
+  /**
+   * v0.63：从「流程模板」编辑页点「去生成代码」跳过来的交接（只生效一次）。
+   * 在 useState 初始化里取走 —— 早于任何 fetch，页面渲染时就知道该跳哪个视图。
+   */
+  const [handoffFlow] = useState(() => takeFlowHandoff());
+
   const [targets, setTargets] = useState<Target[]>([]);
   const [targetKey, setTargetKey] = useState('java-restassured');
 
   // 数据源
   const [apis, setApis] = useState<any[]>([]);
-  const [apiId, setApiId] = useState('');
+  /** v0.63：勾选的接口记录（可以多选 → 一个测试类里放多个 @Test 方法） */
+  const [apiIds, setApiIds] = useState<string[]>([]);
+  /** 单选场景的便捷值（只在恰好选中一条时非空）；多选时用 apiIds */
+  const apiId = apiIds.length === 1 ? apiIds[0] : '';
   // 数据源：record = 从接口记录选；file = 直接导入 OpenAPI 文件
   const [apiSource, setApiSource] = useState<'record' | 'file'>('record');
   const [openapiFile, setOpenapiFile] = useState('');
@@ -216,6 +226,23 @@ export default function CodegenPage() {
    */
   const [apiView, setApiView] = useState<'single' | 'bricks'>('single');
   const showApiBricks = isApiBricksTarget && apiView === 'bricks';
+
+  /**
+   * v0.63：从「流程模板」跳过来时，直接落到对应的积木视图：
+   *   UI 流程 → Playwright 目标 + 动作拼装；接口流程 → REST Assured 目标 + 接口流程。
+   * 目标切换放在 effect 里是因为它是一个独立 state —— 直接改初始值会让
+   * 「用户从菜单正常进来」也落到 Playwright 上。
+   */
+  useEffect(() => {
+    if (!handoffFlow) return;
+    if (handoffFlow.kind === 'api') {
+      setTargetKey('java-restassured');
+      setApiView('bricks');
+    } else {
+      setTargetKey('playwright-java');
+      setPageView('bricks');
+    }
+  }, [handoffFlow]);
   /** 两个积木视图都会顶掉工具条上的「生成预览 / 保存到文件 / 复制」 */
   const inBricksView = showBricks || showApiBricks;
   /**
@@ -336,12 +363,13 @@ export default function CodegenPage() {
           }
           payload.apiData = d;
         } else {
-          if (!apiId) {
-            toast('请先选一个接口', 'warning');
+          if (!apiIds.length) {
+            toast('请先选至少一个接口', 'warning');
             setBusy(false);
             return;
           }
-          payload.apiId = apiId;
+          // 勾了多个 → 后端会查库逐条取出，生成「一个类 + 多个 @Test 方法」
+          payload.apiIds = apiIds;
         }
       } else if (kind === 'page') {
         const els = filledElements();
@@ -391,7 +419,7 @@ export default function CodegenPage() {
       const payload: any = { targetKey, className };
       if (kind === 'api') {
         if (apiSource === 'file') payload.apiData = currentApiData();
-        else payload.apiId = apiId;
+        else payload.apiIds = apiIds;
       } else if (kind === 'page') {
         const els = filledElements();
         if (!els.length) {
@@ -653,11 +681,14 @@ export default function CodegenPage() {
             onSave={doSaveBricks}
             /* ---- 流程模板：保存 / 载入 ---- */
             flows={flows}
+            openFlowId={handoffFlow && handoffFlow.kind !== 'api' ? handoffFlow.id : ''}
             onSaveFlow={doSaveFlow}
             onNotify={doNotifyBricks}
             /* ---- 「用本页生成的」：这个页面的 POM 类生成了没 ---- */
             pomReady={pomReadyKeys.indexOf(pomKeyOf()) >= 0}
             onGoGeneratePom={doGoPom}
+            /* v0.63：「选择已有类」的选文件 —— 面板不碰 api，回调走这里 */
+            onPickClass={() => api.codegenPickClass()}
             /* 切换视图会卸载面板：状态回传给页面，回来时原样恢复 */
             initialState={bricksStateRef.current}
             onStateChange={(s: any) => {
@@ -677,6 +708,7 @@ export default function CodegenPage() {
             lang={previewLang}
             /* 只喂接口流程；UI 流程在 flows 里，两块面板不串台 */
             flows={apiFlows}
+            openFlowId={handoffFlow && handoffFlow.kind === 'api' ? handoffFlow.id : ''}
             onCopy={doCopyBricks}
             onSave={doSaveBricks}
             onSaveFlow={doSaveFlow}
@@ -712,43 +744,59 @@ export default function CodegenPage() {
               {apiSource === 'record' ? (
                 <>
                   {/*
-                    接口记录下拉的 placeholder 提示 v0.44 就写了，但**一直没显示出来**：
-                    antd v5 的 Select 把受控的 `value=""` 当成「已选中一个空值」，placeholder 不渲染
-                    （react-dom/server 实测：value="" 不出 placeholder，value=undefined 才出）。
-                    apiId 的初值就是 ''，所以这里必须 `apiId || undefined`，否则用户看到的是个空白下拉，
-                    正是「接口记录缺少 Placeholder 提示」的来源。
+                    v0.63：从单选改成**多选** —— 真实接口测试很少一个接口一个类，
+                    勾多条会生成「一个测试类 + 每个接口一个 @Test 方法」，共用 setUp。
+                    仍兼容单条：只勾一条就是以前的行为（走同一份老模板，产物字节不变）。
+
+                    placeholder：antd v5 把受控的 `value=""` 当成「已选中空值」，
+                    所以这里传 undefined 才会渲染 placeholder。
                   */}
                   <Select
                     size="small"
+                    mode="multiple"
                     style={{ width: '100%' }}
-                    value={apiId || undefined}
-                    onChange={setApiId}
-                    placeholder={apis.length ? '选一个接口记录（会用它生成测试类）' : '还没有接口记录'}
+                    value={apiIds.length ? apiIds : undefined}
+                    onChange={(v) => setApiIds(Array.isArray(v) ? (v as string[]) : [])}
+                    placeholder={
+                      apis.length
+                        ? '勾一个或多个接口记录（多条 → 一个类里多个 @Test 方法）'
+                        : '还没有接口记录'
+                    }
                     showSearch
                     optionFilterProp="label"
+                    maxTagCount="responsive"
                     options={apis.map((a) => ({
                       value: a.id,
                       label: `${a.data.method} ${a.data.url} · ${a.title}`
                     }))}
                   />
-                  {apiId ? (
+                  {apiIds.length ? (
                     <div className="codegen-api-info">
-                      {(() => {
-                        const hit = apis.find((a) => a.id === apiId);
-                        if (!hit) return null;
-                        return (
-                          <>
-                            <div>
-                              <Tag color="blue">{hit.data.method}</Tag>
-                              <span className="mono">{hit.data.url}</span>
-                            </div>
-                            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                              {hit.title}
-                              {hit.data.module ? ' · ' + hit.data.module : ''}
-                            </div>
-                          </>
-                        );
-                      })()}
+                      {apiIds.length > 1 ? (
+                        <div>
+                          <Tag color="blue">{'已选 ' + apiIds.length + ' 个接口'}</Tag>
+                          <span className="muted" style={{ fontSize: 12 }}>
+                            会生成一个测试类，每个接口一个 @Test 方法
+                          </span>
+                        </div>
+                      ) : (
+                        (() => {
+                          const hit = apis.find((a) => a.id === apiIds[0]);
+                          if (!hit) return null;
+                          return (
+                            <>
+                              <div>
+                                <Tag color="blue">{hit.data.method}</Tag>
+                                <span className="mono">{hit.data.url}</span>
+                              </div>
+                              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                                {hit.title}
+                                {hit.data.module ? ' · ' + hit.data.module : ''}
+                              </div>
+                            </>
+                          );
+                        })()
+                      )}
                     </div>
                   ) : null}
                 </>

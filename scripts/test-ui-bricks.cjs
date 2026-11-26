@@ -163,6 +163,17 @@ check(
   UI_ACTION_CATEGORIES.map((c) => c.key)
 );
 check(
+  'v0.63：数量比较断言在（大于 / 小于 / 不等于，且 == 交给「断言数量」）',
+  (() => {
+    const a = actionById('assert-count-op');
+    if (!a) return false;
+    const op = (a.params || []).find((p) => p.key === 'op');
+    const ops = (op && op.options ? op.options : []).map((o) => o.value);
+    return ops.join(',') === '>,>=,<,<=,!=' && !ops.includes('==');
+  })(),
+  (actionById('assert-count-op') || {}).params
+);
+check(
   'v0.59 的工具类积木齐了（刷新 / 定时刷新 / 截图 / 调试暂停 / 滚动 / 清 cookie / 退出并清空）',
   ['reload', 'refresh-interval', 'screenshot', 'pause', 'scroll-to', 'clear-cookies', 'close-context'].every(
     (id) => actionById(id)
@@ -1369,7 +1380,7 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
   );
   check(
     '真实渲染结果里有积木库和 POM 三种模式',
-    realHtml.indexOf('积木库') >= 0 && realHtml.indexOf('用本页生成的') >= 0 && realHtml.indexOf('用已有类') >= 0,
+    realHtml.indexOf('积木库') >= 0 && realHtml.indexOf('用本页生成的') >= 0 && realHtml.indexOf('选择已有类') >= 0,
     'missing text'
   );
 

@@ -76,6 +76,7 @@ contextBridge.exposeInMainWorld('api', {
   codegenTargets: () => invoke('codegen:targets'),
   codegenPreview: (payload) => invoke('codegen:preview', payload),
   codegenSave: (payload) => invoke('codegen:save', payload),
+  codegenPickClass: () => invoke('codegen:pickClass'),
 
   // ---- 皮肤 ----
   skinPickImage: () => invoke('skin:pickImage'),

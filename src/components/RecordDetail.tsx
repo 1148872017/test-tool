@@ -309,9 +309,14 @@ type Props = {
   onEdit: () => void;
   onDeleted: () => void;
   onLogRun?: (record: any) => void;
+  /**
+   * v0.63：抽屉头部 `extra` 里、编辑按钮**前面**的自定义动作。
+   * 目前只有「流程模板」用（去生成代码并自动载入）；其余集合不传就不渲染。
+   */
+  extraActions?: React.ReactNode;
 };
 
-export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, onDeleted, onLogRun }: Props) {
+export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, onDeleted, onLogRun, extraActions }: Props) {
   const [showSecret, setShowSecret] = useState<Record<string, boolean>>({});
   /** 复制整条的格式：详情（人话）/ JSON / cURL（只有接口记录有） */
   const [copyFormat, setCopyFormat] = useState<'text' | 'json' | 'curl'>('text');
@@ -825,6 +830,8 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
       }
       extra={
         <Space size={4}>
+          {/* v0.63：集合页可以往抽屉头部塞自己的动作（例如流程模板的「去生成代码」） */}
+          {extraActions || null}
           <Button size="small" icon={<EditOutlined />} onClick={onEdit}>
             编辑
           </Button>

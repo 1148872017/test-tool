@@ -93,6 +93,48 @@ const UI_ACTIONS = [
     python: 'expect(%el%).to_have_count(%count%)'
   },
   {
+    /**
+     * v0.63：数量类断言补一个「比较」版本。
+     *
+     * 为什么必须有：Playwright 自带的数量断言只有 `to_have_count(n)`（**等于**），
+     * 「列表至少有 3 条」「错误提示不超过 1 个」这种写法以前只能手写循环。
+     * 这里用「先取 count() 再比较 + 抛出带实际值的断言错误」，不引第三方断言库，
+     * 也不写等价的 hasCount（那只能表达等于）。
+     */
+    id: 'assert-count-op',
+    category: 'assert',
+    name: '断言数量（比较）',
+    desc: '元素数量大于 / 小于 / 不等于预期（= 请用上面的「断言数量」）',
+    params: [
+      EL,
+      {
+        key: 'op',
+        type: 'select',
+        required: true,
+        default: '>',
+        label: '比较',
+        options: [
+          { value: '>', label: '大于 >' },
+          { value: '>=', label: '大于等于 >=' },
+          { value: '<', label: '小于 <' },
+          { value: '<=', label: '小于等于 <=' },
+          { value: '!=', label: '不等于 !=' }
+        ]
+      },
+      { key: 'count', type: 'number', required: true, default: 1, label: '数量', placeholder: '3' }
+    ],
+    java: [
+      'int actualCount = %el%.count();',
+      'if (!(actualCount %op% %count%)) {',
+      '    throw new AssertionError("数量断言失败：期望 %op% %count%，实际 " + actualCount);',
+      '}'
+    ].join('\n'),
+    python: [
+      '_cnt = %el%.count()',
+      "assert _cnt %op% %count%, f'数量断言失败：期望 %op% %count%，实际 {_cnt}'"
+    ].join('\n')
+  },
+  {
     id: 'assert-attr',
     category: 'assert',
     name: '断言属性',
@@ -413,6 +455,7 @@ const UI_SUMMARY_TEMPLATES = {
   'assert-text': '断言文本：%el% 等于「%text%」',
   'assert-contains-text': '断言包含文本：%el% 含「%text%」',
   'assert-count': '断言数量：%el% 共 %count% 个',
+  'assert-count-op': '断言数量：%el% %op% %count% 个',
   'assert-attr': '断言属性：%el% 的 %name% 等于「%value%」',
   'assert-title': '断言页面标题等于「%title%」',
   'assert-enabled': '断言可用：%el%',

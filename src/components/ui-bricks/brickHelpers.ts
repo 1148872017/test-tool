@@ -71,12 +71,27 @@ export function elementOptions(elements: any[]): { value: string; label: string 
     });
 }
 
-/** POM 模式的展示文案（生成器只认 none / generated / existing 三个值） */
+/**
+ * POM 模式的展示文案（生成器只认 none / generated / existing 三个值）
+ *
+ * v0.63 改口径：
+ *   · 第三项「用已有类」→ **「选择已有类」**：它下面紧跟着一个类名输入框 + 「选文件」，
+ *     叫「选择」才和实际交互对得上；
+ *   · 第一项保留「不使用」，但配 tooltip 说明它到底意味着什么
+ *     （定位器内联写在方法体里，不是「什么都不生成」）。
+ */
 export const POM_MODE_OPTIONS = [
   { value: 'none', label: '不使用' },
   { value: 'generated', label: '用本页生成的' },
-  { value: 'existing', label: '用已有类' }
+  { value: 'existing', label: '选择已有类' }
 ];
+
+/** 三种模式的解释（挂在单选组标题的 tooltip / 说明行上，别让用户猜） */
+export const POM_MODE_HINTS: Record<string, string> = {
+  none: '不使用页面对象：定位器直接写在方法体里（page.locator(...)），适合一两步的小流程',
+  generated: '用本页生成的：先生成页面对象类，方法体里调用 loginPage.usernameInput()',
+  existing: '选择已有类：你项目里已经写好的页面对象类，选文件或填类名，方法体里直接用它'
+};
 
 /* ============================================================
  * 「N 个元素」的 hover 提示

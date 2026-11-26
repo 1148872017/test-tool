@@ -297,9 +297,9 @@ async function main() {
     const lm = require(A('shared/locatorModes.js'));
     return lm.LOCATOR_MODES && lm.LOCATOR_MODES.length === 9 ? true : '定位方式 ' + (lm.LOCATOR_MODES || []).length + ' 种';
   });
-  await check('shared/uiActions.js 可 require，33 个 UI 动作 / 7 分类', () => {
+  await check('shared/uiActions.js 可 require，34 个 UI 动作 / 7 分类', () => {
     const ua = require(A('shared/uiActions.js'));
-    if (!ua.UI_ACTIONS || ua.UI_ACTIONS.length !== 33) return '动作 ' + (ua.UI_ACTIONS || []).length + ' 个';
+    if (!ua.UI_ACTIONS || ua.UI_ACTIONS.length !== 34) return '动作 ' + (ua.UI_ACTIONS || []).length + ' 个';
     const cats = new Set(ua.UI_ACTIONS.map((x) => x.category));
     return cats.size === 7 ? true : '分类 ' + cats.size + ' 个';
   });

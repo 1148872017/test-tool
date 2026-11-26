@@ -694,6 +694,27 @@ check('defaultFlowName 页面名为空时兜底「未命名页面」', /^未命�
     check('同时弹 warning toast', calls6.notify.some(([m, l]) => m === '关联页面已删除，元素需要重选' && l === 'warning'), calls6.notify);
   }
 
+  /* ---------- v0.63：从「流程模板」跳过来时自动载入（openFlowId） ---------- */
+  {
+    const rtH = createRuntime();
+    const PanelH = rtH.load(BRICKS).default;
+    const propsH = baseProps({ flows: [FLOW_REC], openFlowId: 'fl1' });
+    const panelH = rtH.render(PanelH, propsH);
+    check(
+      '带 openFlowId 时挂载即载入那条流程（不用自己去下拉里找）',
+      codeAreaOf(panelH).props.value.indexOf('page.navigate("/login");') >= 0,
+      codeAreaOf(panelH).props.value
+    );
+    check('自动载入后步骤数对得上（已选步骤 3）', hasText(panelH, '已选步骤（3）'), String(textOf(panelH)).slice(-160));
+    check('自动载入也恢复了 POM 配置（generated）', codeAreaOf(panelH).props.value.indexOf('LoginPage loginPage = new LoginPage(page);') >= 0, codeAreaOf(panelH).props.value);
+
+    // 不传 openFlowId 时不该自己载入任何东西（从菜单正常进来必须还是空面板）
+    const rtH2 = createRuntime();
+    const PanelH2 = rtH2.load(BRICKS).default;
+    const panelH2 = rtH2.render(PanelH2, baseProps({ flows: [FLOW_REC] }));
+    check('不传 openFlowId 时面板是空的（不会误载入）', hasText(panelH2, '已选步骤（0）'), 'auto loaded unexpectedly');
+  }
+
   /* ---------- 坏 steps（手改过 / 老数据）不能把面板搞崩 ---------- */
   {
     const rt7 = createRuntime();

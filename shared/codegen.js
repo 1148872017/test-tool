@@ -252,7 +252,7 @@ public class <%= className %>ApiTest {
 <% } else if (hasBody && bodyType === 'json') { -%>
             .body("{\\n" +
 <% bodyParams.forEach(function (p, i) { -%>
-                  "  \\"<%= p.key %>\\": \\"<%= p.value %>\\"" + (i < bodyParams.length - 1 ? "," : "") + "\\n" +
+                  "  \\"<%= p.key %>\\": \\"<%= p.value %>\\"<%= i < bodyParams.length - 1 ? ',' : '' %>" + "\\n" +
 <% }); -%>
                   "}")
 <% } -%>
@@ -504,6 +504,158 @@ const TARGETS = [
   }
 ];
 
+/**
+ * v0.63：一个测试类里放多个接口。
+ *
+ * 做法：把「类头」和「单个方法」拆开，多接口时循环渲染方法。
+ * **单接口路径一行没动**（仍然用下面那个整份模板），所以老产物的字节完全不变；
+ * 这里是额外的一条模板 + 一个「方法片」，两者共用同一份 EJS 变量，
+ * 不会出现「单接口改了一处、多接口没跟上」。
+ */
+const TPL_JAVA_API_HEAD = `package com.test.api;
+
+import io.restassured.RestAssured;
+import io.restassured.response.Response;
+import org.testng.annotations.BeforeClass;
+import org.testng.annotations.Test;
+
+import static io.restassured.RestAssured.given;
+import static org.testng.Assert.*;
+
+/**
+ * <%= name %>
+ * <%= method %> <%= url %>
+ * 模块：<%= module %>
+ *
+ * 由「测试工作台」生成骨架，业务逻辑和数据请自行补充。
+ */
+public class <%= className %>ApiTest {
+
+    @BeforeClass
+    public void setUp() {
+        RestAssured.baseURI = System.getProperty("baseUrl", "http://localhost:8080");
+    }
+
+`;
+
+const PART_JAVA_API_METHOD = `    @Test
+    public void test<%= methodName.charAt(0).toUpperCase() + methodName.slice(1) %>() {
+        Response response = given()
+<% if (hasBody && bodyType === 'x-www-form-urlencoded') { -%>
+            .contentType("application/x-www-form-urlencoded")
+<% } else if (hasBody && bodyType === 'json') { -%>
+            .contentType("application/json")
+<% } else { -%>
+            .contentType("application/json")
+<% } -%>
+<% if (params.length) { -%>
+<% params.forEach(function (p) { -%>
+<% if (p.in === 'query') { -%>
+            .queryParam("<%= p.name %>", "<%= p.example || 'TODO' %>")
+<% } else if (p.in === 'header') { -%>
+            .header("<%= p.name %>", "<%= p.example || 'TODO' %>")
+<% } -%>
+<% }); -%>
+<% } -%>
+<% if (hasBody && bodyType === 'x-www-form-urlencoded') { -%>
+<% bodyParams.forEach(function (p) { -%>
+            .formParam("<%= p.key %>", "<%= p.value %>")
+<% }); -%>
+<% } else if (hasBody && bodyType === 'json') { -%>
+            .body("{\\n" +
+<% bodyParams.forEach(function (p, i) { -%>
+                  "  \\"<%= p.key %>\\": \\"<%= p.value %>\\"<%= i < bodyParams.length - 1 ? ',' : '' %>" + "\\n" +
+<% }); -%>
+                  "}")
+<% } -%>
+        .when()
+            .<%= method.toLowerCase() %>("<%= url %>")
+        .then()
+            .statusCode(200)
+            .extract().response();
+
+        // TODO: 补充业务断言
+        // assertEquals(response.jsonPath().getString("code"), "0");
+    }
+
+`;
+
+const TPL_JAVA_RESTASSURED_MULTI = TPL_JAVA_API_HEAD + `<%- methods %>}
+`;
+
+const TPL_PYTHON_PYTEST_HEAD = `# -*- coding: utf-8 -*-
+"""
+<%= name %>
+<%= method %> <%= url %>
+模块：<%= module %>
+
+由「测试工作台」生成骨架，业务逻辑和数据请自行补充。
+"""
+import pytest
+import requests
+
+
+BASE_URL = "http://localhost:8080"
+
+
+class Test<%= className %>:
+    """<%= name %>"""
+
+`;
+
+const PART_PYTHON_PYTEST_METHOD = `    def test_<%= methodName.replace(/[A-Z]/g, function (c) { return '_' + c.toLowerCase(); }) %>(self):
+        """<%= method %> <%= url %>"""
+        url = BASE_URL + "<%= url %>"
+<% if (params.length) { -%>
+        params = {
+<% params.forEach(function (p) { -%>
+<% if (p.in === 'query') { -%>
+            "<%= p.name %>": "<%= p.example || 'TODO' %>",
+<% } -%>
+<% }); -%>
+        }
+<% } else { -%>
+        params = {}
+<% } -%>
+<% if (params.some(function (p) { return p.in === 'header'; })) { -%>
+        headers = {
+<% params.forEach(function (p) { -%>
+<% if (p.in === 'header') { -%>
+            "<%= p.name %>": "<%= p.example || 'TODO' %>",
+<% } -%>
+<% }); -%>
+        }
+<% } else { -%>
+        headers = {}
+<% } -%>
+<% if (hasBody && bodyType === 'x-www-form-urlencoded') { -%>
+        data = {
+<% bodyParams.forEach(function (p) { -%>
+            "<%= p.key %>": "<%= p.value %>",
+<% }); -%>
+        }
+        resp = requests.<%= method.toLowerCase() %>(url, params=params, headers=headers, data=data)
+<% } else if (hasBody && bodyType === 'json') { -%>
+        json_body = {
+<% bodyParams.forEach(function (p) { -%>
+            "<%= p.key %>": "<%= p.value %>",
+<% }); -%>
+        }
+        resp = requests.<%= method.toLowerCase() %>(url, params=params, headers=headers, json=json_body)
+<% } else { -%>
+        resp = requests.<%= method.toLowerCase() %>(url, params=params, headers=headers)
+<% } -%>
+
+        assert resp.status_code == 200, f"期望 200，实际 {resp.status_code}：{resp.text[:200]}"
+
+        # TODO: 补充业务断言
+        # body = resp.json()
+        # assert body["code"] == 0
+
+`;
+
+const TPL_PYTHON_PYTEST_MULTI = TPL_PYTHON_PYTEST_HEAD + `<%- methods %>`;
+
 /** JSON 值 → Java 类型 */
 function javaTypeOf(v) {
   if (v === null || v === undefined) return 'Object';
@@ -564,6 +716,65 @@ function generate(targetKey, input = {}) {
   let ctx;
 
   if (target.kind === 'api') {
+    /**
+     * v0.63：一次勾多个接口 → 一个测试类里放 N 个 @Test 方法。
+     *
+     * 为什么这么做：真实接口测试很少「一个接口一个类」——登录、下单、查订单
+     * 往往写在同一个业务类里共用 setUp。以前只能一次生成一个，用户还得自己
+     * 手工把方法挪到一起。
+     *
+     * 单接口**不走这里**（仍然用原来那份整份模板），所以老产物的字节一字不变。
+     */
+    const apiList = Array.isArray(input.apis)
+      ? input.apis.filter((a) => a && typeof a === 'object')
+      : null;
+    if (apiList && apiList.length > 1) {
+      const spec =
+        target.key === 'java-restassured'
+          ? { tpl: TPL_JAVA_RESTASSURED_MULTI, part: PART_JAVA_API_METHOD }
+          : target.key === 'python-pytest'
+            ? { tpl: TPL_PYTHON_PYTEST_MULTI, part: PART_PYTHON_PYTEST_METHOD }
+            : null;
+      if (!spec) return { ok: false, message: '这个生成目标不支持一次生成多个接口' };
+
+      const ctxs = apiList.map((a) => buildContext(a));
+      // 方法名去重：同一路径不同 method 语种不同时也得是两个方法
+      const seen = new Map();
+      const methods = ctxs
+        .map((c) => {
+          const base = c.methodName || 'api';
+          const n = (seen.get(base) || 0) + 1;
+          seen.set(base, n);
+          const ctx = n > 1 ? Object.assign({}, c, { methodName: base + n }) : c;
+          return ejs.render(spec.part, ctx, { escape: (v) => v });
+        })
+        .join('\n');
+
+      // 类名优先用户填的；否则用模块名（多个接口通常属于同一个模块），再退回第一个接口。
+      // 模块名可能是中文（「用户」），pascal 之后只剩空串 —— 那种情况必须退回接口名，
+      // 否则会生成 `public class 户ApiTest`（非法标识符）。
+      const moduleClass = ctxs[0].module ? pascal(ctxs[0].module) : '';
+      const headCtx = Object.assign({}, ctxs[0], {
+        className:
+          input.className || (/^[A-Za-z][\w$]*$/.test(moduleClass) ? moduleClass : ctxs[0].className),
+        methods
+      });
+
+      let code;
+      try {
+        code = ejs.render(spec.tpl, headCtx, { rmWhitespace: false, escape: (v) => v });
+      } catch (e) {
+        return { ok: false, message: '模板渲染失败：' + (e && e.message) };
+      }
+      return {
+        ok: true,
+        code,
+        filename: `${headCtx.className || 'Api'}ApiTest${target.ext}`,
+        target,
+        count: apiList.length
+      };
+    }
+
     if (!input.api) return { ok: false, message: '缺少接口数据' };
     ctx = buildContext(input.api);
     if (input.className) ctx.className = input.className;

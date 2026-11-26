@@ -270,6 +270,12 @@ function loadTsxModule(file, extraStubs) {
       //   ../api        —— 记入参的桩（bugC/bugD 的断言全靠它）
       //   ./SniffPanel  —— 面板只做展示，桩成占位组件并把 props 原样留在树上
       '../api': () => ({ __esModule: true, default: sniffApi }),
+      /** v0.63：流程模板 → 代码生成 的交接槽（只被 CollectionPage 的按钮用到） */
+      '../features/flows/handoff': () => ({
+        __esModule: true,
+        setFlowHandoff: () => {},
+        takeFlowHandoff: () => null
+      }),
       /**
        * codegen 片段解析器：**用真模块**（纯函数、无依赖），顺便在这里做它的断言。
        * 懒加载避免 loadTsxModule 自己在定义前被调用。
@@ -558,7 +564,13 @@ function mount(initialValue) {
 
   const src = stripComments(fs.readFileSync(CODEGEN_PAGE, 'utf8'));
   check('下拉改用分组 options', /options=\{targetOptions\}/.test(src), 'not grouped');
-  check('接口记录下拉有 placeholder 提示', src.includes('选一个接口记录（会用它生成测试类）'), 'no placeholder');
+  /**
+   * v0.63：接口记录从单选改成多选（一个类里多个 @Test 方法）；
+   * 文案跟着改，但仍必须**带「接口」字样**并且**用 undefined 兜底 placeholder**。
+   */
+  check('接口记录下拉有 placeholder 提示', /勾一个或多个接口记录/.test(src), 'no placeholder');
+  check('接口记录下拉的 value 用 undefined 兜底（antd 的 "" 会吞 placeholder）', /value=\{apiIds\.length \? apiIds : undefined\}/.test(src), 'no undefined fallback');
+  check('接口记录下拉支持多选', /mode="multiple"/.test(src) && /onChange=\{\(v\) => setApiIds/.test(src), 'not multiple');
   check('类名输入框有 allowClear', /value=\{className\}[\s\S]{0,200}allowClear/.test(src), 'no allowClear');
 }
 

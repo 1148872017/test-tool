@@ -28,7 +28,7 @@ const ELECTRON_DIR = path.join(__dirname, '..', 'electron');
  * 注意：这个数字是**整个 electron/ 目录的通道总数**，多人并行改不同域时
  * 以最后一次实测为准（合并后跑一遍 node scripts/test-ipc-unique.cjs 对一下）。
  */
-const EXPECTED_CHANNELS = 121;
+const EXPECTED_CHANNELS = 122;
 
 /**
  * 递归列出 electron/ 下所有 .js。

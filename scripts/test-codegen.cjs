@@ -140,6 +140,71 @@ check('有 codegen:save', /handle\('codegen:save'/.test(mainSrc), 'no save');
   check('inline 分支也过目录守卫（assertPathIn 在生成之前）', ipcSrc.indexOf('assertPathIn(wantDir)') < ipcSrc.indexOf('inlineCode ?'), 'guard order');
 }
 
+/* ---------- 9.2 v0.63：一个类里放多个接口 ---------- */
+{
+  const MULTI_APIS = [
+    { name: '登录', method: 'POST', url: '/api/login', module: '用户', bodyType: 'json', body: '{"u":"a","p":"b"}' },
+    { name: '查订单', method: 'GET', url: '/api/order/1', module: '订单' }
+  ];
+
+  const multiJava = cg.generate('java-restassured', { apis: MULTI_APIS });
+  check('多接口：生成成功且标记条数', !!multiJava.ok && multiJava.count === 2, multiJava.message);
+  check(
+    '多接口：一个类里两个 @Test 方法',
+    (multiJava.code.match(/@Test/g) || []).length === 2,
+    (multiJava.code.match(/@Test/g) || []).length
+  );
+  check('多接口：类名只出现一次（不是两个类）', (multiJava.code.match(/public class /g) || []).length === 1, 'multiple classes');
+  check(
+    '多接口：中文模块名不会变成非法类名（回退到接口名）',
+    /public class LoginApiTest \{/.test(multiJava.code) && !/class 户/.test(multiJava.code),
+    (multiJava.code.match(/public class [^\s{]+/) || [])[0]
+  );
+  check('多接口：setUp 只出现一次（共用一个类头）', (multiJava.code.match(/public void setUp/g) || []).length === 1, 'dup setUp');
+
+  const multiPy = cg.generate('python-pytest', { apis: MULTI_APIS });
+  check(
+    '多接口（Python）：一个类里两个 test_ 方法',
+    !!multiPy.ok && (multiPy.code.match(/    def test_/g) || []).length === 2,
+    multiPy.ok ? multiPy.code.slice(0, 200) : multiPy.message
+  );
+
+  // 单接口必须和以前逐字一致：模板没动过（这条防「改多接口顺手改坏了单接口」）
+  const single = cg.generate('java-restassured', { api: MULTI_APIS[0] });
+  check('单接口仍然只有一个 @Test', (single.code.match(/@Test/g) || []).length === 1, 'single changed');
+  check(
+    '单接口 JSON body 不会漏出 JS 片段（旧模板三元表达式写在 EJS 标签外，v0.63 修掉）',
+    single.code.indexOf('.body(') >= 0 && !/bodyParams\.length/.test(single.code),
+    (single.code.match(/\.body[\s\S]{0,160}/) || [])[0]
+  );
+  const bodyBlock = single.code.slice(single.code.indexOf('.body('), single.code.indexOf('.when()'));
+  // Java 源码里键名是转义的（\"u\"），先去掉反斜杠再断言，免得正则里堆一堆 \\\"
+  const flatBody = bodyBlock.replace(/\\"/g, '"');
+  check(
+    'JSON body 的项目之间逗号正确（第一个带逗号、最后一个不带）',
+    /"u": "a",/.test(flatBody) && /"p": "b"(?!,)/.test(flatBody),
+    bodyBlock
+  );
+}
+
+/* ---------- 9.3 v0.63：「选择已有类」从文件里读类名 ---------- */
+{
+  const { guessClassFromFile } = require('../electron/ipc/ipc-codegen.js');
+  const j = guessClassFromFile('D:/p/LoginPage.java', 'package x;\npublic class LoginPage { }');
+  check('Java：读到 class 声明', j.className === 'LoginPage' && j.source === 'declared', j);
+  const k = guessClassFromFile('D:/p/H.java', 'public final class HelperUils { }');
+  check('Java：多个修饰符也能读到类名', k.className === 'HelperUils', k);
+  const p = guessClassFromFile('D:/p/login_page.py', '# class Fake:\nclass LoginPage(Base):\n    pass');
+  check('Python：跳过被注释掉的 class', p.className === 'LoginPage' && p.kind === 'python', p);
+  const n = guessClassFromFile('D:/p/NoDecl.java', 'just text');
+  check('没有 class 声明时退回文件名并标记 source=filename', n.className === 'NoDecl' && n.source === 'filename', n);
+  check(
+    'preload / mock 都接了这个通道',
+    /codegenPickClass: \(\) => invoke\('codegen:pickClass'\)/.test(fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8')),
+    'preload missing'
+  );
+}
+
 const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
 check('preload 有 codegenTargets', /codegenTargets:/.test(preloadSrc), 'no targets');
 check('preload 有 codegenPreview', /codegenPreview:/.test(preloadSrc), 'no preview');

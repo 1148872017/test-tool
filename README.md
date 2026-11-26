@@ -10,8 +10,8 @@
 
 | 项 | 值 |
 |---|---|
-| 当前版本 | **v0.62.0** |
-| 测试基线 | **64 个套件 / 5093 项**（unit 60 + env 4） |
+| 当前版本 | **v0.63.0** |
+| 测试基线 | **64 个套件 / 5115 项**（unit 60 + env 4） |
 | 运行环境 | Windows 10/11（x64），安装包约 120 MB |
 | 数据位置 | `%APPDATA%\测试工作台\` |
 
@@ -318,7 +318,7 @@ where order_no = {{orderNo}} and create_time > {{today}}
 | 分类 | 工具侧 | 内容 |
 |---|---|---|
 | 导航 | — | 打开地址 |
-| 断言 | — | 可见 / 隐藏 / 文本 / 包含文本 / 数量 / 属性 / 标题 / 可用 / 禁用 / 地址 / 输入值 |
+| 断言 | — | 可见 / 隐藏 / 文本 / 包含文本 / 数量 / **数量（比较：大于·小于·不等于）** / 属性 / 标题 / 可用 / 禁用 / 地址 / 输入值 |
 | 鼠标 | — | 点击 / 双击 / 悬停 / 勾选 |
 | 键盘 | — | 输入文本 / 按键 |
 | 表单 | — | 下拉选择 / 上传文件 / 清空输入框 / 取消勾选 |
@@ -462,6 +462,10 @@ Python 用 `#`。注释标题来自 `shared/uiActions.js` 的 `UI_SUMMARY_TEMPLA
 2. 左侧选数据源（接口记录 / OpenAPI 文件 / JSON / 建表语句 / 页面元素）
 3. **生成预览** → 右侧看代码
 4. **保存到文件** → 选目录；或直接复制到剪贴板
+
+> **接口记录可以多选**（v0.63）：勾 2 条以上会生成**一个测试类 + 每个接口一个 `@Test` 方法**，
+> 共用一个 `@BeforeClass`；只勾 1 条就是原来的单接口类（产物字节不变）。
+> 真实接口测试很少「一个接口一个类」——登录、下单、查订单本来就在同一个业务类里。
 
 **生成出来长什么样**（Java REST Assured，节选）：
 
@@ -927,7 +931,7 @@ v0.56 修的就是这个：以前平台用「启动的进程是否还活着」�
 | 前端 | React 18.3 + antd 5.29 + TypeScript（esbuild 转译，不跑 tsc） |
 | 数据 | sql.js（WASM SQLite）→ `data.db`，整库重写 + tmp/fsync/rename |
 | 打包 | electron-builder（NSIS） |
-| 测试 | 自研轻量脚本，**64 套件 / 5093 项**，分 unit / env 两档 |
+| 测试 | 自研轻量脚本，**64 套件 / 5115 项**，分 unit / env 两档 |
 
 ### 常用命令
 
@@ -938,9 +942,9 @@ npm install
 node scripts/build.mjs        # 生产构建
 node scripts/build.mjs -- --preview   # 预览构建（含 mock，浏览器可开）
 
-npm test                      # unit 档 60 套件 / 4950 项（自检先跑）
+npm test                      # unit 档 60 套件 / 4972 项（自检先跑）
 npm run test:env              # env 档 4 套件 / 127 项（需设 4 个目录变量）
-npm run test:all              # 全量 64 套件 / 5093 项
+npm run test:all              # 全量 64 套件 / 5115 项
 npm run test:gui              # 只跑 GUI 冒烟（19 路由 + 5 类交互，约 26 秒）
 npm run check                 # 只跑提交前自检
 npm run dist:installer        # 打 NSIS 安装包

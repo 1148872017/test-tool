@@ -1009,6 +1009,8 @@ const isTrashed = (id: string) => {
       code: 'package com.test.api;\n\npublic class PetApiTest {\n    @Test\n    public void testCreatePet() {\n        // mock 预览\n    }\n}\n'
     }),
     codegenSave: async () => ({ ok: false, canceled: true }),
+    // 预览里没有真实文件系统：返回取消，界面走「没选到文件」的分支
+    codegenPickClass: async () => ({ ok: false, canceled: true }),
 
     /* ---- 皮肤（mock）---- */
     skinPickImage: async () => ({ ok: false, canceled: true }),

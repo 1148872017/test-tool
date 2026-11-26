@@ -1,5 +1,5 @@
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { Table, Input, Button, Tag, Popconfirm, Segmented, Select, Dropdown, Modal, Tooltip } from 'antd';
+import { Table, Input, Button, Tag, Popconfirm, Segmented, Select, Dropdown, Modal, Tooltip, Space } from 'antd';
 import type { InputRef } from 'antd';
 import {
   PlusOutlined,
@@ -20,7 +20,8 @@ import {
   FileTextOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  SettingOutlined
+  SettingOutlined,
+  CodeOutlined
 } from '@ant-design/icons';
 import api from '../api';
 import { toast } from '../msg';
@@ -39,6 +40,7 @@ import { ROLE_OPTIONS } from '../../shared/collections';
 import { asArray, fieldOptions, getOptionsSync, loadOptions, OptionsMap } from '../options';
 import { capabilitiesOf, hasHeaderAction, HeaderAction } from '../features/collections/capabilities';
 import { setAllureHandoff } from '../features/allure/handoff';
+import { setFlowHandoff } from '../features/flows/handoff';
 import StateEmpty from './states/StateEmpty';
 import LoadingRows from './states/LoadingRows';
 import { buildHayIndex, matchHay, normalizeKeyword, readHay, recordHay } from '../utils/searchIndex';
@@ -1303,6 +1305,42 @@ export default function CollectionPage({
           onCounts();
         }}
         onLogRun={(rec: any) => onLogRun && onLogRun(rec)}
+        /*
+          v0.63：流程模板的「去生成代码」（带灰字说明）。
+          流程的步骤只能在「代码生成」那边改（保存为流程 → 载入 → 调步骤），
+          在模板这边点开只能改名字/备注，所以给一条直达入口。
+        */
+        extraActions={
+          conf.key === 'flows' && detail ? (
+            <Space size={4} align="center">
+              <Button
+                size="small"
+                icon={<CodeOutlined />}
+                onClick={() => {
+                  const d = (detail && detail.data) || {};
+                  const kind = String(d.kind || '').toLowerCase() === 'api' ? 'api' : 'ui';
+                  if (!onNavigate) {
+                    toast('打不开代码生成页', 'warning');
+                    return;
+                  }
+                  // 交接槽只生效一次：代码生成页挂载时 take 并清空
+                  setFlowHandoff({
+                    id: String(detail.id),
+                    kind: kind as 'ui' | 'api',
+                    name: String(detail.title || d.name || '')
+                  });
+                  setDetail(null);
+                  onNavigate({ type: 'tool', key: 'codegen' });
+                }}
+              >
+                去生成代码
+              </Button>
+              <span className="muted" style={{ fontSize: 11, maxWidth: 180, lineHeight: 1.4 }}>
+                跳到「代码生成」并自动载入这条流程，改完可直接保存
+              </span>
+            </Space>
+          ) : null
+        }
       />
 
       <RecordForm
