@@ -881,6 +881,18 @@ function collect(node, out) {
   return acc;
 }
 
+/** v0.62：生成结果默认是 CodeBlock（高亮 + 行号），点「编辑」才是 textarea。
+ *  两种都读得到，测试不用关心当前是哪种形态。 */
+function codeAreaOf(tree) {
+  const nodes = collect(tree);
+  // CodeBlock 的入参是 { code, lang, copyable, maxHeight }——认 code + lang 就够（别认可选 prop）
+  const cb = nodes.find((n) => n.props && typeof n.props.code === 'string' && 'lang' in n.props);
+  if (cb) return { props: { value: String(cb.props.code) } };
+  const ta = nodes.find((n) => n.type === 'textarea');
+  if (ta) return ta;
+  return { props: { value: '' } };
+}
+
 function textOf(node) {
   if (node === null || node === undefined || typeof node === 'boolean') return '';
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -1013,8 +1025,13 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
   check('页面下拉从 pages 集合读（2 个页面）', !!pageSelect && pageSelect.props.options.length === 2, pageSelect && pageSelect.props.options);
   check('页面下拉 placeholder 提示选页面', !!pageSelect && /选一个页面/.test(pageSelect.props.placeholder), pageSelect && pageSelect.props.placeholder);
 
-  const resultArea = collect(panel).find((n) => n.type === 'textarea');
-  check('生成结果是可编辑 textarea', !!resultArea && typeof resultArea.props.onChange === 'function', resultArea && resultArea.type);
+  /**
+   * v0.62：生成结果默认是**高亮块**（和 POJO / 接口那些代码块一致），
+   * 点「编辑」才切成 textarea 手改 —— 所以这里验的是「有代码区」，
+   * 「有编辑入口」放到加完步骤之后再验（没代码时那个按钮本来就不出现）。
+   */
+  const resultArea = codeAreaOf(panel);
+  check('生成结果有代码区（高亮块或 textarea）', !!resultArea, 'no code area');
   check('空步骤时结果区提示先加一步', hasText(panel, '还没有选任何步骤'), 'no empty hint');
 
   const pomRadio = collect(panel).find((n) => n.type === rt2.antd.Radio.Group);
@@ -1055,7 +1072,7 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
   modalNode2.props.onOk();
   panel = rt2.render(bp, props);
 
-  const codeArea = collect(panel).find((n) => n.type === 'textarea');
+  const codeArea = codeAreaOf(panel);
   check(
     '加完步骤后结果区实时出代码（含步骤注释）',
     codeArea.props.value ===
@@ -1068,7 +1085,7 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
   /* ---- 元素步骤 + POM 生成的联动 ---- */
   pomRadio.props.onChange({ target: { value: 'generated' } });
   panel = rt2.render(bp, props);
-  const codeGenMode = collect(panel).find((n) => n.type === 'textarea');
+  const codeGenMode = codeAreaOf(panel);
   check(
     'generated 模式：POM 实例行出现在方法体里',
     codeGenMode.props.value.indexOf('LoginPage loginPage = new LoginPage(page);') >= 0,
@@ -1093,7 +1110,7 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
   check('选元素后记下定位方式', clickModal2.props.params.el === 'usernameInput', clickModal2.props.params);
   clickModal2.props.onOk();
   panel = rt2.render(bp, props);
-  const codeWithPom = collect(panel).find((n) => n.type === 'textarea');
+  const codeWithPom = codeAreaOf(panel);
   check(
     'POM 模式下元素步骤生成 loginPage.usernameInput()',
     codeWithPom.props.value.indexOf('loginPage.usernameInput().click();') >= 0,
@@ -1107,7 +1124,7 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
   check('existing 模式显示类名输入框', !!classInput, 'no class input');
   classInput.props.onChange({ target: { value: 'MyLoginPage' } });
   panel = rt2.render(bp, props);
-  const codeExisting = collect(panel).find((n) => n.type === 'textarea');
+  const codeExisting = codeAreaOf(panel);
   check(
     'existing 模式用用户填的类名',
     codeExisting.props.value.indexOf('MyLoginPage myLoginPage = new MyLoginPage(page);') >= 0,
@@ -1117,7 +1134,7 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
   /* ---- none 模式：定位器内联 ---- */
   pomRadio.props.onChange({ target: { value: 'none' } });
   panel = rt2.render(bp, props);
-  const codeNone = collect(panel).find((n) => n.type === 'textarea');
+  const codeNone = codeAreaOf(panel);
   check(
     '切回 none 模式后元素定位器内联（复用 locatorModes）',
     codeNone.props.value.indexOf('page.locator("#username").click();') >= 0,
@@ -1131,7 +1148,7 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
   check('第二步的「上移」按钮可用', upButtons.length === 1, upButtons.length);
   upButtons[0].props.onClick({ stopPropagation: () => {} });
   panel = rt2.render(bp, props);
-  const moved = collect(panel).find((n) => n.type === 'textarea').props.value;
+  const moved = codeAreaOf(panel).props.value;
   check(
     '上移真的换了顺序（点击排到导航前面）',
     moved.indexOf('click();') < moved.indexOf('navigate('),
@@ -1194,6 +1211,31 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
       (n) => textOf(n) === '保存到文件'
     );
     check('没有代码时「保存到文件」是禁用的', !!emptySave && emptySave.props.disabled === true, emptySave && emptySave.props.disabled);
+  }
+
+  /* ---- v0.62：生成结果走统一的高亮块（和 POJO / 接口一致），点「编辑」才切 textarea ---- */
+  {
+    const nodes = collect(panel);
+    const cb = nodes.find((n) => n.props && typeof n.props.code === 'string' && 'lang' in n.props);
+    check('生成结果用的是 CodeBlock（带 code / lang），不是裸 textarea', !!cb, nodes.map((n) => n.type).slice(0, 20));
+    check('代码块语言跟着生成目标走（java）', !!cb && cb.props.lang === 'java', cb && cb.props.lang);
+
+    const editBtn = nodesOf(panel, rt2.antd.Button).find((n) => textOf(n) === '编辑');
+    check('有「编辑」入口（手改能力保留）', !!editBtn, nodesOf(panel, rt2.antd.Button).map(textOf));
+    editBtn.props.onClick();
+    panel = rt2.render(bp, props);
+    const ta = collect(panel).find((n) => n.type === 'textarea');
+    check('点「编辑」切成可写的 textarea', !!ta && typeof ta.props.onChange === 'function', ta && ta.type);
+    check('切回按钮文案变成「看高亮」', nodesOf(panel, rt2.antd.Button).some((n) => textOf(n) === '看高亮'), 'no toggle back');
+
+    const backBtn = nodesOf(panel, rt2.antd.Button).find((n) => textOf(n) === '看高亮');
+    backBtn.props.onClick();
+    panel = rt2.render(bp, props);
+    check(
+      '点「看高亮」回到 CodeBlock',
+      !!collect(panel).find((n) => n.props && typeof n.props.code === 'string' && 'lang' in n.props),
+      'not back to code block'
+    );
   }
 
   /* ---- v0.61：参数面板里的毫秒灰字换算（真渲染一层，不是只验函数） ---- */
@@ -1316,7 +1358,15 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
     realErr = e && e.message;
   }
   check('真实 React + antd 能把积木区渲染出来', !realErr && realHtml.length > 1000, realErr || String(realHtml.length));
-  check('真实渲染结果里有可编辑 textarea', /<textarea/.test(realHtml), realHtml.slice(0, 200));
+  /**
+   * v0.62：没代码时不再渲染 textarea（默认是高亮块，空状态给一句提示），
+   * 所以这里验「代码区的容器渲染出来了」——有 textarea 或有 code-block 都算过。
+   */
+  check(
+    '真实渲染结果里有代码区（textarea 或 code-block 容器）',
+    /<textarea/.test(realHtml) || /code-block/.test(realHtml) || realHtml.indexOf('拼好步骤后，方法体会实时出现在这里') >= 0,
+    realHtml.slice(0, 200)
+  );
   check(
     '真实渲染结果里有积木库和 POM 三种模式',
     realHtml.indexOf('积木库') >= 0 && realHtml.indexOf('用本页生成的') >= 0 && realHtml.indexOf('用已有类') >= 0,

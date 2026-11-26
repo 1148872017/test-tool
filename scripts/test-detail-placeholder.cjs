@@ -151,6 +151,17 @@ function collect(node, out) {
   return out;
 }
 
+/** v0.62：生成结果默认是 CodeBlock（高亮 + 行号），点「编辑」才是 textarea。
+ *  两种都读得到，测试不用关心当前是哪种形态。 */
+function codeAreaOf(tree) {
+  const nodes = collect(tree);
+  const cb = nodes.find((n) => n.props && typeof n.props.code === 'string' && 'showLineNumbers' in n.props);
+  if (cb) return { props: { value: String(cb.props.code) } };
+  const ta = nodes.find((n) => n.type === 'textarea');
+  if (ta) return ta;
+  return { props: { value: '' } };
+}
+
 /** 节点里的纯文本（递归拼叶子字符串） */
 function textOf(node) {
   if (node === null || node === undefined || typeof node === 'boolean') return '';

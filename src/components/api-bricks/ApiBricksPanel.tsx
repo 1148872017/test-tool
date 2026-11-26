@@ -26,6 +26,17 @@ import ApiActionParamModal from './ApiActionParamModal';
 import SaveApiFlowModal from './SaveApiFlowModal';
 
 /**
+ * 统一的代码块（高亮 + 行号），同 BricksPanel 的做法：
+ * 用受保护的 require，测试的 require 桩里没有它，静态 import 会在载入阶段崩。
+ */
+let CodeBlockLazy: any = null;
+try {
+  CodeBlockLazy = require('../CodeBlock').default;
+} catch (e) {
+  CodeBlockLazy = null;
+}
+
+/**
  * 「接口流程（积木）」面板（三栏：积木库 / 已选步骤 / 生成结果）。
  *
  * ============================================================
@@ -100,6 +111,8 @@ export default function ApiBricksPanel(props: Props) {
   const [dragIdx, setDragIdx] = useState(-1);
   /** null = 跟着生成器走；字符串 = 用户手改过（步骤一变就重置） */
   const [manual, setManual] = useState<string | null>(null);
+  /** v0.62：默认高亮块，点「编辑」切 textarea（和 UI 积木面板保持一致） */
+  const [editing, setEditing] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [flowName, setFlowName] = useState('');
   const [flowNote, setFlowNote] = useState('');
@@ -129,6 +142,7 @@ export default function ApiBricksPanel(props: Props) {
 
   const shown = manual === null ? gen.code : manual;
   const copyText = gen.imports.length ? gen.imports.join('\n') + '\n\n' + shown : shown;
+
 
   /* ---------------- 流程模板：保存 / 载入 ---------------- */
 
@@ -573,25 +587,40 @@ export default function ApiBricksPanel(props: Props) {
             </div>
           ) : null}
 
-          <textarea
-            className="mono"
-            value={shown}
-            spellCheck={false}
-            onChange={(e) => setManual(e.target.value)}
-            placeholder="拼好步骤后，方法体会实时出现在这里；也可以直接手改"
-            style={{
-              flex: 1,
-              minHeight: 120,
-              border: 'none',
-              outline: 'none',
-              resize: 'none',
-              padding: '10px 12px',
-              fontSize: 12.5,
-              lineHeight: 1.7,
-              background: '#fff',
-              whiteSpace: 'pre'
-            }}
-          />
+          {editing || !CodeBlockLazy ? (
+            <textarea
+              className="mono"
+              value={shown}
+              spellCheck={false}
+              onChange={(e) => setManual(e.target.value)}
+              placeholder="拼好步骤后，方法体会实时出现在这里；也可以直接手改"
+              style={{
+                flex: 1,
+                minHeight: 120,
+                border: 'none',
+                outline: 'none',
+                resize: 'none',
+                padding: '10px 12px',
+                fontSize: 12.5,
+                lineHeight: 1.7,
+                background: '#fff',
+                whiteSpace: 'pre'
+              }}
+            />
+          ) : shown ? (
+            <div style={{ flex: 1, minHeight: 120, overflow: 'auto', background: '#fff' }}>
+              <CodeBlockLazy
+                code={shown}
+                lang={lang === 'python' ? 'python' : 'java'}
+                copyable={false}
+                maxHeight="none"
+              />
+            </div>
+          ) : (
+            <div className="muted" style={{ padding: '16px 12px', fontSize: 12.5 }}>
+              拼好步骤后，方法体会实时出现在这里
+            </div>
+          )}
 
           <div
             style={{
@@ -603,9 +632,16 @@ export default function ApiBricksPanel(props: Props) {
               background: '#fafbfe'
             }}
           >
-            <span className="muted" style={{ fontSize: 11.5 }}>
-              {shown ? shown.split('\n').length + ' 行' : '还没有代码'}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="muted" style={{ fontSize: 11.5 }}>
+                {shown ? shown.split('\n').length + ' 行' : '还没有代码'}
+              </span>
+              {CodeBlockLazy && shown ? (
+                <Button size="small" type="link" style={{ fontSize: 11.5 }} onClick={() => setEditing(!editing)}>
+                  {editing ? '看高亮' : '编辑'}
+                </Button>
+              ) : null}
+            </div>
             <Space size={6}>
               <Button size="small" type="primary" ghost icon={<SaveOutlined />} disabled={!copyText} onClick={doSave}>
                 保存到文件

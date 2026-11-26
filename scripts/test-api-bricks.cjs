@@ -831,6 +831,18 @@ function collect(node, out) {
   return acc;
 }
 
+/** v0.62：生成结果默认是 CodeBlock（高亮 + 行号），点「编辑」才是 textarea。
+ *  两种都读得到，测试不用关心当前是哪种形态。 */
+function codeAreaOf(tree) {
+  const nodes = collect(tree);
+  // CodeBlock 的入参是 { code, lang, copyable, maxHeight }——认 code + lang 就够
+  const cb = nodes.find((n) => n.props && typeof n.props.code === 'string' && 'lang' in n.props);
+  if (cb) return { props: { value: String(cb.props.code) } };
+  const ta = nodes.find((n) => n.type === 'textarea');
+  if (ta) return ta;
+  return { props: { value: '' } };
+}
+
 function textOf(node) {
   if (node === null || node === undefined || typeof node === 'boolean') return '';
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -1135,7 +1147,7 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
   check('选中接口后响应变量自动起名（resp1，不和前面撞）', modalNode2.props.params.as === 'resp1', modalNode2.props.params.as);
   modalNode2.props.onOk();
   panel = rt2.render(Panel, props);
-  const codeArea = collect(panel).find((n) => n.type === 'textarea');
+  const codeArea = codeAreaOf(panel);
   check(
     '加完步骤后结果区实时出给定接口的请求代码',
     codeArea.props.value.indexOf('Response resp1 = given()') >= 0 &&
@@ -1220,8 +1232,8 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
   panel4 = rt4.render(Panel4, Panel4Props);
   check(
     '变量引用落进代码：String myVar = token;（不是死字符串）',
-    collect(panel4).find((n) => n.type === 'textarea').props.value.indexOf('String myVar = token;') >= 0,
-    collect(panel4).find((n) => n.type === 'textarea').props.value
+    codeAreaOf(panel4).props.value.indexOf('String myVar = token;') >= 0,
+    codeAreaOf(panel4).props.value
   );
 
   /* ---- 非法变量名：面板里当场提示 ---- */
@@ -1295,8 +1307,8 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
   );
   loadSelect.props.onChange('fl-api');
   panel7 = rt7.render(Panel7, Panel7Props);
-  check('载入后恢复 3 步并出代码', hasText(panel7, '已选步骤（3）') && collect(panel7).find((n) => n.type === 'textarea').props.value.indexOf('.post("/api/login")') >= 0, 'load failed');
-  check('载入后恢复 baseUrl（结果里出现 baseUri）', collect(panel7).find((n) => n.type === 'textarea').props.value.indexOf('.baseUri("http://localhost:8080")') >= 0, collect(panel7).find((n) => n.type === 'textarea').props.value);
+  check('载入后恢复 3 步并出代码', hasText(panel7, '已选步骤（3）') && codeAreaOf(panel7).props.value.indexOf('.post("/api/login")') >= 0, 'load failed');
+  check('载入后恢复 baseUrl（结果里出现 baseUri）', codeAreaOf(panel7).props.value.indexOf('.baseUri("http://localhost:8080")') >= 0, codeAreaOf(panel7).props.value);
   check('载入后弹 toast', loaded.notify.some(([m]) => m.indexOf('已载入流程「接口流程-1125」') >= 0), loaded.notify);
 
   /* ---- 复制：import + 方法体一起给 ---- */
@@ -1469,7 +1481,15 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
     realErr = (e && e.message) || String(e);
   }
   check('真实 React + antd 能把接口积木面板渲染出来', !realErr && realHtml.length > 1000, realErr || String(realHtml.length));
-  check('真实渲染结果里有可编辑 textarea', /<textarea/.test(realHtml), realHtml.slice(0, 160));
+  /**
+   * v0.62：没代码时不再渲染 textarea（默认高亮块，空状态给提示）——
+   * 验「代码区渲染出来了」，textarea / code-block / 空态提示任一即可。
+   */
+  check(
+    '真实渲染结果里有代码区（textarea 或 code-block 容器）',
+    /<textarea/.test(realHtml) || /code-block/.test(realHtml) || realHtml.indexOf('拼好步骤后，方法体会实时出现在这里') >= 0,
+    realHtml.slice(0, 160)
+  );
   check(
     '真实渲染结果里有积木库 / BaseUrl / 生成结果',
     realHtml.indexOf('积木库') >= 0 && realHtml.indexOf('BaseUrl') >= 0 && realHtml.indexOf('生成结果') >= 0,

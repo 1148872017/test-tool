@@ -10,8 +10,8 @@
 
 | 项 | 值 |
 |---|---|
-| 当前版本 | **v0.61.0** |
-| 测试基线 | **64 个套件 / 5087 项**（unit 60 + env 4） |
+| 当前版本 | **v0.62.0** |
+| 测试基线 | **64 个套件 / 5093 项**（unit 60 + env 4） |
 | 运行环境 | Windows 10/11（x64），安装包约 120 MB |
 | 数据位置 | `%APPDATA%\测试工作台\` |
 
@@ -328,6 +328,11 @@ where order_no = {{orderNo}} and create_time > {{today}}
 > 「工具」这一类是 v0.59 加的：它们是**手写频率最高、又最容易写错**的那几段。
 > 比如「定时刷新」会生成 `for (int i = 0; i < 3; i++) { waitForTimeout(2000); reload(); }`（Java）
 > 或 `for _ in range(3):` + 两行缩进（Python），不用自己数缩进。
+
+**生成结果是统一的代码块**：带语法高亮、行号、折叠，和「页面对象类 / 接口测试类骨架」那些代码块**一模一样**（v0.62 之前这里是个白底 textarea，看起来像是另一套东西）。
+
+> 想手改代码就点代码块左下角的 **编辑**（切成 textarea），改完点 **看高亮** 回到高亮视图。
+> 手改的内容会一直保留，直到你改动「已选步骤」里的任何一步（那时会按新步骤重新生成）。
 
 **积木拼完怎么拿走**：右边生成结果底部有三个按钮——
 
@@ -922,7 +927,7 @@ v0.56 修的就是这个：以前平台用「启动的进程是否还活着」�
 | 前端 | React 18.3 + antd 5.29 + TypeScript（esbuild 转译，不跑 tsc） |
 | 数据 | sql.js（WASM SQLite）→ `data.db`，整库重写 + tmp/fsync/rename |
 | 打包 | electron-builder（NSIS） |
-| 测试 | 自研轻量脚本，**64 套件 / 5087 项**，分 unit / env 两档 |
+| 测试 | 自研轻量脚本，**64 套件 / 5093 项**，分 unit / env 两档 |
 
 ### 常用命令
 
@@ -933,9 +938,9 @@ npm install
 node scripts/build.mjs        # 生产构建
 node scripts/build.mjs -- --preview   # 预览构建（含 mock，浏览器可开）
 
-npm test                      # unit 档 60 套件 / 4944 项（自检先跑）
+npm test                      # unit 档 60 套件 / 4950 项（自检先跑）
 npm run test:env              # env 档 4 套件 / 127 项（需设 4 个目录变量）
-npm run test:all              # 全量 64 套件 / 5087 项
+npm run test:all              # 全量 64 套件 / 5093 项
 npm run test:gui              # 只跑 GUI 冒烟（19 路由 + 5 类交互，约 26 秒）
 npm run check                 # 只跑提交前自检
 npm run dist:installer        # 打 NSIS 安装包

@@ -11,6 +11,21 @@ import {
 } from '@ant-design/icons';
 import { UI_ACTIONS, UI_ACTION_CATEGORIES, actionById } from '../../../shared/uiActions';
 import { generateSteps, pomClassNameFromPage } from '../../../shared/uiStepGen';
+
+/**
+ * 统一的代码块组件（高亮 + 行号 + 折叠）。
+ *
+ * 用**受保护的 require** 而不是静态 import：几个套件（test-ui-bricks / test-bricks-save）
+ * 用一个白名单 require 桩现场加载本文件，桩里没登记 `../CodeBlock`（它又依赖 api / msg），
+ * 静态 import 会让那些套件在**载入阶段**就崩。真打包时 esbuild 不看 try/catch，照样打进去。
+ * 桩环境拿不到组件时退回裸 `<pre>` —— 只影响测试，不影响用户看到的样子。
+ */
+let CodeBlockLazy: any = null;
+try {
+  CodeBlockLazy = require('../CodeBlock').default;
+} catch (e) {
+  CodeBlockLazy = null;
+}
 import {
   POM_MODE_OPTIONS,
   defaultFlowName,
@@ -152,6 +167,11 @@ export default function BricksPanel(props: Props) {
   const [dragIdx, setDragIdx] = useState(-1);
   /** null = 跟着生成器走；字符串 = 用户手改过（步骤一变就重置） */
   const [manual, setManual] = useState<string | null>(null);
+  /**
+   * v0.62：默认高亮块，点「编辑」切 textarea（和 POJO / 接口那些代码块保持一致）。
+   * textarea 没有行号也没有高亮，同样是生成出来的代码，别处好看这里白底黑字。
+   */
+  const [editing, setEditing] = useState(false);
   /** 「保存为流程」弹窗 */
   const [saveOpen, setSaveOpen] = useState(false);
   const [flowName, setFlowName] = useState('');
@@ -198,6 +218,7 @@ export default function BricksPanel(props: Props) {
 
   const shown = manual === null ? gen.code : manual;
   const copyText = gen.imports.length ? gen.imports.join('\n') + '\n\n' + shown : shown;
+
 
   /* ---------------- 流程模板：保存 / 载入 ---------------- */
 
@@ -761,25 +782,40 @@ export default function BricksPanel(props: Props) {
             </div>
           ) : null}
 
-          <textarea
-            className="mono"
-            value={shown}
-            spellCheck={false}
-            onChange={(e) => setManual(e.target.value)}
-            placeholder="拼好步骤后，方法体会实时出现在这里；也可以直接手改"
-            style={{
-              flex: 1,
-              minHeight: 120,
-              border: 'none',
-              outline: 'none',
-              resize: 'none',
-              padding: '10px 12px',
-              fontSize: 12.5,
-              lineHeight: 1.7,
-              background: '#fff',
-              whiteSpace: 'pre'
-            }}
-          />
+          {editing || !CodeBlockLazy ? (
+            <textarea
+              className="mono"
+              value={shown}
+              spellCheck={false}
+              onChange={(e) => setManual(e.target.value)}
+              placeholder="拼好步骤后，方法体会实时出现在这里；也可以直接手改"
+              style={{
+                flex: 1,
+                minHeight: 120,
+                border: 'none',
+                outline: 'none',
+                resize: 'none',
+                padding: '10px 12px',
+                fontSize: 12.5,
+                lineHeight: 1.7,
+                background: '#fff',
+                whiteSpace: 'pre'
+              }}
+            />
+          ) : shown ? (
+            <div style={{ flex: 1, minHeight: 120, overflow: 'auto', background: '#fff' }}>
+              <CodeBlockLazy
+                code={shown}
+                lang={lang === 'python' ? 'python' : 'java'}
+                copyable={false}
+                maxHeight="none"
+              />
+            </div>
+          ) : (
+            <div className="muted" style={{ padding: '16px 12px', fontSize: 12.5 }}>
+              拼好步骤后，方法体会实时出现在这里
+            </div>
+          )}
 
           <div
             style={{
@@ -791,9 +827,17 @@ export default function BricksPanel(props: Props) {
               background: '#fafbfe'
             }}
           >
-            <span className="muted" style={{ fontSize: 11.5 }}>
-              {shown ? shown.split('\n').length + ' 行' : '还没有代码'}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="muted" style={{ fontSize: 11.5 }}>
+                {shown ? shown.split('\n').length + ' 行' : '还没有代码'}
+              </span>
+              {/* 高亮块是只读的：想手改就切到 textarea，改完再切回来 */}
+              {CodeBlockLazy && shown ? (
+                <Button size="small" type="link" style={{ fontSize: 11.5 }} onClick={() => setEditing(!editing)}>
+                  {editing ? '看高亮' : '编辑'}
+                </Button>
+              ) : null}
+            </div>
             <Space size={6}>
               <Button size="small" type="primary" ghost icon={<SaveOutlined />} disabled={!copyText} onClick={doSave}>
                 保存到文件

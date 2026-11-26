@@ -190,6 +190,17 @@ function collect(node, out) {
   return acc;
 }
 
+/** v0.62：生成结果默认是 CodeBlock（高亮 + 行号），点「编辑」才是 textarea。
+ *  两种都读得到，测试不用关心当前是哪种形态。 */
+function codeAreaOf(tree) {
+  const nodes = collect(tree);
+  const cb = nodes.find((n) => n.props && typeof n.props.code === 'string' && 'lang' in n.props);
+  if (cb) return { props: { value: String(cb.props.code) } };
+  const ta = nodes.find((n) => n.type === 'textarea');
+  if (ta) return ta;
+  return { props: { value: '' } };
+}
+
 function textOf(node) {
   if (node === null || node === undefined || typeof node === 'boolean') return '';
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -639,7 +650,7 @@ check('defaultFlowName 页面名为空时兜底「未命名页面」', /^未命�
     loadSelect.props.onChange('fl1');
     panel5 = rt5.render(Panel5, props5);
 
-    const codeArea5 = collect(panel5).find((n) => n.type === 'textarea');
+    const codeArea5 = codeAreaOf(panel5);
     check(
       '载入后恢复步骤（方法体出现 navigate / fill / click）',
       codeArea5.props.value.indexOf('page.navigate("/login");') >= 0 && codeArea5.props.value.indexOf('usernameInput().fill("admin")') >= 0,
@@ -677,7 +688,7 @@ check('defaultFlowName 页面名为空时兜底「未命名页面」', /^未命�
     check('关联页面不在时不乱改页面选择', calls6.page === null, calls6.page);
     check(
       '关联页面不在时步骤仍然恢复（定位快照还在）',
-      collect(panel6).find((n) => n.type === 'textarea').props.value.indexOf('page.navigate("/login");') >= 0,
+      codeAreaOf(panel6).props.value.indexOf('page.navigate("/login");') >= 0,
       'steps lost'
     );
     check('同时弹 warning toast', calls6.notify.some(([m, l]) => m === '关联页面已删除，元素需要重选' && l === 'warning'), calls6.notify);
