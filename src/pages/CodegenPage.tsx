@@ -1046,20 +1046,21 @@ export default function CodegenPage() {
                 </span>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
                 {[
                   ['起浏览器', 'chromium · headless 与 slowMo 可用 -D 覆盖'],
                   ['每个用例一套 context', '用例之间 cookie / 弹窗互不污染'],
                   ['收尾', 'context → browser → playwright 依次关闭']
                 ].map(function (row, i) {
                   return (
-                    <div
-                      key={row[0]}
-                      style={{ display: 'flex', gap: 8, fontSize: 12, lineHeight: 1.7 }}
-                    >
-                      <span style={{ color: 'var(--text-3)', minWidth: 12 }}>{i + 1}</span>
-                      <span style={{ fontWeight: 600, minWidth: 130 }}>{row[0]}</span>
-                      <span style={{ color: 'var(--text-2)' }}>{row[1]}</span>
+                    // 左栏窄（约 380px），所以标签与说明**纵向排**：
+                    // 横向排的话说明文字会被挤成两三行、右边一片锯齿。
+                    <div key={row[0]} style={{ fontSize: 12, lineHeight: 1.6 }}>
+                      <div style={{ fontWeight: 600, color: 'var(--text-1)' }}>
+                        <span style={{ color: 'var(--text-3)', marginRight: 6 }}>{i + 1}</span>
+                        {row[0]}
+                      </div>
+                      <div style={{ color: 'var(--text-2)', paddingLeft: 16 }}>{row[1]}</div>
                     </div>
                   );
                 })}
@@ -1151,7 +1152,10 @@ export default function CodegenPage() {
             renderCodePreview(code, previewLang)
           ) : (
             <div className="codegen-empty">
-              <Empty description="选好数据源，点「生成预览」" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              <Empty
+                description={isBaseTarget ? '点「生成预览」就能拿到完整文件' : '选好数据源，点「生成预览」'}
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+              />
             </div>
           )}
         </div>
