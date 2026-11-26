@@ -593,6 +593,9 @@ function generateApiFlow(o) {
     imports.push('io.restassured.response.Response');
     imports.push('static io.restassured.RestAssured.given');
     if (has('assert-json')) imports.push('static org.hamcrest.Matchers.equalTo');
+    if (has('assert-header')) imports.push('static org.hamcrest.Matchers.equalTo');
+    // v0.59：断言响应体包含某段文本（错误信息 / traceId）
+    if (has('assert-body-contains')) imports.push('static org.hamcrest.Matchers.containsString');
     if (has('assert-time')) imports.push('static org.hamcrest.Matchers.lessThan');
     if (ctx.usesContentType) imports.push('io.restassured.http.ContentType');
     if (has('extract-regex')) imports.push('java.util.regex.*');

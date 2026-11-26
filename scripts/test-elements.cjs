@@ -713,6 +713,32 @@ const findBrowserSelect = (tree) => panelNodes(tree).find((n) => n.props && n.pr
   check('bugA：未启动时「结束校验」是可点的（真点下去会先 sniffStop 再收面板）', stopButtons(errTree)[0].props.disabled !== true, stopButtons(errTree)[0].props.disabled);
   check('bugA：「结束校验」是 danger 按钮（别和普通操作混在一起）', stopButtons(errTree)[0].props.danger === true, stopButtons(errTree)[0].props.danger);
 
+  /**
+   * v0.59：这句提示原来 24 个字，面板一窄就折成两行、把「结束校验」顶歪。
+   * 现在压到 13 个字并且 nowrap + 省略号 —— 这里同时守住「短」和「不换行」。
+   */
+  {
+    const HINT = '进度不写台账，关掉即结束';
+    // 父容器聚合文本也等于这句，所以再用「带 nowrap 样式」把真正的叶子挑出来
+    const hintNodes = panelNodes(renderPanel({ phase: 'ready' })).filter(
+      (n) => textOf(n).trim() === HINT && n.props && n.props.style && n.props.style.whiteSpace === 'nowrap'
+    );
+    check('结束校验旁的提示精简成一句（≤ 14 字）', hintNodes.length === 1 && HINT.length <= 14, hintNodes.map(textOf));
+    check(
+      '这句提示强制单行（nowrap + 省略号），不会把按钮挤歪',
+      hintNodes.length === 1 &&
+        hintNodes[0].props.style &&
+        hintNodes[0].props.style.whiteSpace === 'nowrap' &&
+        hintNodes[0].props.style.textOverflow === 'ellipsis',
+      hintNodes.length ? hintNodes[0].props.style : null
+    );
+    check(
+      '完整说法留在 title 里（不换行也不丢信息）',
+      hintNodes.length === 1 && /写进台账/.test(String((hintNodes[0].props.title || ''))),
+      hintNodes.length ? hintNodes[0].props.title : null
+    );
+  }
+
   check('「重新开始」只在未启动 / 已结束时出现', restartButtons(renderPanel({ phase: 'idle' })).length === 1 && restartButtons(renderPanel({ phase: 'ended' })).length === 1 && restartButtons(renderPanel({ phase: 'ready' })).length === 0 && restartButtons(renderPanel({ phase: 'starting' })).length === 0, [restartButtons(renderPanel({ phase: 'ready' })).length, restartButtons(renderPanel({ phase: 'starting' })).length]);
   check('启动中不给「重新开始」（避免看起来又点了一次）', restartButtons(renderPanel({ phase: 'starting', busy: true })).length === 0);
   check('启动中「结束校验」先禁用（正在拉进程，硬关容易留半截会话）', stopButtons(renderPanel({ phase: 'starting', busy: true }))[0].props.disabled === true);

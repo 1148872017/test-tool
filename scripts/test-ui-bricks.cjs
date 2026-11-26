@@ -60,8 +60,9 @@ check(
   UI_ACTIONS.filter((a) => !UI_ACTION_CATEGORIES.some((c) => c.key === a.category)).map((a) => a.id)
 );
 check(
-  '分类顺序是 导航/断言/鼠标/键盘/等待',
-  UI_ACTION_CATEGORIES.map((c) => c.key).join(',') === 'nav,assert,mouse,keyboard,wait',
+  // v0.59 顺序：导航打头（流程得先开页面），工具垫尾（它们是补充手法，不是业务动作）
+  '分类顺序是 导航/断言/鼠标/键盘/表单/等待/工具',
+  UI_ACTION_CATEGORIES.map((c) => c.key).join(',') === 'nav,assert,mouse,keyboard,form,wait,tool',
   UI_ACTION_CATEGORIES.map((c) => c.key)
 );
 check(
@@ -77,9 +78,11 @@ check(
   )
 );
 check(
-  '两门语言模板风格不同（Java 语句带分号，Python 不带）',
-  UI_ACTIONS.every((a) => a.java.trim().endsWith(';') && !a.python.trim().endsWith(';')),
-  UI_ACTIONS.filter((a) => !a.java.trim().endsWith(';') || a.python.trim().endsWith(';')).map((a) => a.id)
+  '两门语言模板风格不同（Java 语句带分号或块尾 }，Python 不带分号）',
+  UI_ACTIONS.every(
+    (a) => /[;}]\s*$/.test(a.java.trim()) && !a.python.trim().endsWith(';')
+  ),
+  UI_ACTIONS.filter((a) => !/[;}]\s*$/.test(a.java.trim()) || a.python.trim().endsWith(';')).map((a) => a.id)
 );
 
 /** 逐条动作校验模板里的 %key% 都在 params 里定义过（拼写错误在这里现形） */
@@ -95,9 +98,77 @@ for (const a of UI_ACTIONS) {
 }
 
 check(
-  '每个动作的模板至少引用一个参数（否则参数填了也没用）',
-  UI_ACTIONS.every((a) => /%[A-Za-z0-9_]+%/.test(a.java) && /%[A-Za-z0-9_]+%/.test(a.python)),
-  UI_ACTIONS.filter((a) => !/%[A-Za-z0-9_]+%/.test(a.java)).map((a) => a.id)
+  '有参数的动作要真用上参数；无参数动作（刷新 / 暂停 / 清 cookie）不许留占位符',
+  UI_ACTIONS.every((a) => {
+    const hasParams = (a.params || []).length > 0;
+    const hasPh = /%[A-Za-z0-9_]+%/.test(a.java) || /%[A-Za-z0-9_]+%/.test(a.python);
+    return hasParams === hasPh;
+  }),
+  UI_ACTIONS.filter((a) => {
+    const hasParams = (a.params || []).length > 0;
+    const hasPh = /%[A-Za-z0-9_]+%/.test(a.java) || /%[A-Za-z0-9_]+%/.test(a.python);
+    return hasParams !== hasPh;
+  }).map((a) => a.id)
+);
+
+/**
+ * v0.59：多行模板（循环 / 连续两句）必须逐行缩进 ——
+ * 只缩第一行的话，后面的语句会掉到方法体外面，生成出来的代码根本跑不了。
+ */
+{
+  const r = gen.generateSteps({
+    steps: [
+      { actionId: 'goto', params: { url: '/login' } },
+      { actionId: 'refresh-interval', params: { count: 3, ms: 2000 } },
+      { actionId: 'close-context', params: {} }
+    ],
+    lang: 'java',
+    pomMode: 'none',
+    pageName: '登录页'
+  });
+  const bodyLines = r.code.split('\n').filter((l) => l.trim());
+  check(
+    '多行积木在 Java 里逐行缩进（循环体 / 连续语句都在方法内）',
+    bodyLines.some((l) => l === '    for (int i = 0; i < 3; i++) {') &&
+      bodyLines.some((l) => l === '        page.reload();') &&
+      bodyLines.some((l) => l === '    context.close();') &&
+      bodyLines[bodyLines.length - 1] === '}',
+    r.code
+  );
+
+  const p = gen.generateSteps({
+    steps: [
+      { actionId: 'goto', params: { url: '/login' } },
+      { actionId: 'refresh-interval', params: { count: 2, ms: 500 } },
+      { actionId: 'close-context', params: {} }
+    ],
+    lang: 'python',
+    pomMode: 'none',
+    pageName: '登录页'
+  });
+  const pyLines = p.code.split('\n');
+  check(
+    '多行积木在 Python 里逐行缩进（for 体内 8 空格，语句 4 空格）',
+    pyLines.indexOf('    for _ in range(2):') >= 0 &&
+      pyLines.indexOf('        self.page.reload()') >= 0 &&
+      pyLines.indexOf('    self.context.close()') >= 0,
+    p.code
+  );
+}
+
+check(
+  'v0.59 新增的分类都在（表单 / 工具）',
+  UI_ACTION_CATEGORIES.some((c) => c.key === 'form') && UI_ACTION_CATEGORIES.some((c) => c.key === 'tool'),
+  UI_ACTION_CATEGORIES.map((c) => c.key)
+);
+check(
+  'v0.59 的工具类积木齐了（刷新 / 定时刷新 / 截图 / 调试暂停 / 滚动 / 清 cookie / 退出并清空）',
+  ['reload', 'refresh-interval', 'screenshot', 'pause', 'scroll-to', 'clear-cookies', 'close-context'].every(
+    (id) => actionById(id)
+  ),
+  ['reload', 'refresh-interval', 'screenshot', 'pause', 'scroll-to', 'clear-cookies', 'close-context'].filter(
+    (id) => !actionById(id)
+  )
 );
 check('actionById 能按 id 取到动作', actionById('click') && actionById('click').name === '点击', actionById('click'));
 check('actionById 对未知 id 返回 null', actionById('not-exist') === null, actionById('not-exist'));

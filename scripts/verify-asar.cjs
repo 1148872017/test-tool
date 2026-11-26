@@ -297,13 +297,15 @@ async function main() {
     const lm = require(A('shared/locatorModes.js'));
     return lm.LOCATOR_MODES && lm.LOCATOR_MODES.length === 9 ? true : '定位方式 ' + (lm.LOCATOR_MODES || []).length + ' 种';
   });
-  await check('shared/uiActions.js 可 require，17 个 UI 动作', () => {
+  await check('shared/uiActions.js 可 require，33 个 UI 动作 / 7 分类', () => {
     const ua = require(A('shared/uiActions.js'));
-    return ua.UI_ACTIONS && ua.UI_ACTIONS.length === 17 ? true : '动作 ' + (ua.UI_ACTIONS || []).length + ' 个';
+    if (!ua.UI_ACTIONS || ua.UI_ACTIONS.length !== 33) return '动作 ' + (ua.UI_ACTIONS || []).length + ' 个';
+    const cats = new Set(ua.UI_ACTIONS.map((x) => x.category));
+    return cats.size === 7 ? true : '分类 ' + cats.size + ' 个';
   });
-  await check('shared/apiActions.js 可 require，7 动作 / 4 分类', () => {
+  await check('shared/apiActions.js 可 require，10 动作 / 4 分类', () => {
     const aa = require(A('shared/apiActions.js'));
-    if (!aa.API_ACTIONS || aa.API_ACTIONS.length !== 7) return '动作 ' + (aa.API_ACTIONS || []).length + ' 个';
+    if (!aa.API_ACTIONS || aa.API_ACTIONS.length !== 10) return '动作 ' + (aa.API_ACTIONS || []).length + ' 个';
     const cats = new Set(aa.API_ACTIONS.map((x) => x.category));
     return cats.size === 4 ? true : '分类 ' + cats.size + ' 个';
   });

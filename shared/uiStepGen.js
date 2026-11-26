@@ -326,7 +326,9 @@ function generateSteps(o) {
       }
     }
 
-    body.push(INDENT + line);
+    // 多行模板（循环 / 连续两句，如「定时刷新」「退出并清空浏览器」）要逐行缩进，
+    // 否则只有第一行在方法体里、后面的语句会掉到顶格
+    for (const ln of line.split('\n')) body.push(INDENT + ln);
   }
 
   /* ---------- 拼方法 ---------- */

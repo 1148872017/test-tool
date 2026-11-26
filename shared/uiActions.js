@@ -207,6 +207,176 @@ const UI_ACTIONS = [
     params: [{ key: 'ms', type: 'number', required: true, default: 1000, label: '毫秒', placeholder: '1000' }],
     java: 'page.waitForTimeout(%ms%);',
     python: 'self.page.wait_for_timeout(%ms%)'
+  },
+  {
+    id: 'wait-hidden',
+    category: 'wait',
+    name: '等待隐藏',
+    desc: '等元素消失（等 loading 遮罩 / toast 消失）',
+    params: [EL],
+    java: '%el%.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.HIDDEN));',
+    python: '%el%.wait_for(state="hidden")'
+  },
+
+  /* ---------------- 表单（v0.59 新增） ---------------- */
+  {
+    id: 'select-option',
+    category: 'form',
+    name: '下拉选择',
+    desc: '在 select 里按可见文本选一项',
+    params: [
+      EL,
+      { key: 'value', type: 'text', required: true, label: '选项文本', placeholder: '启用' }
+    ],
+    java: '%el%.selectOption("%value%");',
+    python: '%el%.select_option("%value%")'
+  },
+  {
+    id: 'upload',
+    category: 'form',
+    name: '上传文件',
+    desc: '给 file input 选一个本地文件（路径按运行目录写）',
+    params: [
+      EL,
+      { key: 'path', type: 'text', required: true, label: '文件路径', placeholder: 'target/test-data/a.xlsx' }
+    ],
+    // 用全限定名 java.nio.file.Paths，免得生成器还要多管一个 import
+    java: '%el%.setInputFiles(java.nio.file.Paths.get("%path%"));',
+    python: '%el%.set_input_files("%path%")'
+  },
+  {
+    id: 'clear-input',
+    category: 'form',
+    name: '清空输入框',
+    desc: '把输入框清空（不改其它状态）',
+    params: [EL],
+    java: '%el%.clear();',
+    python: '%el%.clear()'
+  },
+  {
+    id: 'uncheck',
+    category: 'form',
+    name: '取消勾选',
+    desc: '取消勾选 checkbox / radio（未勾选时无副作用）',
+    params: [EL],
+    java: '%el%.uncheck();',
+    python: '%el%.uncheck()'
+  },
+
+  /* ---------------- 断言（v0.59 补充） ---------------- */
+  {
+    id: 'assert-enabled',
+    category: 'assert',
+    name: '断言可用',
+    desc: '元素处于可交互状态（没被 disable）',
+    params: [EL],
+    java: 'assertThat(%el%).isEnabled();',
+    python: 'expect(%el%).to_be_enabled()'
+  },
+  {
+    id: 'assert-disabled',
+    category: 'assert',
+    name: '断言禁用',
+    desc: '元素处于禁用状态（灰掉的按钮）',
+    params: [EL],
+    java: 'assertThat(%el%).isDisabled();',
+    python: 'expect(%el%).to_be_disabled()'
+  },
+  {
+    id: 'assert-url',
+    category: 'assert',
+    name: '断言地址',
+    desc: '当前 URL 匹配（支持 * 通配）',
+    params: [{ key: 'url', type: 'text', required: true, label: 'URL', placeholder: '**/home' }],
+    java: 'assertThat(page).hasURL("%url%");',
+    python: 'expect(self.page).to_have_url("%url%")'
+  },
+  {
+    id: 'assert-value',
+    category: 'assert',
+    name: '断言输入值',
+    desc: '输入框里的当前值等于预期',
+    params: [
+      EL,
+      { key: 'value', type: 'text', required: true, label: '值', placeholder: 'admin' }
+    ],
+    java: 'assertThat(%el%).hasValue("%value%");',
+    python: 'expect(%el%).to_have_value("%value%")'
+  },
+
+  /* ---------------- 工具（v0.59 新增：常被手写的那几段） ---------------- */
+  {
+    id: 'reload',
+    category: 'tool',
+    name: '刷新页面',
+    desc: '重新加载当前页面',
+    params: [],
+    java: 'page.reload();',
+    python: 'self.page.reload()'
+  },
+  {
+    id: 'refresh-interval',
+    category: 'tool',
+    name: '定时刷新',
+    desc: '按固定间隔刷新 N 次（等异步任务出结果时最常用）',
+    params: [
+      { key: 'count', type: 'number', required: true, default: 3, label: '刷新次数', placeholder: '3' },
+      { key: 'ms', type: 'number', required: true, default: 2000, label: '间隔(ms)', placeholder: '2000' }
+    ],
+    java: [
+      'for (int i = 0; i < %count%; i++) {',
+      '    page.waitForTimeout(%ms%);',
+      '    page.reload();',
+      '}'
+    ].join('\n'),
+    python: ['for _ in range(%count%):', '    self.page.wait_for_timeout(%ms%)', '    self.page.reload()'].join('\n')
+  },
+  {
+    id: 'screenshot',
+    category: 'tool',
+    name: '截图',
+    desc: '把当前页面存成图片（相对运行目录）',
+    params: [
+      { key: 'path', type: 'text', required: true, label: '保存路径', placeholder: 'target/screenshots/login.png' }
+    ],
+    java: 'page.screenshot(new Page.ScreenshotOptions().setPath(java.nio.file.Paths.get("%path%")));',
+    python: 'self.page.screenshot(path="%path%")'
+  },
+  {
+    id: 'pause',
+    category: 'tool',
+    name: '调试暂停',
+    desc: '在此处打开 Playwright Inspector，单步看现场（调试完记得删掉）',
+    params: [],
+    java: 'page.pause();',
+    python: 'self.page.pause()'
+  },
+  {
+    id: 'scroll-to',
+    category: 'tool',
+    name: '滚动到元素',
+    desc: '把元素滚进可视区域（长列表里点下面的按钮前用）',
+    params: [EL],
+    java: '%el%.scrollIntoViewIfNeeded();',
+    python: '%el%.scroll_into_view_if_needed()'
+  },
+  {
+    id: 'clear-cookies',
+    category: 'tool',
+    name: '清空 Cookie',
+    desc: '清掉当前上下文的 cookie / 本地存储里的登录态',
+    params: [],
+    java: 'context.clearCookies();',
+    python: 'self.context.clear_cookies()'
+  },
+  {
+    id: 'close-context',
+    category: 'tool',
+    name: '退出并清空浏览器',
+    desc: '清 cookie 后关闭上下文（相当于「退出登录并关窗口」）',
+    params: [],
+    java: ['context.clearCookies();', 'context.close();'].join('\n'),
+    python: ['self.context.clear_cookies()', 'self.context.close()'].join('\n')
   }
 ];
 
@@ -216,7 +386,10 @@ const UI_ACTION_CATEGORIES = [
   { key: 'assert', label: '断言' },
   { key: 'mouse', label: '鼠标' },
   { key: 'keyboard', label: '键盘' },
-  { key: 'wait', label: '等待' }
+  { key: 'form', label: '表单' },
+  { key: 'wait', label: '等待' },
+  // 工具放最后：它们不是「操作业务」，而是常被手写的那几段（刷新 / 截图 / 清现场）
+  { key: 'tool', label: '工具' }
 ];
 
 /** 参数允许的类型（前端按这个渲染控件，生成器按这个决定怎么转义） */

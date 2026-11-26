@@ -92,6 +92,20 @@ const API_ACTIONS = [
       '%as% = _m.group(1)'
     ].join('\n')
   },
+  {
+    /* v0.59 新增：分页 / 限流 / traceId 这类信息常常只在响应头里 */
+    id: 'extract-header',
+    category: 'extract',
+    name: '提取变量（响应头）',
+    desc: '从响应头取一个值（如 X-Total-Count / 限流剩余），存成变量',
+    params: [
+      { key: 'from', type: 'ident', required: true, label: '从哪个响应' },
+      { key: 'name', type: 'text', required: true, label: '响应头', default: 'X-Total-Count' },
+      { key: 'as', type: 'ident', required: true, label: '存为变量', default: 'total' }
+    ],
+    java: 'String %as% = %from%.header(%name%);',
+    python: '%as% = %from%.headers.get(%name%)'
+  },
 
   /* ---------------- 断言 ---------------- */
   {
@@ -131,6 +145,32 @@ const API_ACTIONS = [
     ],
     java: '%from%.then().time(lessThan(%ms%L));',
     python: 'assert %from%.elapsed.total_seconds() * 1000 < %ms%'
+  },
+  {
+    /* v0.59 新增：错误信息常常塞在 body 文本里，JSON 断言抓不到 */
+    id: 'assert-body-contains',
+    category: 'assert',
+    name: '断言响应体包含',
+    desc: '响应体原文里包含某段文本（错误提示 / traceId）',
+    params: [
+      { key: 'from', type: 'ident', required: true, label: '响应变量' },
+      { key: 'text', type: 'text', required: true, label: '包含文本', placeholder: 'success' }
+    ],
+    java: '%from%.then().body(containsString(%text%));',
+    python: 'assert %text% in %from%.text'
+  },
+  {
+    id: 'assert-header',
+    category: 'assert',
+    name: '断言响应头',
+    desc: '响应头等于预期值（如 Content-Type / 缓存策略）',
+    params: [
+      { key: 'from', type: 'ident', required: true, label: '响应变量' },
+      { key: 'name', type: 'text', required: true, label: '响应头', default: 'Content-Type' },
+      { key: 'value', type: 'text', required: true, label: '期望值', default: 'application/json' }
+    ],
+    java: '%from%.then().header(%name%, equalTo(%value%));',
+    python: 'assert %from%.headers.get(%name%) == %value%'
   },
 
   /* ---------------- 变量 ---------------- */

@@ -381,8 +381,23 @@ export default function SniffPanel(props: SniffPanelProps) {
               </Button>
             </div>
           ) : null}
-          <div style={{ ...MUTED, fontSize: 11, lineHeight: '15px' }}>
-            进度只在界面内存里，关掉面板即结束，不会写进台账
+          {/*
+            v0.59：这句以前是「进度只在界面内存里，关掉面板即结束，不会写进台账」，
+            面板窄的时候会折成两行、把「结束校验」顶歪。压到 13 个字 + nowrap，
+            和按钮稳稳对齐在一行；超长时省略号收尾，不换行。
+          */}
+          <div
+            style={{
+              ...MUTED,
+              fontSize: 11,
+              lineHeight: '18px',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis'
+            }}
+            title="进度只在界面内存里，关掉面板即结束，不会写进台账"
+          >
+            进度不写台账，关掉即结束
           </div>
         </div>
         <div style={{ flexShrink: 0, marginLeft: 'auto' }}>

@@ -48,10 +48,10 @@ const { COLLECTIONS, COLLECTION_MAP } = require('../shared/collections.js');
 const read = (p) => fs.readFileSync(p, 'utf8');
 
 /* ============================================================
- * 一、动作库（8 条）
+ * 一、动作库（10 条，v0.59 补了响应头提取 / 头断言 / 体包含）
  * ============================================================ */
 
-check('动作库正好 7 个动作', API_ACTIONS.length === 7, API_ACTIONS.length);
+check('动作库正好 10 个动作', API_ACTIONS.length === 10, API_ACTIONS.length);
 check(
   '每个动作都有 id/category/name/params/java/python',
   API_ACTIONS.every(
@@ -302,6 +302,62 @@ check(
 );
 check('assert-time → time(lessThan(1500L))', asserts.code.indexOf('.time(lessThan(1500L));') >= 0, asserts.code);
 check('set-var → String flag = "ok";', asserts.code.indexOf('String flag = "ok";') >= 0, asserts.code);
+
+/* ---- v0.59 新增：响应头提取 / 头断言 / 体包含（引号由生成器补，模板里不能再写引号）---- */
+{
+  const headers = gen.generateApiFlow({
+    steps: [
+      LOGIN,
+      { actionId: 'extract-header', params: { from: 'loginResp', name: 'X-Total-Count', as: 'total' } },
+      { actionId: 'assert-header', params: { from: 'loginResp', name: 'Content-Type', value: 'application/json' } },
+      { actionId: 'assert-body-contains', params: { from: 'loginResp', text: 'success' } }
+    ],
+    lang: 'java'
+  });
+  check(
+    'extract-header → String total = loginResp.header("X-Total-Count");',
+    headers.code.indexOf('String total = loginResp.header("X-Total-Count");') >= 0,
+    headers.code
+  );
+  check(
+    'assert-header → header("Content-Type", equalTo("application/json"))',
+    headers.code.indexOf('.header("Content-Type", equalTo("application/json"));') >= 0,
+    headers.code
+  );
+  check(
+    'assert-body-contains → body(containsString("success"))',
+    headers.code.indexOf('.body(containsString("success"));') >= 0,
+    headers.code
+  );
+  check(
+    '断言响应体包含要补 containsString 的静态导入',
+    headers.imports.indexOf('static org.hamcrest.Matchers.containsString') >= 0,
+    headers.imports
+  );
+
+  const pyHeaders = gen.generateApiFlow({
+    steps: [
+      LOGIN,
+      { actionId: 'extract-header', params: { from: 'loginResp', name: 'X-Total-Count', as: 'total' } },
+      { actionId: 'assert-header', params: { from: 'loginResp', name: 'Content-Type', value: 'application/json' } },
+      { actionId: 'assert-body-contains', params: { from: 'loginResp', text: 'success' } }
+    ],
+    lang: 'python'
+  });
+  check(
+    'Python 侧响应头三件套是单引号且没有重复引号',
+    pyHeaders.code.indexOf("total = loginResp.headers.get('X-Total-Count')") >= 0 &&
+      pyHeaders.code.indexOf("loginResp.headers.get('Content-Type') == 'application/json'") >= 0 &&
+      pyHeaders.code.indexOf("'success' in loginResp.text") >= 0,
+    pyHeaders.code
+  );
+  // 两个生成器的引号策略不同：接口侧由生成器补引号，模板自己再写就成了 ""x""
+  check(
+    '接口积木模板里没有自带引号的占位符（否则会生成 ""x""）',
+    API_ACTIONS.every((a) => !/"%[A-Za-z0-9_]+%"/.test(a.java) && !/'%[A-Za-z0-9_]+%'/.test(a.python)),
+    API_ACTIONS.filter((a) => /"%[A-Za-z0-9_]+%"/.test(a.java) || /'%[A-Za-z0-9_]+%'/.test(a.python)).map((a) => a.id)
+  );
+}
 
 /* ---- imports ---- */
 check(
