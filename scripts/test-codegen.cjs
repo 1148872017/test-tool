@@ -9,7 +9,12 @@ const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: con
 const cg = require('../shared/codegen.js');
 const targets = cg.listTargets();
 
-check('有 6 个生成目标', targets.length === 6, targets.length);
+check('有 7 个生成目标（v0.64 新增测试基类）', targets.length === 7, targets.length);
+check(
+  '有 Java Playwright 测试基类（不需要数据源的那个）',
+  targets.some((t) => t.key === 'java-playwright-base' && t.kind === 'base'),
+  targets.map((t) => t.key + ':' + t.kind)
+);
 check('有 Java REST Assured', targets.some((t) => t.key === 'java-restassured'), targets.map((t) => t.key));
 check('有 Python pytest', targets.some((t) => t.key === 'python-pytest'), targets.map((t) => t.key));
 check('有 Playwright Java POM', targets.some((t) => t.key === 'playwright-java'), targets.map((t) => t.key));
@@ -203,6 +208,41 @@ check('有 codegen:save', /handle\('codegen:save'/.test(mainSrc), 'no save');
     /codegenPickClass: \(\) => invoke\('codegen:pickClass'\)/.test(fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8')),
     'preload missing'
   );
+}
+
+/* ---------- 9.4 v0.64：Java · Playwright 测试基类（不需要数据源） ---------- */
+{
+  const r = cg.generate('java-playwright-base', {});
+  check('基类：默认类名 BaseTest，文件名对得上', !!r.ok && r.filename === 'BaseTest.java', r.filename);
+  check(
+    '基类：有 @BeforeClass / @AfterClass（起 + 收）',
+    /@BeforeClass/.test(r.code) && /@AfterClass/.test(r.code),
+    'no lifecycle annotations'
+  );
+  check(
+    '基类：按用户要求简化成 chromium + headless=false + slowMo=500',
+    /playwright\.chromium\(\)\.launch\(/.test(r.code) &&
+      /setHeadless\(false\)/.test(r.code) &&
+      /setSlowMo\(500\)/.test(r.code),
+    'launch not simplified'
+  );
+  check(
+    '基类：建了 context / page（原稿只起 browser，方法体里用 page 会 NPE）',
+    /context = browser\.newContext\(\)/.test(r.code) && /page = context\.newPage\(\)/.test(r.code),
+    'no context/page'
+  );
+  check(
+    '基类：简化后不再有 Properties / loadConfig',
+    !/Properties/.test(r.code) && !/loadConfig/.test(r.code),
+    'still has config code'
+  );
+  check(
+    '基类：收尾按 context → browser → playwright 三级关闭',
+    /context\.close\(\)/.test(r.code) && /browser\.close\(\)/.test(r.code) && /playwright\.close\(\)/.test(r.code),
+    'no teardown'
+  );
+  check('基类：自定义类名生效', cg.generate('java-playwright-base', { className: 'BaseUi' }).filename === 'BaseUi.java', 'name not applied');
+  check('基类：kind=base 且不进积木视图（页面元素那套与它无关）', r.target.kind === 'base', r.target.kind);
 }
 
 const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');

@@ -111,7 +111,7 @@ type Target = {
   desc: string;
   lang: string;
   ext: string;
-  kind: 'api' | 'page' | 'model';
+  kind: 'api' | 'page' | 'model' | 'base';
 };
 
 /** 生成类型下拉的语言分组顺序（只有这两门语言，其他语言的组排后面） */
@@ -201,10 +201,18 @@ export default function CodegenPage() {
   // 输出
   const [code, setCode] = useState('');
   const [filename, setFilename] = useState('');
+
   const [busy, setBusy] = useState(false);
 
   const current = useMemo(() => targets.find((t) => t.key === targetKey), [targets, targetKey]);
   const kind = current ? current.kind : 'api';
+  /**
+   * v0.64：自动化测试基类（Java · Playwright）**不需要任何数据源** ——
+   * 它就是「新建一个自动化项目时先生成的第一个文件」。
+   * 所以这里只给一句说明，不出现数据源选择框。
+   * （注意：必须定义在 kind 之后，否则是 TDZ 报错。）
+   */
+  const isBaseTarget = kind === 'base';
   /**
    * 积木区只在 Playwright POM 目标下出现：
    * 那两个目标产出的本来就是「测试方法 + 页面对象」，动作拼装才有意义；
@@ -1008,6 +1016,20 @@ export default function CodegenPage() {
                 + 添加元素
               </Button>
             </>
+          ) : null}
+
+          {isBaseTarget ? (
+            <div className="codegen-desc muted" style={{ lineHeight: 1.9 }}>
+              这个目标<b>不需要数据源</b>：生成的是一个完整的基础类文件，
+              里面有起浏览器（<span className="mono">chromium + headless=false + slowMo=500</span>）
+              和收尾两件事。新建自动化项目时先生成它，之后的测试类继承它就能直接用
+              <span className="mono"> page</span>。
+              <br />
+              上面「类名」填什么，文件就叫什么（默认 <span className="mono">BaseTest</span>）。
+              <br />
+              想改行为就改生成结果里那两行注释处：<span className="mono">setHeadless(...)</span> /
+              <span className="mono"> setSlowMo(...)</span>。
+            </div>
           ) : null}
 
           {kind === 'model' ? (

@@ -446,6 +446,85 @@ class <%= className %>(BaseModel):
  * 生成入口
  * ============================================================ */
 
+/**
+ * v0.64：自动化测试基类（Java + Playwright）。
+ *
+ * 用户那段「每个自动化启动的第一步」的代码，做成一个生成目标。
+ * 为什么不放积木里：积木产物是**一个方法体**，而这段是**类级别**的东西
+ * （静态字段 + 生命周期方法），塞进方法体会编译不过。
+ *
+ * 按用户要求做得尽量短：不读配置文件、不做 firefox/webkit 分支，
+ * 就是 chromium + headless=false + slowMo=500（边调边看）。想改行为改这两行注释处。
+ * 比原稿多的只有 @AfterClass —— 不然每跑一次就留一个浏览器进程。
+ */
+const TPL_JAVA_PLAYWRIGHT_BASE = `package com.test.base;
+
+import com.microsoft.playwright.Browser;
+import com.microsoft.playwright.BrowserContext;
+import com.microsoft.playwright.BrowserType;
+import com.microsoft.playwright.Page;
+import com.microsoft.playwright.Playwright;
+
+import org.testng.annotations.AfterClass;
+import org.testng.annotations.BeforeClass;
+
+/**
+ * 自动化测试基类：起浏览器 + 收尾。
+ *
+ * 用法：测试类继承它，方法体里直接用 page / context：
+ *   public class LoginTest extends <%= className %> {
+ *       @Test
+ *       public void testLogin() {
+ *           page.navigate("/login");
+ *       }
+ *   }
+ */
+public class <%= className %> {
+
+    // 整个测试类共享：Playwright / Browser 起一次就够（很重）
+    protected static Playwright playwright;
+    protected static Browser browser;
+
+    // 每个测试方法一套
+    protected BrowserContext context;
+    protected Page page;
+
+    @BeforeClass(alwaysRun = true)
+    public void setUpClass() {
+        playwright = Playwright.create();
+        browser = playwright.chromium().launch(
+                new BrowserType.LaunchOptions()
+                        .setHeadless(false)   // 想后台跑就改 true
+                        .setSlowMo(500));     // 每步慢 500ms，方便看；正式跑改 0
+        context = browser.newContext();
+        page = context.newPage();
+    }
+
+    /**
+     * 收尾：先关 context（连带 page），再关 browser，最后关 playwright。
+     * 少关一层就留一个后台进程；alwaysRun 保证用例失败时也执行。
+     */
+    @AfterClass(alwaysRun = true)
+    public void tearDownClass() {
+        try {
+            if (context != null) context.close();
+        } catch (Exception ignore) {
+            // 浏览器已经崩了也不影响收尾
+        }
+        try {
+            if (browser != null) browser.close();
+        } catch (Exception ignore) {
+            // 同上
+        }
+        try {
+            if (playwright != null) playwright.close();
+        } catch (Exception ignore) {
+            // 同上
+        }
+    }
+}
+`;
+
 /** 可用的生成目标 */
 const TARGETS = [
   {
@@ -501,6 +580,19 @@ const TARGETS = [
     ext: '.py',
     tpl: TPL_DATACLASS_PYTHON,
     kind: 'model'
+  },
+  {
+    /**
+     * v0.64：自动化测试基类。
+     * 不需要任何数据源 —— 它就是「新建一个自动化项目时的第一个文件」。
+     */
+    key: 'java-playwright-base',
+    label: 'Java · Playwright 测试基类',
+    desc: '浏览器生命周期 + 配置读取（新建自动化项目先要这个）',
+    lang: 'java',
+    ext: '.java',
+    tpl: TPL_JAVA_PLAYWRIGHT_BASE,
+    kind: 'base'
   }
 ];
 
@@ -839,6 +931,9 @@ function generate(targetKey, input = {}) {
       className: input.className || 'DataModel',
       fields
     };
+  } else if (target.kind === 'base') {
+    // v0.64：测试基类不需要数据源，只有类名（默认 BaseTest）
+    ctx = { className: input.className || 'BaseTest' };
   } else {
     return { ok: false, message: '未知的生成类型' };
   }

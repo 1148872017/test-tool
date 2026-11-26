@@ -556,9 +556,10 @@ function mount(initialValue) {
   check('按语言分成 2 组', groups.length === 2, groups.map((g) => g.label));
   check('Java 组排第一', groups[0].label === 'Java', groups[0].label);
   check('Python 组排第二', groups[1].label === 'Python', groups[1].label);
-  check('Java 组有 3 个目标', groups[0].options.length === 3, groups[0].options);
+  // v0.64 新增「Java · Playwright 测试基类」，所以 Java 组从 3 个变 4 个
+  check('Java 组有 4 个目标', groups[0].options.length === 4, groups[0].options);
   check('Python 组有 3 个目标', groups[1].options.length === 3, groups[1].options);
-  check('分组不丢 target（6 个 key 全在）', groups.reduce((n, g) => n + g.options.length, 0) === 6 && groups.flatMap((g) => g.options.map((o) => o.value)).sort().join(',') === cg.listTargets().map((t) => t.key).sort().join(','), groups);
+  check('分组不丢 target（7 个 key 全在）', groups.reduce((n, g) => n + g.options.length, 0) === 7 && groups.flatMap((g) => g.options.map((o) => o.value)).sort().join(',') === cg.listTargets().map((t) => t.key).sort().join(','), groups);
   check('分组项 label 沿用后端文案', groups[0].options.some((o) => o.label === 'Java · REST Assured'), groups[0].options.map((o) => o.label));
   check('分组里 value 就是 backend target key', groups[1].options.some((o) => o.value === 'playwright-python'), groups[1].options);
 

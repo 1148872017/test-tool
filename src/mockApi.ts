@@ -1000,7 +1000,9 @@ const isTrashed = (id: string) => {
         { key: 'playwright-java', label: 'Java · Playwright POM', desc: '页面对象类', lang: 'java', ext: '.java', kind: 'page' },
         { key: 'playwright-python', label: 'Python · Playwright POM', desc: '页面对象类', lang: 'python', ext: '.py', kind: 'page' },
         { key: 'pojo-java', label: 'Java · POJO（Lombok）', desc: '从 JSON 生成实体类', lang: 'java', ext: '.java', kind: 'model' },
-        { key: 'dataclass-python', label: 'Python · Pydantic 模型', desc: '从 JSON 生成数据模型', lang: 'python', ext: '.py', kind: 'model' }
+        { key: 'dataclass-python', label: 'Python · Pydantic 模型', desc: '从 JSON 生成数据模型', lang: 'python', ext: '.py', kind: 'model' },
+        // v0.64：预览里也要有，否则截图/自查看不到这个目标
+        { key: 'java-playwright-base', label: 'Java · Playwright 测试基类', desc: '浏览器生命周期 + 收尾（新建自动化项目先要这个）', lang: 'java', ext: '.java', kind: 'base' }
       ]
     }),
     codegenPreview: async () => ({
