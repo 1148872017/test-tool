@@ -1084,6 +1084,25 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
     check('接口积木底部有「保存到文件」按钮', !!saveBtn, nodesOf(pSave, rt2.antd.Button).map(textOf).filter(Boolean));
     check('没代码时保存按钮禁用', !!saveBtn && saveBtn.props.disabled === true, saveBtn && saveBtn.props.disabled);
   }
+
+  /* ---- v0.61：接口参数面板也接毫秒换算（断言响应时间 2000 → = 2 秒） ---- */
+  {
+    const ModalP = rt2.load(PARAM_MODAL).default;
+    const tree = ModalP({
+      open: true,
+      action: actionById('assert-time'),
+      params: { from: 'loginResp', ms: 2000 },
+      apis: APIS,
+      vars: [],
+      editing: false,
+      error: '',
+      onChange: () => {},
+      onCancel: () => {},
+      onOk: () => {}
+    });
+    check('接口参数面板：2000ms 旁显示「= 2 秒」', hasText(tree, '= 2 秒'), 'no ms hint');
+    check('接口参数面板源码里接了 msHint', /msHint/.test(modalSrc), 'modal not wired');
+  }
   check('空步骤时结果区提示先加一步', hasText(panel, '还没有选任何步骤'), 'no empty hint');
   check('设置条上有 BaseUrl 与「方法名」输入', hasText(panel, 'BaseUrl') && hasText(panel, '方法名'), 'no baseUrl input');
 

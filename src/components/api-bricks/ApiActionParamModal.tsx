@@ -1,5 +1,6 @@
 import React from 'react';
 import { AutoComplete, Input, InputNumber, Modal, Select, Tag } from 'antd';
+import { msHint } from '../../../shared/uiActions';
 import { apiOptions, apiSnapshot, identOk, insertVarToken, variableOptions, type FlowVar } from './apiBrickHelpers';
 
 /**
@@ -226,18 +227,25 @@ export default function ApiActionParamModal(props: Props) {
 
         /* ---------- 数字 ---------- */
         if (p.type === 'number') {
+          // v0.61：毫秒类参数给个灰字换算（`2000` → `= 2 秒`），和 UI 积木保持一致
+          const hint = /ms/i.test(p.key) || /毫秒/.test(String(p.label || '')) ? msHint(raw) : '';
           return (
             <div key={p.key} style={{ marginBottom: 10 }}>
               <div style={LABEL}>
                 {p.label || p.key}
                 {p.required ? <span style={{ color: '#cf1322' }}> *</span> : null}
               </div>
-              <InputNumber
-                style={{ width: 180 }}
-                value={raw === '' || raw === undefined || raw === null ? undefined : Number(raw)}
-                placeholder={p.placeholder || String(p.default === undefined ? '' : p.default)}
-                onChange={(v: any) => onChange(p.key, v)}
-              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <InputNumber
+                  style={{ width: 180 }}
+                  value={raw === '' || raw === undefined || raw === null ? undefined : Number(raw)}
+                  placeholder={p.placeholder || String(p.default === undefined ? '' : p.default)}
+                  onChange={(v: any) => onChange(p.key, v)}
+                />
+                {hint ? (
+                  <span style={{ fontSize: 11.5, color: '#8a90a2' }}>{hint}</span>
+                ) : null}
+              </div>
             </div>
           );
         }

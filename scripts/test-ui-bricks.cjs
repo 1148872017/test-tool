@@ -19,6 +19,7 @@ const check = (name, cond, extra) => results.push({ name, ok: !!cond, extra: con
 const ROOT = path.join(__dirname, '..');
 const CODEGEN = path.join(ROOT, 'src', 'pages', 'CodegenPage.tsx');
 const BRICKS = path.join(ROOT, 'src', 'components', 'ui-bricks', 'BricksPanel.tsx');
+const ACTION_MODAL = path.join(ROOT, 'src', 'components', 'ui-bricks', 'ActionParamModal.tsx');
 
 const {
   UI_ACTIONS,
@@ -170,6 +171,77 @@ check(
     (id) => !actionById(id)
   )
 );
+
+/* ============================================================
+ * 一之二、v0.61：代码注释（每步一行人话）+ 毫秒灰字换算
+ * ============================================================ */
+{
+  const { summaryOf, UI_SUMMARY_TEMPLATES, msHint } = require('../shared/uiActions.js');
+
+  check(
+    '每个动作都能算出非空摘要（新加动作忘了配模板就退化成动作名）',
+    UI_ACTIONS.every((a) => String(summaryOf(a, {})).trim().length > 0),
+    UI_ACTIONS.filter((a) => !String(summaryOf(a, {})).trim()).map((a) => a.id)
+  );
+  check(
+    '摘要模板里的占位符都在 params 里有定义',
+    UI_ACTIONS.every((a) => {
+      const defined = new Set((a.params || []).map((p) => p.key));
+      const used = [];
+      const re = /%([A-Za-z0-9_]+)%/g;
+      const src = String(a.summary || '');
+      let m;
+      while ((m = re.exec(src))) used.push(m[1]);
+      return used.every((k) => defined.has(k));
+    }),
+    UI_ACTIONS.filter((a) => {
+      const defined = new Set((a.params || []).map((p) => p.key));
+      return (String(a.summary || '').match(/%([A-Za-z0-9_]+)%/g) || []).some(
+        (k) => !defined.has(k.slice(1, -1))
+      );
+    }).map((a) => a.id)
+  );
+  check('摘要用真实参数值替换（固定等待 → 3000 ms）', summaryOf(actionById('wait-timeout'), { ms: 3000 }) === '固定等待：3000 ms', summaryOf(actionById('wait-timeout'), { ms: 3000 }));
+  check('摘要缺参数时不留 %占位符%', !/%[A-Za-z0-9_]+%/.test(summaryOf(actionById('fill'), {})), summaryOf(actionById('fill'), {}));
+
+  // 生成的代码里每步前面都有一行注释，且序号连续
+  const withComments = gen.generateSteps({
+    steps: [
+      { actionId: 'goto', params: { url: '/login' } },
+      { actionId: 'wait-timeout', params: { ms: 3000 } }
+    ],
+    lang: 'java',
+    pomMode: 'none',
+    pageName: '登录页'
+  });
+  check(
+    'Java 注释形如 `// 2. 固定等待：3000 ms` 且紧贴在语句上方',
+    withComments.code.indexOf('    // 1. 打开地址 /login\n    page.navigate("/login");') >= 0 &&
+      withComments.code.indexOf('    // 2. 固定等待：3000 ms\n    page.waitForTimeout(3000);') >= 0,
+    withComments.code
+  );
+
+  const pyComments = gen.generateSteps({
+    steps: [
+      { actionId: 'goto', params: { url: '/login' } },
+      { actionId: 'wait-timeout', params: { ms: 2500 } }
+    ],
+    lang: 'python',
+    pomMode: 'none',
+    pageName: '登录页'
+  });
+  check(
+    'Python 注释用 `#`（同一份摘要）',
+    pyComments.code.indexOf('    # 2. 固定等待：2500 ms\n    self.page.wait_for_timeout(2500)') >= 0,
+    pyComments.code
+  );
+
+  // 毫秒 → 秒的灰字
+  check('msHint：3000 → = 3 秒', msHint(3000) === '= 3 秒', msHint(3000));
+  check('msHint：2500 → = 2.5 秒', msHint(2500) === '= 2.5 秒', msHint(2500));
+  check('msHint：250 → = 0.25 秒', msHint(250) === '= 0.25 秒', msHint(250));
+  check('msHint：空 / 0 / 负数 / 非数字 → 空串（不渲染）', ['', 0, -1, 'abc'].every((v) => msHint(v) === ''), ['', 0, -1, 'abc']);
+}
 check('actionById 能按 id 取到动作', actionById('click') && actionById('click').name === '点击', actionById('click'));
 check('actionById 对未知 id 返回 null', actionById('not-exist') === null, actionById('not-exist'));
 check(
@@ -201,10 +273,15 @@ const javaNone = gen.generateSteps({ steps: LOGIN_STEPS, lang: 'java', pomMode: 
 const EXPECT_JAVA_NONE = [
   '@Test',
   'public void testLogin() {',
+  '    // 1. 打开地址 /login',
   '    page.navigate("/login");',
+  '    // 2. 在 usernameInput 输入「admin」',
   '    page.locator("#username").fill("admin");',
+  '    // 3. 在 passwordInput 输入「123」',
   '    page.locator("#password").fill("123");',
+  '    // 4. 点击 submitBtn',
   '    page.locator("button[type=submit]").click();',
+  '    // 5. 断言可见：errorTip',
   '    assertThat(page.locator(".error-tip")).isVisible();',
   '}'
 ].join('\n');
@@ -980,8 +1057,9 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
 
   const codeArea = collect(panel).find((n) => n.type === 'textarea');
   check(
-    '加完步骤后结果区实时出代码',
-    codeArea.props.value === ['@Test', 'public void testLogin() {', '    page.navigate("/login");', '}'].join('\n'),
+    '加完步骤后结果区实时出代码（含步骤注释）',
+    codeArea.props.value ===
+      ['@Test', 'public void testLogin() {', '    // 1. 打开地址 /login', '    page.navigate("/login");', '}'].join('\n'),
     codeArea.props.value
   );
   check('需要的 import 单独列出来（Page）', hasText(panel, 'com.microsoft.playwright.Page'), 'no imports block');
@@ -1116,6 +1194,28 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
       (n) => textOf(n) === '保存到文件'
     );
     check('没有代码时「保存到文件」是禁用的', !!emptySave && emptySave.props.disabled === true, emptySave && emptySave.props.disabled);
+  }
+
+  /* ---- v0.61：参数面板里的毫秒灰字换算（真渲染一层，不是只验函数） ---- */
+  {
+    const { msHint } = require('../shared/uiActions.js');
+    const ModalM = rt2.load(ACTION_MODAL).default;
+    const renderModal = (params) =>
+      ModalM({
+        open: true,
+        action: actionById('wait-timeout'),
+        params,
+        elements: [],
+        pageId: 'p1',
+        editing: false,
+        error: '',
+        onChange: () => {},
+        onCancel: () => {},
+        onOk: () => {}
+      });
+    check('参数面板：填 3000 时显示「= 3 秒」', hasText(renderModal({ ms: 3000 }), '= 3 秒'), 'no ms hint');
+    check('参数面板：填 2500 时显示「= 2.5 秒」', hasText(renderModal({ ms: 2500 }), '= 2.5 秒'), 'no ms hint 2500');
+    check('参数面板：没填时不显示任何换算', !hasText(renderModal({}), '= 0 秒') && msHint('') === '', 'hint on empty');
   }
 
   /* ---- 没选页面时元素下拉的提示 ---- */

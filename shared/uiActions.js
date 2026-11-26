@@ -395,6 +395,104 @@ const UI_ACTION_CATEGORIES = [
 /** 参数允许的类型（前端按这个渲染控件，生成器按这个决定怎么转义） */
 const UI_PARAM_TYPES = ['element', 'text', 'number', 'boolean', 'select'];
 
+/**
+ * 每一步代码**前面那行注释**的文案（v0.61）。
+ *
+ * 为什么要它：积木拼出来的方法体，隔两天自己都看不懂「这行 waitForTimeout(3000) 是在等什么」。
+ * 有了注释就是 `// 3. 固定等待：3000 ms` + 代码，回头一眼能对上当时点的哪个积木。
+ *
+ * 模板里同样是 `%参数名%`，由 summaryOf 用参数值替换；没写模板的动作退回动作名。
+ */
+const UI_SUMMARY_TEMPLATES = {
+  /* 导航 */
+  goto: '打开地址 %url%',
+
+  /* 断言 */
+  'assert-visible': '断言可见：%el%',
+  'assert-hidden': '断言隐藏：%el%',
+  'assert-text': '断言文本：%el% 等于「%text%」',
+  'assert-contains-text': '断言包含文本：%el% 含「%text%」',
+  'assert-count': '断言数量：%el% 共 %count% 个',
+  'assert-attr': '断言属性：%el% 的 %name% 等于「%value%」',
+  'assert-title': '断言页面标题等于「%title%」',
+  'assert-enabled': '断言可用：%el%',
+  'assert-disabled': '断言禁用：%el%',
+  'assert-url': '断言地址匹配 %url%',
+  'assert-value': '断言输入值：%el% 等于「%value%」',
+
+  /* 鼠标 */
+  click: '点击 %el%',
+  dblclick: '双击 %el%',
+  hover: '悬停在 %el%',
+  check: '勾选 %el%',
+
+  /* 键盘 */
+  fill: '在 %el% 输入「%text%」',
+  press: '按键 %key%',
+
+  /* 表单 */
+  'select-option': '下拉选择 %el% = 「%value%」',
+  upload: '给 %el% 选文件 %path%',
+  'clear-input': '清空输入框 %el%',
+  uncheck: '取消勾选 %el%',
+
+  /* 等待 */
+  'wait-visible': '等到 %el% 可见',
+  'wait-hidden': '等到 %el% 消失',
+  'wait-url': '等待地址变成 %url%',
+  'wait-timeout': '固定等待：%ms% ms',
+
+  /* 工具 */
+  reload: '刷新页面',
+  'refresh-interval': '定时刷新：每 %ms% ms 一次，共 %count% 次',
+  screenshot: '截图存到 %path%',
+  pause: '调试暂停（会打开 Inspector）',
+  'scroll-to': '滚动到 %el%',
+  'clear-cookies': '清空 Cookie',
+  'close-context': '退出并清空浏览器（清 Cookie + 关上下文）'
+};
+
+/**
+ * 把一步的「人话摘要」算出来（给代码注释用）。
+ *
+ * 参数缺了就留空（生成器那边已经报过 warning，这里不重复喊）；
+ * 没配模板的动作（以后新加的）退回 action.name，不会出现空注释。
+ */
+function summaryOf(action, params) {
+  if (!action) return '';
+  const p = params || {};
+  const tpl = String(action.summary || '');
+  if (!tpl) return String(action.name || '');
+  let text = tpl;
+  for (const def of action.params || []) {
+    const raw = p[def.key];
+    const missing = raw === undefined || raw === null || String(raw).trim() === '';
+    const val = missing ? (def.default === undefined ? '' : def.default) : raw;
+    text = text.split('%' + def.key + '%').join(String(val));
+  }
+  return text;
+}
+
+/**
+ * 毫秒 → 「X 秒」的灰字提示文案（v0.61）。
+ *
+ * 用户点「固定等待」，输入框里写 3000 得自己脑补「这是 3 秒」；
+ * 输入框右边显示 `= 3 秒` 就不用算了。不是毫秒类参数就返回空串（调用方据此不渲染）。
+ */
+function msHint(value) {
+  const n = Number(value);
+  if (!isFinite(n) || n <= 0) return '';
+  const sec = n / 1000;
+  // 3 → "3 秒"，2.5 → "2.5 秒"，0.25 → "0.25 秒"；最多两位小数，去掉末尾 0
+  const text = String(Math.round(sec * 100) / 100);
+  return '= ' + text + ' 秒';
+}
+
+// 把模板挂到动作对象上（动作库保持「纯数据」，摘要不单独维护一份 id 表）
+for (const a of UI_ACTIONS) {
+  if (UI_SUMMARY_TEMPLATES[a.id]) a.summary = UI_SUMMARY_TEMPLATES[a.id];
+}
+
 /** 按 id 取动作；取不到返回 null（生成器遇到脏数据时只警告不抛） */
 function actionById(id) {
   const key = String(id === undefined || id === null ? '' : id);
@@ -417,6 +515,9 @@ module.exports = {
   UI_ACTIONS,
   UI_ACTION_CATEGORIES,
   UI_PARAM_TYPES,
+  UI_SUMMARY_TEMPLATES,
+  summaryOf,
+  msHint,
   actionById,
   actionsByCategory
 };

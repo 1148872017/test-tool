@@ -2,6 +2,7 @@ import React from 'react';
 import { Input, InputNumber, Modal, Select, Switch, Tag } from 'antd';
 import { elementOptions, locatorModeShort } from './brickHelpers';
 import ElementCountTip from './ElementCountTip';
+import { msHint } from '../../../shared/uiActions';
 
 /**
  * 点积木后弹出的小面板：按动作的 params 定义自动出控件。
@@ -119,15 +120,27 @@ export default function ActionParamModal(props: Props) {
         }
 
         if (p.type === 'number') {
+          /**
+           * v0.61：毫秒类参数右边给个灰字换算（`3000` → `= 3 秒`），
+           * 省得用户自己脑补「这到底是 3 秒还是 3 毫秒」。
+           */
+          const hint = /ms/i.test(p.key) || /毫秒/.test(String(p.label || '')) ? msHint(raw) : '';
           return (
             <div key={p.key} style={{ marginBottom: 10 }}>
               {label}
-              <InputNumber
-                style={{ width: 160 }}
-                value={raw === '' || raw === undefined || raw === null ? undefined : Number(raw)}
-                placeholder={p.placeholder || String(p.default === undefined ? '' : p.default)}
-                onChange={(v) => onChange(p.key, v)}
-              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <InputNumber
+                  style={{ width: 160 }}
+                  value={raw === '' || raw === undefined || raw === null ? undefined : Number(raw)}
+                  placeholder={p.placeholder || String(p.default === undefined ? '' : p.default)}
+                  onChange={(v) => onChange(p.key, v)}
+                />
+                {hint ? (
+                  <span className="muted" style={{ fontSize: 11.5 }}>
+                    {hint}
+                  </span>
+                ) : null}
+              </div>
             </div>
           );
         }

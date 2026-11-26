@@ -10,8 +10,8 @@
 
 | 项 | 值 |
 |---|---|
-| 当前版本 | **v0.60.0** |
-| 测试基线 | **64 个套件 / 5072 项**（unit 60 + env 4） |
+| 当前版本 | **v0.61.0** |
+| 测试基线 | **64 个套件 / 5087 项**（unit 60 + env 4） |
 | 运行环境 | Windows 10/11（x64），安装包约 120 MB |
 | 数据位置 | `%APPDATA%\测试工作台\` |
 
@@ -338,6 +338,24 @@ where order_no = {{orderNo}} and create_time > {{today}}
 | 清空 | 清掉已拼的步骤 |
 
 > 保存写的就是**面板里当前那段代码**（手改过也按你改的存），不是重新生成一遍。
+
+**代码会带步骤注释**（v0.61）：每个积木生成的语句上方都有一行人话，序号和「已选步骤」对得上——
+
+```java
+@Test
+public void testLogin() {
+    // 1. 打开地址 /login
+    page.navigate("/login");
+    // 2. 在 usernameInput 输入「admin」
+    page.locator("#username").fill("admin");
+    // 3. 固定等待：3000 ms
+    page.waitForTimeout(3000);
+}
+```
+
+Python 用 `#`。注释标题来自 `shared/uiActions.js` 的 `UI_SUMMARY_TEMPLATES`，新加动作忘了配就退回动作名。
+
+**毫秒参数会自动换算**：填 `3000` 时输入框右边显示 `= 3 秒`（`2500` → `= 2.5 秒`），不用自己心算。
 
 接口侧 10 个动作：调用接口 / 提取变量（JSONPath / 正则 / **响应头**）/ 断言状态码 /
 断言 JSON 字段 / 断言响应时间 / **断言响应体包含** / **断言响应头** / 设置变量。
@@ -904,7 +922,7 @@ v0.56 修的就是这个：以前平台用「启动的进程是否还活着」�
 | 前端 | React 18.3 + antd 5.29 + TypeScript（esbuild 转译，不跑 tsc） |
 | 数据 | sql.js（WASM SQLite）→ `data.db`，整库重写 + tmp/fsync/rename |
 | 打包 | electron-builder（NSIS） |
-| 测试 | 自研轻量脚本，**64 套件 / 5072 项**，分 unit / env 两档 |
+| 测试 | 自研轻量脚本，**64 套件 / 5087 项**，分 unit / env 两档 |
 
 ### 常用命令
 
@@ -915,9 +933,9 @@ npm install
 node scripts/build.mjs        # 生产构建
 node scripts/build.mjs -- --preview   # 预览构建（含 mock，浏览器可开）
 
-npm test                      # unit 档 60 套件 / 4929 项（自检先跑）
+npm test                      # unit 档 60 套件 / 4944 项（自检先跑）
 npm run test:env              # env 档 4 套件 / 127 项（需设 4 个目录变量）
-npm run test:all              # 全量 64 套件 / 5072 项
+npm run test:all              # 全量 64 套件 / 5087 项
 npm run test:gui              # 只跑 GUI 冒烟（19 路由 + 5 类交互，约 26 秒）
 npm run check                 # 只跑提交前自检
 npm run dist:installer        # 打 NSIS 安装包

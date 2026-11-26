@@ -21,7 +21,7 @@ const {
   normalizeLocatorMode,
   escapeDoubleQuoted
 } = require('./locatorModes.js');
-const { actionById } = require('./uiActions.js');
+const { actionById, summaryOf } = require('./uiActions.js');
 
 /** POM 三种模式（顺序即前端单选项顺序） */
 const POM_MODES = ['none', 'generated', 'existing'];
@@ -275,6 +275,8 @@ function generateSteps(o) {
     pomVar,
     warnings,
     usesRole: false,
+    /** 当前第几步（1 开始）：注释前缀用得到 */
+    stepNo: 0,
     /** 同一句话只提示一次（同一个元素重复 3 次不必刷 3 遍） */
     warned: new Set(),
   };
@@ -328,6 +330,16 @@ function generateSteps(o) {
 
     // 多行模板（循环 / 连续两句，如「定时刷新」「退出并清空浏览器」）要逐行缩进，
     // 否则只有第一行在方法体里、后面的语句会掉到顶格
+    //
+    // v0.61：每步前面插一行注释，写清「这一步是在干什么」——
+    //   // 3. 固定等待：3000 ms
+    //   page.waitForTimeout(3000);
+    // 积木拼出来的方法体隔几天自己都看不懂，注释是唯一能对回积木的东西。
+    ctx.stepNo += 1;
+    const summary = summaryOf(action, params);
+    if (summary) {
+      body.push(INDENT + (lang === 'python' ? '# ' : '// ') + ctx.stepNo + '. ' + summary);
+    }
     for (const ln of line.split('\n')) body.push(INDENT + ln);
   }
 
