@@ -1080,6 +1080,44 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
     props.copied
   );
 
+  /* ---- v0.60：保存到文件（以前积木视图只有「复制」） ---- */
+  {
+    const propsSave = Object.assign({}, props, { onSave: (t) => (propsSave.saved = t) });
+    let p2 = rt2.render(bp, propsSave);
+    const saveBtn = nodesOf(p2, rt2.antd.Button).find(
+      (n) => textOf(n) === '保存到文件'
+    );
+    check('生成结果底部有「保存到文件」按钮', !!saveBtn && textOf(saveBtn) === '保存到文件', saveBtn && textOf(saveBtn));
+    check('有代码时保存按钮可点', !!saveBtn && saveBtn.props.disabled !== true, saveBtn && saveBtn.props.disabled);
+    saveBtn.props.onClick();
+    check(
+      '保存交出去的是「import + 方法体」完整文本（落盘即可编译）',
+      typeof propsSave.saved === 'string' &&
+        propsSave.saved.indexOf('com.microsoft.playwright.Page') >= 0 &&
+        propsSave.saved.indexOf('@Test') >= 0,
+      propsSave.saved
+    );
+
+    // 没代码时按钮要禁用，别让人点了没反应
+    const rtEmpty = createRuntime();
+    const bpEmpty = rtEmpty.load(BRICKS).default;
+    const emptyPanel = rtEmpty.render(bpEmpty, {
+      pages: [],
+      pageId: '',
+      onSelectPage: () => {},
+      pageName: '',
+      pageUrl: '',
+      elements: [],
+      lang: 'java',
+      onCopy: () => {},
+      onSave: () => {}
+    });
+    const emptySave = nodesOf(emptyPanel, rtEmpty.antd.Button).find(
+      (n) => textOf(n) === '保存到文件'
+    );
+    check('没有代码时「保存到文件」是禁用的', !!emptySave && emptySave.props.disabled === true, emptySave && emptySave.props.disabled);
+  }
+
   /* ---- 没选页面时元素下拉的提示 ---- */
   const rt3 = createRuntime();
   const bp3 = rt3.load(BRICKS).default;

@@ -10,8 +10,8 @@
 
 | 项 | 值 |
 |---|---|
-| 当前版本 | **v0.59.0** |
-| 测试基线 | **64 个套件 / 5050 项**（unit 60 + env 4） |
+| 当前版本 | **v0.60.0** |
+| 测试基线 | **64 个套件 / 5072 项**（unit 60 + env 4） |
 | 运行环境 | Windows 10/11（x64），安装包约 120 MB |
 | 数据位置 | `%APPDATA%\测试工作台\` |
 
@@ -328,6 +328,16 @@ where order_no = {{orderNo}} and create_time > {{today}}
 > 「工具」这一类是 v0.59 加的：它们是**手写频率最高、又最容易写错**的那几段。
 > 比如「定时刷新」会生成 `for (int i = 0; i < 3; i++) { waitForTimeout(2000); reload(); }`（Java）
 > 或 `for _ in range(3):` + 两行缩进（Python），不用自己数缩进。
+
+**积木拼完怎么拿走**：右边生成结果底部有三个按钮——
+
+| 按钮 | 作用 |
+|---|---|
+| **保存到文件** | 选一个目录，直接落盘成 `<页面名>Test.java` / `test_<页面名>.py`，**带 import，能直接编译** |
+| 复制 | 粘到 IDE 里自己建文件 |
+| 清空 | 清掉已拼的步骤 |
+
+> 保存写的就是**面板里当前那段代码**（手改过也按你改的存），不是重新生成一遍。
 
 接口侧 10 个动作：调用接口 / 提取变量（JSONPath / 正则 / **响应头**）/ 断言状态码 /
 断言 JSON 字段 / 断言响应时间 / **断言响应体包含** / **断言响应头** / 设置变量。
@@ -894,7 +904,7 @@ v0.56 修的就是这个：以前平台用「启动的进程是否还活着」�
 | 前端 | React 18.3 + antd 5.29 + TypeScript（esbuild 转译，不跑 tsc） |
 | 数据 | sql.js（WASM SQLite）→ `data.db`，整库重写 + tmp/fsync/rename |
 | 打包 | electron-builder（NSIS） |
-| 测试 | 自研轻量脚本，**64 套件 / 5050 项**，分 unit / env 两档 |
+| 测试 | 自研轻量脚本，**64 套件 / 5072 项**，分 unit / env 两档 |
 
 ### 常用命令
 
@@ -905,9 +915,9 @@ npm install
 node scripts/build.mjs        # 生产构建
 node scripts/build.mjs -- --preview   # 预览构建（含 mock，浏览器可开）
 
-npm test                      # unit 档 60 套件 / 4907 项（自检先跑）
+npm test                      # unit 档 60 套件 / 4929 项（自检先跑）
 npm run test:env              # env 档 4 套件 / 127 项（需设 4 个目录变量）
-npm run test:all              # 全量 64 套件 / 5050 项
+npm run test:all              # 全量 64 套件 / 5072 项
 npm run test:gui              # 只跑 GUI 冒烟（19 路由 + 5 类交互，约 26 秒）
 npm run check                 # 只跑提交前自检
 npm run dist:installer        # 打 NSIS 安装包

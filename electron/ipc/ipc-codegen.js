@@ -9,6 +9,34 @@
 const codegen = require('../../shared/codegen');
 const sqlgen = require('../../shared/sqlgen');
 
+/**
+ * 积木视图直接写盘时的文件名守卫（v0.60）。
+ *
+ * 只收「单段文件名」：不含路径分隔符、不含 ..、不以点开头；
+ * 扩展名必须在「这个生成目标」允许的那几个里 —— 免得传到一股 .exe 或者别的东西上。
+ *
+ * @returns 出错时返回 { ok:false, message }，通过返回 null
+ */
+function checkInlineFilename(name, targetKey) {
+  const n = String(name || '').trim();
+  if (!n) return { ok: false, message: '缺少文件名' };
+  if (/[\\/]/.test(n) || n.indexOf('..') >= 0) {
+    return { ok: false, message: '文件名只能是单段名字，不能带目录' };
+  }
+  if (/[<>:"|?*\u0000-\u001f]/.test(n)) {
+    return { ok: false, message: '文件名里有不能用的字符' };
+  }
+  if (n.startsWith('.')) return { ok: false, message: '文件名不能以点开头' };
+  const allowed = targetKey.indexOf('python') === 0 ? ['.py'] : targetKey.indexOf('java') === 0 ? ['.java'] : [];
+  if (allowed.length) {
+    const ext = n.slice(n.lastIndexOf('.')).toLowerCase();
+    if (n.lastIndexOf('.') <= 0 || allowed.indexOf(ext) < 0) {
+      return { ok: false, message: '这个生成目标只写 ' + allowed.join(' / ') + ' 文件（收到 ' + n + '）' };
+    }
+  }
+  return null;
+}
+
 function register(deps) {
   const { handle, dialog, store, fs, path, getWindow, assertUnlocked, assertPathIn, rememberPicked } = deps;
 
@@ -78,6 +106,19 @@ function register(deps) {
     const targetKey = String(payload.targetKey || '').trim();
     if (!targetKey) return { ok: false, message: '缺少生成目标' };
 
+    /**
+     * v0.60：积木视图的代码是**拼出来的**，不是从输入参数重新生成的，
+     * 所以允许直接把 `code` 传进来写盘（以前这条链断着：面板只有「复制」）。
+     * 文件名只收单段文件名（不含路径分隔符、不含 ..），扩展名限定在生成目标允许的范围内。
+     */
+    const inlineCode = typeof payload.code === 'string' ? payload.code : '';
+    let inlineName = '';
+    if (inlineCode) {
+      const badName = checkInlineFilename(payload.filename, targetKey);
+      if (badName) return badName;
+      inlineName = String(payload.filename).trim();
+    }
+
     const input = {
       className: String(payload.className || '').trim(),
       page: payload.page,
@@ -92,7 +133,8 @@ function register(deps) {
       input.api = rec.data;
     }
 
-    const gen = codegen.generate(targetKey, input);
+    // 有现成代码就直接写它；没有才按输入参数重新生成
+    const gen = inlineCode ? { ok: true, code: inlineCode, filename: inlineName } : codegen.generate(targetKey, input);
     if (!gen.ok) return gen;
 
     // 选目录
@@ -143,4 +185,4 @@ function register(deps) {
   });
 }
 
-module.exports = { register };
+module.exports = { register, checkInlineFilename };

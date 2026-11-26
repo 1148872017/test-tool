@@ -58,6 +58,11 @@ type Props = {
   lang: 'java' | 'python';
   /** 复制走调用方的剪贴板（渲染进程的 api.copy），组件自己不做副作用 */
   onCopy?: (text: string) => void;
+  /**
+   * 保存到文件（v0.60）：传出去的是带 import 的完整文本，
+   * 调用方负责弹目录选择 / 写盘 / toast —— 组件自己不碰 api。
+   */
+  onSave?: (text: string) => void;
   /** 「流程模板」集合的记录：工具条「载入流程」下拉从这里出 */
   flows?: any[];
   /**
@@ -118,6 +123,7 @@ export default function BricksPanel(props: Props) {
     elements,
     lang,
     onCopy,
+    onSave,
     flows,
     onSaveFlow,
     onNotify,
@@ -409,6 +415,16 @@ export default function BricksPanel(props: Props) {
   const doCopy = () => {
     if (!copyText) return;
     if (onCopy) onCopy(copyText);
+  };
+
+  /**
+   * v0.60：「保存到文件」。
+   * 以前积木视图只有「复制」——用户拼完还要自己新建文件粘进去，等于白拼。
+   * 传出去的是**带 import 的完整文本**（和复制一样），落盘后就是一个能编译的文件。
+   */
+  const doSave = () => {
+    if (!copyText) return;
+    if (onSave) onSave(copyText);
   };
 
   const draftAction = draft ? actionById(draft.actionId) : null;
@@ -779,6 +795,9 @@ export default function BricksPanel(props: Props) {
               {shown ? shown.split('\n').length + ' 行' : '还没有代码'}
             </span>
             <Space size={6}>
+              <Button size="small" type="primary" ghost icon={<SaveOutlined />} disabled={!copyText} onClick={doSave}>
+                保存到文件
+              </Button>
               <Button size="small" icon={<CopyOutlined />} disabled={!copyText} onClick={doCopy}>
                 复制
               </Button>

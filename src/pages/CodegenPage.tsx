@@ -417,6 +417,47 @@ export default function CodegenPage() {
     }
   };
 
+  /**
+   * 积木视图的「保存到文件」（v0.60）。
+   *
+   * 和上面 `doSave` 的区别：那个是「按输入参数重新生成整份骨架」，
+   * 积木的代码是**拼出来的**（还可能被手改过），所以直接把面板里的文本交给
+   * `codegen:save` 的 inline code 通道写盘。
+   *
+   * 文件名按语言定：Java 用 `<页面名>Test.java`，Python 用 `test_<页面名>.py`；
+   * 名字里的空白和非法字符先剔掉（后端还有一层守卫，只收单段文件名）。
+   */
+  const doSaveBricks = async (text: string) => {
+    const body = String(text || '');
+    if (!body.trim()) {
+      toast('还没有代码可保存', 'warning');
+      return;
+    }
+    const lang = previewLang === 'python' ? 'python' : 'java';
+    const rawBase = String(pageName || '').trim() || 'flow';
+    const clean = rawBase.replace(/[\\/:*?"<>|\s]+/g, '').replace(/\.(java|py)$/i, '') || 'flow';
+    const snakeBase = clean
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .replace(/-/g, '_')
+      .toLowerCase();
+    const filename = lang === 'python' ? 'test_' + snakeBase + '.py' : clean + 'Test.java';
+
+    setBusy(true);
+    try {
+      const res = await api.codegenSave({ targetKey, code: body, filename });
+      if (res && res.canceled) return;
+      if (!res || !res.ok) {
+        toast((res && res.message) || '保存失败', 'error');
+        return;
+      }
+      toast('已保存：' + res.file);
+    } catch (e: any) {
+      toast('保存失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const doCopy = async () => {
     if (!code) return;
     await api.copy(code, false);
@@ -608,6 +649,8 @@ export default function CodegenPage() {
             elements={filledElements()}
             lang={previewLang}
             onCopy={doCopyBricks}
+            /* v0.60：积木视图也能存文件（以前只有「复制」） */
+            onSave={doSaveBricks}
             /* ---- 流程模板：保存 / 载入 ---- */
             flows={flows}
             onSaveFlow={doSaveFlow}
@@ -635,6 +678,7 @@ export default function CodegenPage() {
             /* 只喂接口流程；UI 流程在 flows 里，两块面板不串台 */
             flows={apiFlows}
             onCopy={doCopyBricks}
+            onSave={doSaveBricks}
             onSaveFlow={doSaveFlow}
             onNotify={doNotifyBricks}
             /* 切换视图会卸载面板：状态回传给页面，回来时原样恢复 */

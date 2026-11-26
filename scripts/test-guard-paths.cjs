@@ -389,6 +389,39 @@ async function domainChecks() {
   });
   check('正例：codegen:save 往白名单目录写时不被守卫拦（结果不是 OUTSIDE_ROOT）', !(saved && saved.code === 'OUTSIDE_ROOT'), saved);
 
+  /* ---- 4.5b v0.60：积木视图把拼好的代码直接写盘（codegen:save 的 inline 分支） ---- */
+  const INLINE_CODE = 'import com.microsoft.playwright.Page;\n\npublic class InlineTest {\n    // 拼出来的\n}\n';
+  const inline = await call('codegen:save', {
+    dir: biz,
+    targetKey: 'java-playwright-pom',
+    code: INLINE_CODE,
+    filename: 'InlineTest.java'
+  });
+  check('inline code 能直接写盘（不再只能按参数重新生成）', !!(inline && inline.ok === true), inline);
+  check('文件名按传入的来（不是生成的默认名）', !!(inline && inline.filename === 'InlineTest.java'), inline && inline.filename);
+  {
+    const out = path.join(biz, 'InlineTest.java');
+    const text = fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : '';
+    check('落盘内容就是面板里那段代码（含 import）', text === INLINE_CODE, text.slice(0, 80));
+  }
+
+  const traversal = await call('codegen:save', {
+    dir: biz,
+    targetKey: 'java-playwright-pom',
+    code: 'x',
+    filename: '../evil.java'
+  });
+  check('inline 分支也拦目录穿越（../evil.java）', !!(traversal && traversal.ok === false), traversal);
+  check('被拦时没有把文件写到上级目录', !fs.existsSync(path.join(biz, '..', 'evil.java')), 'evil.java leaked');
+
+  const wrongExt = await call('codegen:save', {
+    dir: biz,
+    targetKey: 'java-playwright-pom',
+    code: 'x',
+    filename: 'note.txt'
+  });
+  check('inline 分支拦扩展名不匹配（Java 目标写 .txt）', !!(wrongExt && wrongExt.ok === false), wrongExt);
+
   /* ---- 4.6 设置里配了盘符根也扫不动（口径统一，不给后门） ---- */
   sharedHelpers.resetSessionRoots();
   const viaSettings = await call('cases:scan', {});

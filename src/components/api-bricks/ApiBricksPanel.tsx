@@ -49,6 +49,8 @@ type Props = {
   flows?: any[];
   /** 复制走调用方的剪贴板（组件自己不做副作用） */
   onCopy?: (text: string) => void;
+  /** 保存到文件（v0.60）：传出去的是带 import 的完整文本，调用方负责选目录 / 写盘 / toast */
+  onSave?: (text: string) => void;
   /** 保存为流程：调用方负责写 flows 记录；返回 false = 没存上 */
   onSaveFlow?: (data: any) => Promise<boolean> | boolean;
   /** 保存 / 载入的结果提示（调用方接 toast） */
@@ -80,7 +82,7 @@ const PANE_HEAD: React.CSSProperties = {
 };
 
 export default function ApiBricksPanel(props: Props) {
-  const { apis, lang, flows, onCopy, onSaveFlow, onNotify, initialState, onStateChange } = props;
+  const { apis, lang, flows, onCopy, onSave, onSaveFlow, onNotify, initialState, onStateChange } = props;
 
   /**
    * 初始状态：默认空，但支持从 initialState 恢复 ——
@@ -316,6 +318,12 @@ export default function ApiBricksPanel(props: Props) {
   const doCopy = () => {
     if (!copyText) return;
     if (onCopy) onCopy(copyText);
+  };
+
+  /** v0.60：保存到文件（带 import 的完整文本交给调用方写盘） */
+  const doSave = () => {
+    if (!copyText) return;
+    if (onSave) onSave(copyText);
   };
 
   const draftAction = draft ? actionById(draft.actionId) : null;
@@ -599,6 +607,9 @@ export default function ApiBricksPanel(props: Props) {
               {shown ? shown.split('\n').length + ' 行' : '还没有代码'}
             </span>
             <Space size={6}>
+              <Button size="small" type="primary" ghost icon={<SaveOutlined />} disabled={!copyText} onClick={doSave}>
+                保存到文件
+              </Button>
               <Button size="small" icon={<CopyOutlined />} disabled={!copyText} onClick={doCopy}>
                 复制
               </Button>

@@ -1073,7 +1073,17 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
   const addButtons = nodesOf(panel, rt2.antd.Button).filter(
     (n) => n.props.icon && n.props.icon.type === rt2.icons.PlusOutlined
   );
-  check('积木库里 7 个动作各一个按钮', addButtons.length === API_ACTIONS.length, [addButtons.length, API_ACTIONS.length]);
+  check('积木库里每个动作各一个按钮', addButtons.length === API_ACTIONS.length, [addButtons.length, API_ACTIONS.length]);
+
+  /* ---- v0.60：接口积木也能保存到文件（以前只有复制） ---- */
+  {
+    const saveCalls = { text: null };
+    const propsSave = Object.assign({}, props, { onSave: (t) => (saveCalls.text = t) });
+    const pSave = rt2.render(Panel, propsSave);
+    const saveBtn = nodesOf(pSave, rt2.antd.Button).find((n) => textOf(n) === '保存到文件');
+    check('接口积木底部有「保存到文件」按钮', !!saveBtn, nodesOf(pSave, rt2.antd.Button).map(textOf).filter(Boolean));
+    check('没代码时保存按钮禁用', !!saveBtn && saveBtn.props.disabled === true, saveBtn && saveBtn.props.disabled);
+  }
   check('空步骤时结果区提示先加一步', hasText(panel, '还没有选任何步骤'), 'no empty hint');
   check('设置条上有 BaseUrl 与「方法名」输入', hasText(panel, 'BaseUrl') && hasText(panel, '方法名'), 'no baseUrl input');
 

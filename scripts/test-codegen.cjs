@@ -121,6 +121,25 @@ check('有 codegen:targets', /handle\('codegen:targets'/.test(mainSrc), 'no targ
 check('有 codegen:preview', /handle\('codegen:preview'/.test(mainSrc), 'no preview');
 check('有 codegen:save', /handle\('codegen:save'/.test(mainSrc), 'no save');
 
+/* ---------- 9.1 v0.60：积木视图能直接存文件 ---------- */
+{
+  const { checkInlineFilename } = require('../electron/ipc/ipc-codegen.js');
+
+  check('文件名守卫放行正常名字', checkInlineFilename('LoginTest.java', 'java-playwright-pom') === null, checkInlineFilename('LoginTest.java', 'java-playwright-pom'));
+  check('放行 Python 名字', checkInlineFilename('test_login.py', 'python-pytest') === null, checkInlineFilename('test_login.py', 'python-pytest'));
+  check('拦目录穿越', (checkInlineFilename('../evil.java', 'java-playwright-pom') || {}).ok === false, checkInlineFilename('../evil.java', 'java-playwright-pom'));
+  check('拦带分隔符的名字', (checkInlineFilename('a/b.java', 'java-playwright-pom') || {}).ok === false, checkInlineFilename('a/b.java', 'java-playwright-pom'));
+  check('拦 Windows 非法字符', (checkInlineFilename('a:b.java', 'java-playwright-pom') || {}).ok === false, checkInlineFilename('a:b.java', 'java-playwright-pom'));
+  check('拦扩展名不匹配（Java 目标写 .py）', (checkInlineFilename('x.py', 'java-playwright-pom') || {}).ok === false, checkInlineFilename('x.py', 'java-playwright-pom'));
+  check('拦没有扩展名', (checkInlineFilename('x', 'java-playwright-pom') || {}).ok === false, checkInlineFilename('x', 'java-playwright-pom'));
+  check('拦空文件名', (checkInlineFilename('', 'java-playwright-pom') || {}).ok === false, checkInlineFilename('', 'java-playwright-pom'));
+
+  // handler 真的会走 inline code 分支（源码层：有 code 就不调 codegen.generate）
+  const ipcSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'ipc', 'ipc-codegen.js'), 'utf8');
+  check('codegen:save 支持直接写传入的 code', /inlineCode \? \{ ok: true, code: inlineCode/.test(ipcSrc), 'no inline branch');
+  check('inline 分支也过目录守卫（assertPathIn 在生成之前）', ipcSrc.indexOf('assertPathIn(wantDir)') < ipcSrc.indexOf('inlineCode ?'), 'guard order');
+}
+
 const preloadSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.js'), 'utf8');
 check('preload 有 codegenTargets', /codegenTargets:/.test(preloadSrc), 'no targets');
 check('preload 有 codegenPreview', /codegenPreview:/.test(preloadSrc), 'no preview');
