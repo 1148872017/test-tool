@@ -42,7 +42,8 @@ const MODE_LABEL: Record<string, string> = {
   text: 'Text（可见文本）',
   alttext: 'AltText（图片描述）',
   title: 'Title（title 属性）',
-  testid: 'TestId（data-testid）'
+  testid: 'TestId（data-testid）',
+  raw: '原生表达式（整段代码）'
 };
 
 /**
@@ -59,16 +60,37 @@ export const LOCATOR_MODE_OPTIONS: { value: LocatorMode; label: string }[] = LOC
 
 /** 每种定位方式的「定位值」填法（placeholder） */
 export const LOCATOR_MODE_PLACEHOLDER: Record<LocatorMode, string> = {
-  css: '#username 或 .btn-primary',
+  css: '#username 或 .studyList a|has-text=面向对象',
   // 提示用户别写 xpath=，生成时会自动补
   xpath: '//div[@id="x"]',
-  role: 'button:登录（角色:可访问名称）',
-  label: '用户名',
+  // v0.66：把「精确匹配」的路子直接写进提示 ——
+  // 「登录」vs「登录中」是最常踩的坑，光给 button:登录 会命中两个
+  role: 'button:登录（角色:名称）· 加 |exact 精确匹配 · |nth=0 取第一个',
+  label: '用户名（可加 |exact）',
   placeholder: '请输入密码',
-  text: '提交',
+  text: '提交（可加 |exact 避免「提交」「提交中」混淆）',
   alttext: 'logo',
   title: '提示文字',
-  testid: 'submit'
+  testid: 'submit',
+  // v0.66 逃生口：复杂定位器（options 组合 / and / or / frameLocator）直接写代码
+  raw: 'page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("登录").setExact(true))'
+};
+
+/**
+ * 定位方式的「补充说明」（显示在定位值输入框下面，只在选中时出现）。
+ *
+ * v0.66 新增：过滤后缀是一个「看得见才知道有」的能力，
+ * 光靠 placeholder 一行放不下，这里给完整写法。
+ */
+export const LOCATOR_MODE_HELP: Partial<Record<LocatorMode, string>> = {
+  role: '可用后缀：|exact 精确匹配 · |disabled / |checked 状态 · |description=文本 · |has-text=文本 · |nth=0 取第几个 · |first / |last',
+  css: '可用后缀：|has-text=文本 · |has-not-text=文本 · |nth=0 · |first · |last（也可以直接写 :has-text("...") 伪类）',
+  label: '可用后缀：|exact',
+  text: '可用后缀：|exact · |nth=0 · |first · |last',
+  placeholder: '可用后缀：|exact',
+  alttext: '可用后缀：|exact',
+  title: '可用后缀：|exact',
+  raw: '整段原样生成，平台不解释也不校验。⚠ 不跨语言：Java 的 getByRole(AriaRole.BUTTON,…) 与 Python 的 get_by_role("button",…) 写法不同，切语言时要自己改。'
 };
 
 /** 定位方式兜底：没填 / 认不出的脏值一律 css */
@@ -308,6 +330,15 @@ const XPATH_HINT_STYLE: React.CSSProperties = {
   marginTop: 2,
   // antd 的 orange-7，白底对比度 4.6:1，比 #fa8c16 看得清
   color: '#d46b08'
+};
+
+/** v0.66：过滤后缀提示（中性灰，别和 XPath 的橙色警告抢注意力） */
+const REFINE_HINT_STYLE: React.CSSProperties = {
+  fontSize: 11,
+  lineHeight: '16px',
+  marginTop: 3,
+  color: 'var(--text-3)',
+  wordBreak: 'break-word'
 };
 
 /** 顶部工具条（「按顺序校验」）的排版；样式内联，不动 styles.css */
@@ -936,6 +967,16 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
                   {mode === 'css' && looksLikeXPath(r.selector) ? (
                     <div className="pe-el-xpath-hint" style={XPATH_HINT_STYLE}>
                       ⚠ 看起来像 XPath，建议把定位方式改成 XPath
+                    </div>
+                  ) : null}
+                  {/*
+                    v0.66：过滤后缀的完整写法。
+                    「|exact」这种能力光看 placeholder 一行装不下，而不知道就等于没有。
+                    只在选中该行时显示，避免整张表格到处都是灰字。
+                  */}
+                  {focusRow === i && LOCATOR_MODE_HELP[mode] ? (
+                    <div className="pe-el-refine-hint" style={REFINE_HINT_STYLE}>
+                      {LOCATOR_MODE_HELP[mode]}
                     </div>
                   ) : null}
                   {showPreview ? (

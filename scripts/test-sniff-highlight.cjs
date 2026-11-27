@@ -62,11 +62,28 @@ check('highlight.js 导出 6 个能力（literal/expr/script/parse/mode 列表/B
   return keys.every((k) => hl[k] !== undefined);
 })(), Object.keys(hl));
 check('高亮框 id 固定为 tt-sniff-box（重新注入时靠它清场）', hl.BOX_ID === 'tt-sniff-box', hl.BOX_ID);
-check('highlight.js 支持 9 种定位方式', hl.LOCATOR_MODES.length === 9, hl.LOCATOR_MODES);
+check('highlight.js 支持 10 种定位方式（v0.66 加了 raw）', hl.LOCATOR_MODES.length === 10, hl.LOCATOR_MODES);
 check(
-  '9 种定位方式与 shared/locatorModes.js 完全同源（不另立一套）',
+  '10 种定位方式与 shared/locatorModes.js 完全同源（不另立一套）',
   hl.LOCATOR_MODES.join(',') === lm.LOCATOR_MODES.join(','),
   [hl.LOCATOR_MODES, lm.LOCATOR_MODES]
+);
+/**
+ * v0.66：raw 是整段代码，页面里没法当选择器跑。
+ * 这里守两件事：注入表达式不能退化成查 data-testid（会报莫名其妙的「没找到」）；
+ * IPC 层要显式拦住并给明确说法。
+ */
+check(
+  'raw 的注入表达式是空数组（不悄悄退回 testid 去查 data-testid）',
+  hl.locatorExpr('raw', 'page.getByRole(AriaRole.BUTTON)') === '[]',
+  hl.locatorExpr('raw', 'page.getByRole(AriaRole.BUTTON)')
+);
+check(
+  'raw：IPC 在 start / highlight 之前就拦住（给明确文案，不查页面）',
+  /if \(String\(mode \|\| ''\) === 'raw'\) return sniffer\.reject\(RAW_UNSUPPORTED\)/.test(IPC_SRC) &&
+    /RAW_UNSUPPORTED/.test(IPC_SRC) &&
+    /没法做实时校验/.test(IPC_SRC),
+  'no raw guard'
 );
 check(
   'highlight.js 不 require 任何 Node 模块（要能原样丢进浏览器页面）',
@@ -192,8 +209,19 @@ check('归一化：null / undefined / 空串都当 css', hl.normalizeMode(null) 
   check('认不出的定位方式退回 css', exprOf('nope', '#x').indexOf('__ttFind.css(') === 0, exprOf('nope', '#x'));
 
   const all = hl.LOCATOR_MODES.map((m) => exprOf(m, 'x'));
-  check('9 种表达式都引用 __ttScope（同一套能查 iframe / shadow）', all.every((e) => e.indexOf('__ttScope') > 0), all);
-  check('9 种表达式都能被 JS 解析', all.every((e) => parses('return (' + e + ');')), all.filter((e) => !parses('return (' + e + ');')));
+  /**
+   * v0.66：raw 的表达式是 `[]`（它没法在页面里定位），所以「都引用 __ttScope」
+   * 只能对**能定位的 9 种**成立。raw 单独守：必须是空数组、且 JS 能解析。
+   */
+  const realModes = hl.LOCATOR_MODES.filter((m) => m !== 'raw');
+  const realExprs = realModes.map((m) => exprOf(m, 'x'));
+  check(
+    '9 种可定位方式都引用 __ttScope（同一套能查 iframe / shadow）',
+    realExprs.every((e) => e.indexOf('__ttScope') > 0),
+    realExprs
+  );
+  check('raw 单独：表达式是空数组（不参与 DOM 查询）', exprOf('raw', 'x') === '[]', exprOf('raw', 'x'));
+  check('10 种表达式都能被 JS 解析', all.every((e) => parses('return (' + e + ');')), all.filter((e) => !parses('return (' + e + ');')));
   check('9 种表达式里的定位值都被安全转义（带引号也不炸）', (() => {
     const bad = hl.LOCATOR_MODES.map((m) => hl.locatorExpr(m, 'a"b\\c'));
     return bad.every((e) => parses('return (' + e + ');'));

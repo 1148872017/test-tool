@@ -75,20 +75,34 @@ const { parseElements, serializeElements, LOCATOR_MODE_OPTIONS, LOCATOR_MODE_PLA
  * 1. 下拉顺序：CSS 第一，TestId 最后（产品硬要求）
  * ============================================================ */
 
-check('shared 里登记了 9 种定位方式', lm.LOCATOR_MODES.length === 9, lm.LOCATOR_MODES);
+// v0.66：新增第 10 种 raw（原生表达式），专门放「UI 表达不了的复杂定位器」
+check('shared 里登记了 10 种定位方式（v0.66 加了 raw）', lm.LOCATOR_MODES.length === 10, lm.LOCATOR_MODES);
 check('下拉第 1 个是 css', lm.LOCATOR_MODES[0] === 'css', lm.LOCATOR_MODES[0]);
-check('下拉最后 1 个是 testid', lm.LOCATOR_MODES[lm.LOCATOR_MODES.length - 1] === 'testid', lm.LOCATOR_MODES);
+check('raw 排在最后（它是逃生口，不该抢常规方式的注意力）', lm.LOCATOR_MODES[lm.LOCATOR_MODES.length - 1] === 'raw', lm.LOCATOR_MODES);
 check(
   '下拉顺序与产品要求完全一致',
-  lm.LOCATOR_MODES.join(',') === 'css,xpath,role,label,placeholder,text,alttext,title,testid',
+  lm.LOCATOR_MODES.join(',') === 'css,xpath,role,label,placeholder,text,alttext,title,testid,raw',
   lm.LOCATOR_MODES.join(',')
 );
 check('testid 排在 title 之后（不是靠前）', lm.LOCATOR_MODES.indexOf('testid') > lm.LOCATOR_MODES.indexOf('title'), lm.LOCATOR_MODES);
 check('编辑器下拉选项与 shared 顺序一致', LOCATOR_MODE_OPTIONS.map((o) => o.value).join(',') === lm.LOCATOR_MODES.join(','), LOCATOR_MODE_OPTIONS);
 check('下拉选项都带中文显示名', LOCATOR_MODE_OPTIONS.every((o) => o.label && o.label !== o.value), LOCATOR_MODE_OPTIONS);
 check('显示名：CSS 选择器 / TestId（data-testid）', LOCATOR_MODE_OPTIONS[0].label === 'CSS 选择器' && LOCATOR_MODE_OPTIONS[8].label === 'TestId（data-testid）', LOCATOR_MODE_OPTIONS.map((o) => o.label));
-check('9 种定位方式都有 placeholder', lm.LOCATOR_MODES.every((m) => !!LOCATOR_MODE_PLACEHOLDER[m]), LOCATOR_MODE_PLACEHOLDER);
-check('css 的 placeholder 是 #username 或 .btn-primary', LOCATOR_MODE_PLACEHOLDER.css === '#username 或 .btn-primary', LOCATOR_MODE_PLACEHOLDER.css);
+check('10 种定位方式都有 placeholder', lm.LOCATOR_MODES.every((m) => !!LOCATOR_MODE_PLACEHOLDER[m]), LOCATOR_MODE_PLACEHOLDER);
+/**
+ * v0.66：css 的 placeholder 现在带一个「过滤后缀」示范 ——
+ * 只写 #username 或 .btn-primary 的话，用户永远不知道 |has-text 这条路。
+ */
+check(
+  'css 的 placeholder 带过滤后缀示范（|has-text）',
+  /^#username/.test(LOCATOR_MODE_PLACEHOLDER.css) && LOCATOR_MODE_PLACEHOLDER.css.indexOf('|has-text=') >= 0,
+  LOCATOR_MODE_PLACEHOLDER.css
+);
+check(
+  'role 的 placeholder 提了 |exact（精确匹配是最常踩的坑）',
+  LOCATOR_MODE_PLACEHOLDER.role.indexOf('|exact') >= 0,
+  LOCATOR_MODE_PLACEHOLDER.role
+);
 check('xpath 的 placeholder 是 //div[@id="x"]（不带 xpath=）', LOCATOR_MODE_PLACEHOLDER.xpath === '//div[@id="x"]', LOCATOR_MODE_PLACEHOLDER.xpath);
 check('xpath 的 placeholder 不诱导用户手写 xpath= 前缀', !/^xpath=/.test(LOCATOR_MODE_PLACEHOLDER.xpath), LOCATOR_MODE_PLACEHOLDER.xpath);
 check('role 的 placeholder 提示「角色:可访问名称」', /角色[:：]/.test(LOCATOR_MODE_PLACEHOLDER.role) && LOCATOR_MODE_PLACEHOLDER.role.indexOf(':') > 0, LOCATOR_MODE_PLACEHOLDER.role);

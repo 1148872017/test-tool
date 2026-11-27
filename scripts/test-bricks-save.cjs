@@ -240,7 +240,7 @@ check(
 
 const shorts = helpers.locatorModeShorts();
 check(
-  '短名覆盖 LOCATOR_MODES 全部 9 种、顺序一致',
+  '短名覆盖 LOCATOR_MODES 全部 10 种（v0.66 加了 raw）、顺序一致',
   shorts.length === LOCATOR_MODES.length && shorts.map((s) => s.mode).join(',') === LOCATOR_MODES.join(','),
   { got: shorts.map((s) => s.mode), want: LOCATOR_MODES }
 );
@@ -254,10 +254,12 @@ const EXPECT_SHORT = {
   text: 'Text',
   alttext: 'AltText',
   title: 'Title',
-  testid: 'TestId'
+  testid: 'TestId',
+  // v0.66：raw 不叫「Raw」，中文界面里给个短中文
+  raw: '原生'
 };
 const badShorts = shorts.filter((s) => EXPECT_SHORT[s.mode] !== s.short);
-check('9 种短名逐个正确（CSS / XPath / Role / … / TestId）', badShorts.length === 0, badShorts);
+check('10 种短名逐个正确（CSS / XPath / Role / … / TestId / 原生）', badShorts.length === 0, badShorts);
 check('脏 mode 兜底成 CSS', helpers.locatorModeShort('garbage') === 'CSS', helpers.locatorModeShort('garbage'));
 check('大小写不敏感（Role → Role）', helpers.locatorModeShort('Role') === 'Role', helpers.locatorModeShort('Role'));
 

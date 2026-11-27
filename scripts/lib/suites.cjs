@@ -67,6 +67,7 @@ const unit = [
   'test-linebuffer.cjs',
   'test-links.cjs',
   'test-locator-mode.cjs',
+  'test-locator-refine.cjs',
   'test-main.cjs',
   'test-metrics.cjs',
   'test-migrate.cjs',

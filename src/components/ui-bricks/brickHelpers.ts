@@ -109,7 +109,9 @@ const MODE_SHORT_OVERRIDE: Record<string, string> = {
   css: 'CSS',
   xpath: 'XPath',
   alttext: 'AltText',
-  testid: 'TestId'
+  testid: 'TestId',
+  // v0.66：raw 兜底出来的「Raw」在中文界面里读着别扭，给个短中文
+  raw: '原生'
 };
 
 /** 单个定位方式的短名：脏值走 normalizeLocatorMode 兜底成 CSS */

@@ -10,8 +10,8 @@
 
 | 项 | 值 |
 |---|---|
-| 当前版本 | **v0.65.0** |
-| 测试基线 | **64 个套件 / 5204 项**（unit 61 + env 4） |
+| 当前版本 | **v0.66.0** |
+| 测试基线 | **64 个套件 / 5269 项**（unit 62 + env 4） |
 | 运行环境 | Windows 10/11（x64），安装包约 120 MB |
 | 数据位置 | `%APPDATA%\测试工作台\` |
 
@@ -172,7 +172,59 @@ Playwright 定位器台账——表格里一行一个元素，生成 POM 时直�
 3. 表格里逐行填：名称 / 定位方式 / 定位值 / 说明
 4. 到「代码生成」选 **Playwright POM** → 从已有页面载入 → 生成
 
-**9 种定位方式**：CSS、XPath、Role、Label、Placeholder、Text、AltText、Title、TestId。
+**10 种定位方式**：CSS、XPath、Role、Label、Placeholder、Text、AltText、Title、TestId、**原生表达式**。
+
+#### 过滤后缀：把「这一类」收窄成「那一个」
+
+定位值后面可以跟 `|` 后缀（v0.66）。这是解决「定位到 3 个、不知道挑哪个」的正规办法：
+
+| 后缀 | 作用 | 例子 |
+|---|---|---|
+| `\|exact` | 精确匹配（`登录` 不再命中 `登录中`）| `button:登录\|exact` |
+| `\|disabled` / `\|disabled=false` | 按禁用状态筛 | `button:提交\|disabled` |
+| `\|checked` / `\|checked=false` | 按勾选状态筛 | `checkbox\|checked` |
+| `\|description=文本` | 按 aria-description 筛（只有 role 支持）| `textbox\|description=账号输入框` |
+| `\|has-text=文本` | 再过滤一层（文本包含）| `.studyList a\|has-text=面向对象` |
+| `\|has-not-text=文本` | 排除包含某文本的 | `.row\|has-not-text=已删除` |
+| `\|nth=N` | 取第 N 个（0 开始）| `.studyList a\|nth=1` |
+| `\|first` / `\|last` | 取第一个 / 最后一个 | `.row\|first` |
+
+可以串联：`.row|has-text=订单|nth=0` → `page.locator(".row").filter(....).nth(0)`。
+
+> **为什么用后缀而不是加字段**：`|` 后缀不改变台账的数据结构，老记录（没有 `|`）行为完全不变。
+> 而且它跨语言一致 —— Java 和 Python 看到的是同一个定位值。
+>
+> **不会误伤 CSS**：`div[class|="col"]`、命名空间 `svg|rect` 里的 `|` 不会被当成后缀
+> （解析是从右往左 + 白名单匹配）。
+
+#### 从 codegen 粘贴时，过滤条件不会丢
+
+v0.66 之前的真实问题：codegen 录出来是 `setExact(true)` / `setHasText("...")` / `.nth(1)`，
+粘进平台后**只剩 role + name**，过滤条件全被扔掉 —— 「页面上的那一个」入库后变成「这一类」。
+现在三种语言写法都会还原成后缀：
+
+```
+page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("登录").setExact(true))
+  → role  /  button:登录|exact
+
+page.get_by_role("checkbox", checked=True)
+  → role  /  checkbox|checked
+
+page.locator(".studyList a").filter(has_text="面向对象").nth(1)
+  → css   /  .studyList a|has-text=面向对象|nth=1
+```
+
+#### 原生表达式（第 10 种方式）
+
+`getByRole` 有 9 个 options，再加 `.and()` / `.or()` / `frameLocator`… 这些不可能全做进下拉。
+真遇到 UI 表达不了的，选「原生表达式（整段代码）」，填什么就生成什么：
+
+```java
+page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("登录").setExact(true).setDisabled(false))
+```
+
+> ⚠️ 这个模式**不跨语言**：Java 是 `getByRole(AriaRole.BUTTON, ...)`，
+> Python 是 `get_by_role("button", ...)`。切语言时要自己改，平台不翻译。
 
 **项目词表**：`新增` 旁的 `⋯ → 管理项目…`，小窗里增删改只影响「所属项目」这一套（v0.55 从设置页搬过来）。
 
@@ -1027,7 +1079,7 @@ v0.56 修的就是这个：以前平台用「启动的进程是否还活着」�
 | 前端 | React 18.3 + antd 5.29 + TypeScript（esbuild 转译，不跑 tsc） |
 | 数据 | sql.js（WASM SQLite）→ `data.db`，整库重写 + tmp/fsync/rename |
 | 打包 | electron-builder（NSIS） |
-| 测试 | 自研轻量脚本，**64 套件 / 5204 项**，分 unit / env 两档 |
+| 测试 | 自研轻量脚本，**64 套件 / 5269 项**，分 unit / env 两档 |
 
 ### 常用命令
 
@@ -1038,9 +1090,9 @@ npm install
 node scripts/build.mjs        # 生产构建
 node scripts/build.mjs -- --preview   # 预览构建（含 mock，浏览器可开）
 
-npm test                      # unit 档 60 套件 / 5061 项（自检先跑）
+npm test                      # unit 档 60 套件 / 5126 项（自检先跑）
 npm run test:env              # env 档 4 套件 / 127 项（需设 4 个目录变量）
-npm run test:all              # 全量 64 套件 / 5204 项
+npm run test:all              # 全量 64 套件 / 5269 项
 npm run test:gui              # 只跑 GUI 冒烟（19 路由 + 5 类交互，约 26 秒）
 npm run check                 # 只跑提交前自检
 npm run dist:installer        # 打 NSIS 安装包

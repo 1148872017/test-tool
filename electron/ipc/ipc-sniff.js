@@ -58,6 +58,17 @@ const liveSessions = [];
 /** 非法 url 的统一回执文案 */
 const URL_REJECT = '只支持 http:// 或 https:// 开头的链接';
 
+/**
+ * 原生表达式（raw 模式）不支持实时校验（v0.66）。
+ *
+ * 原因：raw 存的是一整段 Playwright 代码（`page.getByRole(AriaRole.BUTTON, ...)`），
+ * 而实时校验只能把「选择器」翻译成页面里能跑的 DOM 查询。
+ * 与其悄悄退回某个默认方式查出一堆莫名其妙的「没找到」，不如直接说清。
+ */
+const RAW_UNSUPPORTED =
+  '原生表达式没法做实时校验：它是一整段 Playwright 代码，不是选择器。' +
+  '想框出来看，请把定位方式换成 CSS / Role 等，或先用 codegen 录一遍。';
+
 /** Java 录制走 npx（cmd 子进程），地址里不能带会破坏命令行的字符 */
 const JAVA_URL_REJECT = '这个页面地址里有不能安全传给命令行的字符（双引号 / 百分号 / 换行）。请先手动运行 npx playwright codegen --target java 后再把代码贴回来';
 
@@ -490,6 +501,8 @@ function register(deps) {
     assertUnlocked();
     const { url, name, mode, selector, browser } = payload || {};
     if (!sniffer.isHttpUrl(url)) return sniffer.reject(URL_REJECT);
+    // v0.66：原生表达式没法在页面里当选择器跑，先拦住并说清楚
+    if (String(mode || '') === 'raw') return sniffer.reject(RAW_UNSUPPORTED);
     return sniffer.start({ url, name, mode, selector, browser });
   });
 
@@ -497,6 +510,7 @@ function register(deps) {
   handle('sniff:highlight', async (e, payload = {}) => {
     assertUnlocked();
     const { name, mode, selector, browser } = payload || {};
+    if (String(mode || '') === 'raw') return sniffer.reject(RAW_UNSUPPORTED);
     return sniffer.highlight({ name, mode, selector, browser });
   });
 

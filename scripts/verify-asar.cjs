@@ -293,9 +293,12 @@ async function main() {
   console.log('');
   console.log('--- 4. 从 asar 里真实 require 并跑一遍 ---');
 
-  await check('shared/locatorModes.js 可 require，9 种定位方式', () => {
+  await check('shared/locatorModes.js 可 require，10 种定位方式（含 raw）+ 过滤后缀可用', () => {
     const lm = require(A('shared/locatorModes.js'));
-    return lm.LOCATOR_MODES && lm.LOCATOR_MODES.length === 9 ? true : '定位方式 ' + (lm.LOCATOR_MODES || []).length + ' 种';
+    if (!lm.LOCATOR_MODES || lm.LOCATOR_MODES.length !== 10) return '定位方式 ' + (lm.LOCATOR_MODES || []).length + ' 种';
+    // v0.66：过滤后缀真的打进了产物（不只是常量在）
+    const code = lm.previewLocatorCode('role', 'button:登录|exact', 'java');
+    return code.indexOf('.setExact(true)') >= 0 ? true : '后缀没生效：' + code;
   });
   await check('shared/uiActions.js 可 require，34 个 UI 动作 / 7 分类', () => {
     const ua = require(A('shared/uiActions.js'));

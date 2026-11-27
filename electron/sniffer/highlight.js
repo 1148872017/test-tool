@@ -99,6 +99,17 @@ function locatorExpr(mode, selector) {
   const m = normalizeLocatorMode(mode);
   const s = String(selector === undefined || selector === null ? '' : selector);
 
+  /**
+   * v0.66：原生表达式（raw）**没法在这里定位**。
+   * 它存的是一整段 Playwright 代码（`page.getByRole(AriaRole.BUTTON, ...)`），
+   * 而这里只能产出「页面里能直接跑的 DOM 查询」。
+   *
+   * 返回空数组字面量（而不是悄悄退回 testid 去查 data-testid —— 那会报一句
+   * 莫名其妙的「没找到」）。正常路径上 IPC 层会先拦住并给明确说法，
+   * 这里是第二道防御，保证万一绕过也只会「命中 0 个」而不会跑错东西。
+   */
+  if (m === 'raw') return '[]';
+
   if (m === 'css') return '__ttFind.css(__ttScope, ' + jsLiteral(s) + ')';
   if (m === 'xpath') return '__ttFind.xpath(__ttScope, ' + jsLiteral(s) + ')';
   if (m === 'role') {
