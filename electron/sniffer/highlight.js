@@ -36,7 +36,13 @@
  * iframe 内 / shadow DOM 内的元素**不画框**（跨文档画不了，硬画会画错位置），只报 reason。
  */
 
-const { LOCATOR_MODES, normalizeLocatorMode, splitRoleSelector, parseRefine } = require('../../shared/locatorModes');
+const {
+  LOCATOR_MODES,
+  normalizeLocatorMode,
+  splitRoleSelector,
+  parseRefine,
+  parsePwSelector
+} = require('../../shared/locatorModes');
 
 /** 高亮框的 DOM id（重新注入时靠它清场，测试也认这个常量） */
 const BOX_ID = 'tt-sniff-box';
@@ -132,9 +138,15 @@ function locatorExpr(mode, selector) {
   const s = base;
   const has = (k) => refine.find((r) => r.key === k);
 
+  // v0.70.2：Playwright 的 CSS 扩展伪类（:visible / :has-text() / :text-is() …）
+  // 浏览器原生 querySelectorAll 不认识它们，必须拆成「基础查询 + JS 过滤」。
+  // 这是 v0.70.1 那个 | 后缀问题的「同类第二种表现」：一个是平台私有后缀，
+  // 一个是 Playwright 私有语法 —— 都会撞在「浏览器只认标准 CSS」这道墙上。
+  const pw = m === 'css' ? parsePwSelector(s) : { base: s, filters: [] };
+
   /* ---------- 第一层：基础查询 ---------- */
   let expr;
-  if (m === 'css') expr = '__ttFind.css(__ttScope, ' + jsLiteral(s) + ')';
+  if (m === 'css') expr = '__ttFind.css(__ttScope, ' + jsLiteral(pw.base) + ')';
   else if (m === 'xpath') expr = '__ttFind.xpath(__ttScope, ' + jsLiteral(s) + ')';
   else if (m === 'role') {
     const { role, name } = splitRoleSelector(s);
@@ -155,6 +167,22 @@ function locatorExpr(mode, selector) {
   }
   const desc = has('description');
   if (desc) expr = '__ttFind.description(' + expr + ', ' + jsLiteral(desc.value) + ')';
+
+  /* ---------- 第二层之前的「扩展伪类」过滤（按书写顺序，最内层先做） ---------- */
+  for (const f of pw.filters) {
+    if (f.kind === 'visible') expr = '__ttFind.visible(' + expr + ')';
+    else if (f.kind === 'textContains') expr = '__ttFind.textContains(' + expr + ', ' + jsLiteral(f.value) + ')';
+    else if (f.kind === 'textEquals') expr = '__ttFind.textEquals(' + expr + ', ' + jsLiteral(f.value) + ')';
+    else if (f.kind === 'textMatches') expr = '__ttFind.textMatches(' + expr + ', ' + jsLiteral(f.value) + ', ' + jsLiteral(f.flags || '') + ')';
+    else if (f.kind === 'nthMatch') {
+      // :nth-match(2, sel) —— 先按 sel 缩小，再取第 n 个（n 是 1 基）
+      if (f.value) expr = '__ttFind.css(__ttScope, ' + jsLiteral(f.value) + ')';
+      expr = '__ttFind.nth(' + expr + ', ' + (Number(f.index) - 1) + ')';
+    } else if (f.kind === 'nthPos') {
+      // >> nth=N（Playwright 的 0 基坐标，支持负数）
+      expr = '__ttFind.nth(' + expr + ', ' + Number(f.index) + ')';
+    }
+  }
 
   for (const r of refine) {
     if (r.key === 'checked' || r.key === 'disabled') {
@@ -554,6 +582,65 @@ const RUNTIME = String.raw`(function () {
     return out;
   }
 
+  /* ============================================================
+   * v0.70.2：Playwright 扩展伪类的等价实现
+   *
+   * :visible 的语义按 Playwright 文档：**有非空 bounding box 且 visibility 不是 hidden**
+   *   （display:none 会让盒子为 0，自然被排除；Playwright 不把 opacity:0 当不可见）
+   * :has-text / :text        包含匹配
+   * :text-is                 完全相等
+   * :text-matches            正则匹配
+   * :nth-match(n, sel)       在 sel 的结果里取第 n 个（1 基，由调用侧换算成 0 基）
+   * ============================================================ */
+
+  function keepVisible(hits) {
+    var out = [];
+    for (var i = 0; i < (hits ? hits.length : 0); i++) {
+      var el = hits[i];
+      if (!el || !el.getBoundingClientRect) continue;
+      var rect = el.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) continue;
+      var doc = el.ownerDocument || DOC;
+      var view = doc.defaultView;
+      var st = view && view.getComputedStyle ? view.getComputedStyle(el) : null;
+      if (st && st.visibility === 'hidden') continue;
+      out.push(el);
+    }
+    return out;
+  }
+
+  function keepTextContains(hits, want) {
+    var w = norm(want).toLowerCase();
+    var out = [];
+    for (var i = 0; i < (hits ? hits.length : 0); i++) {
+      if (flatText(hits[i]).indexOf(w) >= 0) out.push(hits[i]);
+    }
+    return out;
+  }
+
+  function keepTextEquals(hits, want) {
+    var w = norm(want);
+    var out = [];
+    for (var i = 0; i < (hits ? hits.length : 0); i++) {
+      if (norm(hits[i].textContent || '') === w) out.push(hits[i]);
+    }
+    return out;
+  }
+
+  function keepTextMatches(hits, pattern, flags) {
+    var re;
+    try {
+      re = new RegExp(String(pattern), String(flags || ''));
+    } catch (e) {
+      return hits; // 用户正则写坏了就不过滤，别整条定位废掉
+    }
+    var out = [];
+    for (var i = 0; i < (hits ? hits.length : 0); i++) {
+      if (re.test(norm(hits[i].textContent || ''))) out.push(hits[i]);
+    }
+    return out;
+  }
+
   var __ttFind = {
     css: css,
     xpath: byXpath,
@@ -568,7 +655,11 @@ const RUNTIME = String.raw`(function () {
     hasNotText: keepHasNotText,
     exactName: keepExactName,
     description: keepDescription,
-    flag: keepFlag
+    flag: keepFlag,
+    visible: keepVisible,
+    textContains: keepTextContains,
+    textEquals: keepTextEquals,
+    textMatches: keepTextMatches
   };
 
   /** 定位表达式（由生成器填入，引用 __ttScope） */

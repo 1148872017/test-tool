@@ -199,6 +199,77 @@ const hl = require(path.join(ROOT, 'electron', 'sniffer', 'highlight.js'));
 }
 
 /* ============================================================
+ * 六、Playwright 扩展伪类（v0.70.2）
+ *
+ * 用户实测报错（第二种同类问题）：
+ *   `label.backwordButton.btn.btn-default.active:visible` →
+ *   `':visible' is not a valid selector`
+ *
+ * `:visible` / `:has-text()` / `:text-is()` / `>> nth=` 都是 **Playwright 的私有语法**，
+ * 在 Playwright 里合法（生成的代码没问题），但浏览器 querySelectorAll 不认识。
+ * 和 v0.70.1 的 `|` 后缀一样，都撞在「浏览器只认标准 CSS」这道墙上。
+ * ============================================================ */
+
+{
+  const CASES = [
+    ['css', 'label.backwordButton.btn.btn-default.active:visible', 'visible'],
+    ['css', '.studyList a:has-text("面向对象")', 'textContains'],
+    ['css', '.studyList a:text-is("x")', 'textEquals'],
+    ['css', '.row:text-matches("订单 [AB]")', 'textMatches'],
+    ['css', '.studyList a >> nth=1', 'nth'],
+    ['css', '.table >> tr >> nth=2', 'nth']
+  ];
+
+  for (const [mode, sel, needle] of CASES) {
+    const expr = hl.locatorExpr(mode, sel);
+    check('扩展伪类已翻译：' + sel, expr.indexOf('__ttFind.' + needle + '(') >= 0, expr);
+    // 关键：DOM 查询的字符串参数里不能再带这些伪类
+    const leaked = /'[^']*:(visible|has-text|text-is|text-matches|nth-match)/.test(expr) || /"[^"]*:(visible|has-text|text-is)/.test(expr);
+    check('扩展伪类不漏进查询：' + sel, !leaked, expr);
+  }
+
+  // >> 链式：多段选择器拼成后代选择器（近似但不报错）
+  const chain = hl.locatorExpr('css', '.a >> .b');
+  check('>> 多段选择器拼成后代选择器', chain === '__ttFind.css(__ttScope, ".a .b")', chain);
+
+  // 解析器本身
+  const p1 = lm.parsePwSelector('label.a.b:visible');
+  check('parsePwSelector：:visible 拆成 filter', p1.base === 'label.a.b' && p1.filters[0].kind === 'visible', p1);
+  const p2 = lm.parsePwSelector('.a:has-text("x")');
+  check('parsePwSelector：:has-text 取到值', p2.base === '.a' && p2.filters[0].value === 'x', p2);
+  const p3 = lm.parsePwSelector('.a:visible.b');
+  check('parsePwSelector：中间的伪类也能剥离', p3.base === '.a.b', p3);
+  const p4 = lm.parsePwSelector('.a');
+  check('parsePwSelector：纯选择器原样返回', p4.base === '.a' && p4.filters.length === 0, p4);
+}
+
+/* ============================================================
+ * 七、错误归因不能冤枉用户（v0.70.2）
+ * ============================================================ */
+
+{
+  const bs = require(path.join(ROOT, 'electron', 'sniffer', 'browser-session.js'));
+  const msg = bs.factsMessage;
+
+  check('factsMessage 已导出（可单测）', typeof msg === 'function', typeof msg);
+
+  if (typeof msg === 'function') {
+    const realTypo = msg({ invalid: true, error: 'Unexpected token', found: 0 }, '.a[[[');
+    check('真写错了 → 说「写错了」', realTypo.indexOf('写错了') >= 0, realTypo);
+
+    const unsupported = msg({ invalid: true, error: "':visible' is not a valid selector", found: 0 }, '.a:visible');
+    check(
+      '平台/浏览器不支持 → 不能归咎用户',
+      unsupported.indexOf('写错了') < 0 && unsupported.indexOf('浏览器不认') >= 0,
+      unsupported
+    );
+
+    const ok2 = msg({ invalid: false, found: 1, visible: true, label: '登录' }, 'button:登录');
+    check('正常命中文案不变', ok2.indexOf('已高亮') >= 0, ok2);
+  }
+}
+
+/* ============================================================
  * 说话
  * ============================================================ */
 const failed = results.filter((r) => !r.ok);

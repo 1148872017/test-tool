@@ -779,10 +779,37 @@ function emptyFacts() {
   };
 }
 
-/** 把事实翻成一句人话（只描述事实，不判对错） */
-function factsMessage(facts) {
+/**
+ * 把事实翻成一句人话（只描述事实，不判对错）。
+ *
+ * v0.70.2：`invalid` 的归因要分开说。
+ * 以前一律叫「定位值写错了」，但实测有两种完全不同的情况：
+ *   1. 用户真的写错了（语法错）→ 该说「写错了」；
+ *   2. **浏览器不认识这个语法**（Playwright 的扩展伪类 `:visible` / `:has-text`、
+ *      或 `>> text=xxx` 这类引擎）→ 那是**平台的限制**，不是用户写错。
+ *      说成「你写错了」会让人反复检查一条其实正确的定位器。
+ *
+ * @param {object} facts 事实对象
+ * @param {string} [selector] 用户填的定位值（用来判断是哪一类）
+ */
+function factsMessage(facts, selector) {
   const f = facts || emptyFacts();
-  if (f.invalid) return '定位值写错了：' + (f.error || '选择器解析失败');
+  if (f.invalid) {
+    const sel = String(selector === undefined || selector === null ? '' : selector);
+    const err = String(f.error || '');
+    const looksUnsupported =
+      /not a valid selector/i.test(err) ||
+      /:visible|:has-text|:text-is|:text-matches|:nth-match|>>/.test(sel);
+    if (looksUnsupported) {
+      return (
+        '这个定位值里有浏览器不认的语法：' + err.slice(0, 160) +
+        '。' +
+        '`|` 后缀和 `:visible` / `:has-text()` / `>> nth=` 平台已支持，' +
+        '但 `>> text=xxx` / `>> role=xxx` 这类引擎还不支持 —— 换一种写法，或把这行改成一个纯 CSS 选择器。'
+      );
+    }
+    return '定位值写错了：' + (f.error || '选择器解析失败');
+  }
   if (!f.found) return '没找到匹配的元素';
   if (f.reason === 'shadow-dom') return '匹配到 ' + f.found + ' 个，但它们在 shadow DOM 里，画不了框';
   if (f.reason === 'in-iframe') return '匹配到 ' + f.found + ' 个，但它们在 iframe 里，画不了框';
@@ -1216,8 +1243,10 @@ function createSession(options) {
 
     const facts = highlight.parseSniffState(run.value);
     lastFacts = facts;
-    if (facts.invalid) return { ok: false, message: factsMessage(facts) };
-    return { ok: true, message: factsMessage(facts) };
+    // 把 selector 一起传进去：invalid 时要区分「用户写错了」和「平台/浏览器不支持」
+    const sel = current && current.selector;
+    if (facts.invalid) return { ok: false, message: factsMessage(facts, sel) };
+    return { ok: true, message: factsMessage(facts, sel) };
   }
 
   /* ---------------- 进程收尾 ---------------- */

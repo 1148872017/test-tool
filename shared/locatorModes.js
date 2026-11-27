@@ -361,17 +361,123 @@ function previewLocatorCode(mode, selector, lang) {
   return appendChain(code, refine, language);
 }
 
+/**
+ * Playwright 的 CSS **扩展伪类**（浏览器原生 querySelectorAll 不认识）。
+ *
+ * 为什么需要这份清单（v0.70.2，用户实测报错）：
+ *   定位值填 `label.backwordButton.btn.btn-default.active:visible` 点实时校验 →
+ *   `':visible' is not a valid selector`。
+ *
+ * 这是**同一类问题的第二种表现**：
+ *   · v0.66 的 `|has-text=` 是平台自己的后缀（v0.70.1 已修）
+ *   · 而 `:visible` / `:has-text()` / `:text-is()` 是 **Playwright 自己的扩展语法**
+ *     —— 在 Playwright 里合法（生成的代码没问题），但浏览器的 querySelectorAll 不认识。
+ *
+ * ⚠ 曾经（v0.66 的 README）我还专门写过「:has-text 不能拿去 DevTools 验证」，
+ * 却没意识到**平台自己的实时校验就是拿浏览器跑的** —— 文档警告了限制，
+ * 却没发现自家功能也踩在这个限制上。
+ *
+ * 下面这份清单把扩展伪类翻译成「基础查询 + JS 过滤」，让实时校验能工作。
+ * 顺序很重要：`text-is` / `text-matches` 必须排在 `text` 前面判断（虽然正则本身要求紧跟左括号，不会互相吃掉）。
+ */
+const PW_PSEUDO_KINDS = [
+  { kind: 'visible', re: /:visible\b/g },
+  { kind: 'textEquals', re: /:text-is\(\s*(?:'([^']*)'|"([^"]*)"|([^)]*?))\s*\)/g },
+  { kind: 'textMatches', re: /:text-matches\(\s*(?:'([^']*)'|"([^"]*)"|([^),]*?))\s*(?:,\s*['"]?([a-z]*?)['"]?)?\s*\)/g },
+  { kind: 'textContains', re: /:has-text\(\s*(?:'([^']*)'|"([^"]*)"|([^)]*?))\s*\)/g },
+  { kind: 'textContains', re: /:text\(\s*(?:'([^']*)'|"([^"]*)"|([^)]*?))\s*\)/g },
+  { kind: 'nthMatch', re: /:nth-match\(\s*(\d+)\s*,\s*([^)]*?)\s*\)/g }
+];
+
+/**
+ * 把选择器里的 Playwright 扩展伪类拆出来。
+ *
+ * @param {string} selector 用户填的定位值（可能是 `label.a.b:visible` 这种）
+ * @returns {{base: string, filters: Array<{kind: string, value?: string, flags?: string, index?: number}>}}
+ *   base    —— 能让浏览器 querySelectorAll 直接跑的纯 CSS
+ *   filters —— 需要在结果上做的过滤（顺序即书写顺序）
+ *
+ * ⚠ 限制（写在注释里免得以后误解）：
+ *   · 只支持**扩展伪类**，不支持 `>>` 链式里的其它引擎（text= / role= 等）；
+ *   · 伪类出现在**中间**时（`div:has-text("x") > span`）只能近似：
+ *     先查 `div > span` 再按文本过滤 —— 语义不完全等价，但至少不报错。
+ *     末尾的情况（最常见，如 `xxx:visible`）是精确的。
+ */
+function parsePwSelector(selector) {
+  let s = String(selector === undefined || selector === null ? '' : selector);
+  const filters = [];
+
+  for (const item of PW_PSEUDO_KINDS) {
+    s = s.replace(item.re, function () {
+      const args = Array.prototype.slice.call(arguments);
+      // 最后两个参数是 offset / 原串，去掉
+      const groups = args.slice(1, -2);
+      if (item.kind === 'visible') {
+        filters.push({ kind: 'visible' });
+      } else if (item.kind === 'nthMatch') {
+        const idx = Number(groups[0]);
+        const sel = String(groups[1] || '').trim();
+        filters.push({ kind: 'nthMatch', index: isFinite(idx) ? idx : 1, value: sel });
+      } else if (item.kind === 'textMatches') {
+        const pattern = groups[0] || groups[1] || groups[2] || '';
+        const flags = groups[3] || '';
+        filters.push({ kind: 'textMatches', value: String(pattern), flags: String(flags) });
+      } else {
+        const v = groups[0] || groups[1] || groups[2] || '';
+        filters.push({ kind: item.kind, value: String(v) });
+      }
+      return '';
+    });
+  }
+
+  /**
+   * 处理 `>>` 链式里的纯位置段（v0.70.2）。
+   *
+   * Playwright 的 `>>` 是链式分隔符，其中 `nth=N` 表示「取第 N 个」：
+   *   `.row >> nth=1`
+   * 这也是浏览器不认识的语法（第三种同类表现）。
+   *
+   * 其余段（`.a >> .b`）按**后代选择器**拼成 `.a .b` —— 语义近似
+   * （Playwright 是「在 .a 内部找 .b」，后代选择器正好是这个意思）。
+   * `>> text=xxx` / `>> role=xxx` 这类其它引擎**不支持**，
+   * 会原样留在 base 里，浏览器报错后由 IPC 层给出「平台不支持」的准确说法。
+   */
+  const parts = s.split('>>').map((x) => x.trim()).filter(Boolean);
+  if (parts.length > 1) {
+    const kept = [];
+    const posFilters = [];
+    for (const p of parts) {
+      const mNth = /^nth\s*=\s*(-?\d+)$/.exec(p);
+      if (mNth) posFilters.push(Number(mNth[1]));
+      else kept.push(p);
+    }
+    // 有位置段就从原选择器里去掉它们
+    const hadPos = posFilters.length > 0;
+    if (hadPos) {
+      s = kept.join(' ');
+      for (const n of posFilters) filters.push({ kind: 'nthPos', index: n });
+    } else if (kept.length > 1) {
+      // 没有位置段：多段都是选择器 → 后代选择器近似
+      s = kept.join(' ');
+    }
+  }
+
+  return { base: s.trim(), filters };
+}
+
 module.exports = {
   LOCATOR_MODES,
   RAW_MODE,
   REFINE_KEYS,
   SEMANTIC_METHOD,
   ARIA_ROLES,
+  PW_PSEUDO_KINDS,
   normalizeLocatorMode,
   splitRoleSelector,
   escapeDoubleQuoted,
   ariaRoleExpr,
   parseRefine,
   parseOneRefine,
+  parsePwSelector,
   previewLocatorCode
 };
