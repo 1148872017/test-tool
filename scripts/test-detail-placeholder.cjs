@@ -301,6 +301,12 @@ const detail = loadTsxModule(DETAIL, {
   /* 执行类型标签改从 shared/collections 的 RUN_KIND_OPTIONS 取（加了 ui 之后不能再二分），
      直接要真模块 —— 标签文案变了这条断言才跟着变。 */
   '../../shared/collections': () => require('../shared/collections.js'),
+  /*
+   * v0.71：详情页的元素行末加了「复制定位语句」，用的是 shared 的 previewLocatorCode
+   * （和编辑页悬停预览、代码生成器同一个函数）。这里要**真模块**：
+   * 断言的是「按 Java / Python 分别生成什么」，桩掉就失去意义了。
+   */
+  '../../shared/locatorModes': () => require('../shared/locatorModes.js'),
   '../caseIndex': () => ({ __esModule: true, caseKey: () => '', knownCaseKeys: () => new Set(), loadCaseIndex: async () => [] }),
   '../../shared/runs': () => ({ __esModule: true, matchOnlyFor: () => true, recentForApi: () => [], resultTone: () => '', runLine: () => '' }),
   '../options': () => ({
@@ -484,6 +490,64 @@ check('表格是只读的（没有任何输入框 / 编辑控件）', !!table &&
   const m = mountDetail(makeRecord('[{"name":"a","selector":"#a","desc":""}]'));
   const texts = m.nodes.map(textOf);
   check('说明为空时补「-」', texts.some((s) => s === '-'), texts);
+}
+
+/* ============================================================
+ * 3.5 单个元素定位语句的复制（v0.71）
+ *
+ * 用户需求：以前要复制单个元素的定位语句，得先进编辑页、hover 预览、再划选文字；
+ * tooltip 一移开就消失，很容易失手。现在详情页每行给一个复制图标，
+ * 图标 hover 时用 tooltip 显示「将复制什么」——一个控件同时解决「看」和「复制」。
+ *
+ * 用户明确要求：**只出定位器，不带变量名**（带了容易和代码里已有的冲突，贴过去还得手改）。
+ * ============================================================ */
+
+{
+  const m = mountDetail(makeRecord(ELEMENTS_JSON));
+  const t = m.nodes.find((n) => n.type === 'table');
+  const dataRows = collect(t, [])
+    .filter((n) => n.type === 'tr')
+    .filter((tr) => Array.isArray(tr.props.children) && tr.props.children[0] && tr.props.children[0].type === 'td');
+
+  const copyOf = (tr) =>
+    collect(tr, []).filter((n) => compName(n) === 'Button' && n.props && n.props['aria-label'] === '复制定位语句');
+  const copyBtns = dataRows.map(copyOf);
+  check(
+    '每个元素行都有一个「复制定位语句」按钮',
+    dataRows.length === 3 && copyBtns.every((l) => l.length === 1),
+    copyBtns.map((l) => l.length)
+  );
+  check(
+    '复制按钮是图标按钮（不占文字宽度，表格才挤得下）',
+    copyBtns.every((l) => l.every((b) => !!b.props.icon && !b.props.children)),
+    copyBtns.map((l) => l.map((b) => Object.keys(b.props)))
+  );
+
+  // tooltip 预览：里面应该是生成好的定位语句
+  const tips = collect(t, []).filter((n) => compName(n) === 'Tooltip' && n.props && n.props.title);
+  const tipTexts = tips.map((tp) => textOf(tp.props.title));
+  check('复制按钮带 tooltip 预览（不用点开就知道复制什么）', tipTexts.length >= 3, tipTexts.length);
+  check(
+    'tooltip 里是 Java 定位语句（默认语言）',
+    tipTexts.some((x) => x.indexOf('page.locator("#username")') >= 0),
+    tipTexts.slice(0, 3)
+  );
+  check(
+    '只出定位器、不带变量名（用户明确要求）',
+    !tipTexts.some((x) => /usernameInput\s*=/.test(x)),
+    tipTexts.filter((x) => /usernameInput\s*=/.test(x))
+  );
+
+  // 表级语言切换
+  const langBtns = m.nodes.filter(
+    (n) => n.type === 'button' && (textOf(n).trim() === 'Java' || textOf(n).trim() === 'Python')
+  );
+  check('表级有 Java / Python 切换按钮（一次切换影响整张表）', langBtns.length === 2, langBtns.map(textOf));
+
+  // 空定位值那一行不给复制按钮（没东西可复制）
+  const onlyEmpty = mountDetail(makeRecord('[{"name":"a","selector":"","desc":""}]'));
+  const emptyCopies = onlyEmpty.nodes.filter((n) => compName(n) === 'Button' && n.props && n.props['aria-label'] === '复制定位语句');
+  check('定位值为空的行不出复制按钮', emptyCopies.length === 0, emptyCopies.length);
 }
 
 /* ============================================================

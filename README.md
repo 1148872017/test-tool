@@ -10,8 +10,8 @@
 
 | 项 | 值 |
 |---|---|
-| 当前版本 | **v0.70.2** |
-| 测试基线 | **68 个套件 / 5365 项**（unit 64 + env 4） |
+| 当前版本 | **v0.71.0** |
+| 测试基线 | **68 个套件 / 5372 项**（unit 64 + env 4） |
 | 运行环境 | Windows 10/11（x64），安装包约 120 MB |
 | 数据位置 | `%APPDATA%\测试工作台\` |
 
@@ -174,6 +174,22 @@ Playwright 定位器台账——表格里一行一个元素，生成 POM 时直�
 
 > **鼠标悬停在「定位值」上能看两样东西**（v0.68）：这一行会生成什么代码、
 > 这个定位方式支持哪些过滤后缀。常驻显示会把表格撑高一倍，所以收进了悬停提示。
+
+#### 只想拿走一条元素的定位语句（v0.71）
+
+**在「查看详情」里直接复制**，不用进编辑：
+
+1. 详情页的元素表格，**定位值列末尾有个复制图标**
+2. 鼠标移上去会显示「将复制这一段：`page.locator("#username")`」
+3. 点一下即复制，提示「定位语句已复制」
+
+表头有 **Java / Python** 切换，一次切换影响整张表——你正在维护 Python 项目就切到 Python，
+复制出来是 `self.page.locator("#username")`。
+
+> **只出定位器，不带变量名**：`usernameInput = page.locator(...)` 这种带了，
+> 贴进 POM 容易和代码里已有的重名，反而要手改。变量名你自己写更稳。
+>
+> 表头那个「复制」按钮是另一回事：它复制**整张表**（制表符分隔，可直接粘进 Excel）。
 
 **10 种定位方式**（下拉里分三组，v0.69 起）：
 
@@ -1138,7 +1154,7 @@ v0.56 修的就是这个：以前平台用「启动的进程是否还活着」�
 | 前端 | React 18.3 + antd 5.29 + TypeScript（esbuild 转译，不跑 tsc） |
 | 数据 | sql.js（WASM SQLite）→ `data.db`，整库重写 + tmp/fsync/rename |
 | 打包 | electron-builder（NSIS） |
-| 测试 | 自研轻量脚本，**68 套件 / 5365 项**，分 unit / env 两档 |
+| 测试 | 自研轻量脚本，**68 套件 / 5372 项**，分 unit / env 两档 |
 
 ### 常用命令
 
@@ -1149,9 +1165,9 @@ npm install
 node scripts/build.mjs        # 生产构建
 node scripts/build.mjs -- --preview   # 预览构建（含 mock，浏览器可开）
 
-npm test                      # unit 档 64 套件 / 5222 项（自检先跑）
+npm test                      # unit 档 64 套件 / 5229 项（自检先跑）
 npm run test:env              # env 档 4 套件 / 127 项（需设 4 个目录变量）
-npm run test:all              # 全量 68 套件 / 5365 项
+npm run test:all              # 全量 68 套件 / 5372 项
 npm run test:gui              # 只跑 GUI 冒烟（19 路由 + 5 类交互，约 26 秒）
 npm run check                 # 只跑提交前自检
 npm run dist:installer        # 打 NSIS 安装包

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Drawer, Button, Tag, Space, Popconfirm, Select } from 'antd';
+import { Drawer, Button, Tag, Space, Popconfirm, Select, Tooltip } from 'antd';
 import {
   CopyOutlined,
   EditOutlined,
@@ -41,6 +41,7 @@ import {
   reopenWithBrowser,
   type PageElement
 } from './PageElementsEditor';
+import { previewLocatorCode } from '../../shared/locatorModes';
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -320,6 +321,15 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
   const [showSecret, setShowSecret] = useState<Record<string, boolean>>({});
   /** 复制整条的格式：详情（人话）/ JSON / cURL（只有接口记录有） */
   const [copyFormat, setCopyFormat] = useState<'text' | 'json' | 'curl'>('text');
+  /**
+   * 元素表格里「复制定位语句」按哪种语言出（v0.71）。
+   *
+   * 为什么详情页要给这个切换：详情页没有「当前生成目标」的上下文，
+   * 但用户很可能正在维护 Python 项目 —— 固定出 Java 语句对他没用。
+   * 表级的切换（不是每行一个）是因为：一次浏览里语言不会变，
+   * 而且每行再塞一个下拉会把 520px 的表格挤爆。
+   */
+  const [copyLang, setCopyLang] = useState<'java' | 'python'>('java');
   const [varOpen, setVarOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [linkRows, setLinkRows] = useState<any[]>([]);
@@ -712,6 +722,25 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
   const renderElements = (f: any, raw: any) => {
     // 复用 PageElementsEditor 的 parseElements：JSON 数组 / 老的「name = selector」多行文本都认
     const rows = parseElements(raw);
+
+    /**
+     * 一个元素 → 它对应的定位语句（v0.71）。
+     *
+     * 复用 shared/locatorModes 的 previewLocatorCode —— 和编辑页的悬停预览、
+     * 以及代码生成器**同一个函数**，三处不会漂移。
+     * 语言按表级开关（copyLang），只出定位器本身、不带变量名：
+     * 用户明确说过带变量名容易和代码里已有的冲突，贴过去还得手改。
+     */
+    const locatorCodeOf = (el: any): string => {
+      const sel = String((el && el.selector) || '').trim();
+      if (!sel) return '';
+      try {
+        return previewLocatorCode(String((el && el.mode) || 'css'), sel, copyLang) || '';
+      } catch (e) {
+        return '';
+      }
+    };
+
     const head = (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: rows.length ? 6 : 0 }}>
         <span className="field-label" style={{ flex: 'none', paddingTop: 0 }}>
@@ -719,6 +748,48 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
           {rows.length ? `（${rows.length} 个）` : ''}
         </span>
         <span style={{ flex: 1 }} />
+        {/*
+          v0.71：单个元素定位语句的「复制语言」。
+          一次浏览里语言不会变，所以放在表级（每行再塞下拉会把 520px 的表格挤爆）。
+          标题写清楚它影响的是「行末那个复制图标」。
+        */}
+        {rows.length ? (
+          <span
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 11, color: 'var(--text-3)' }}
+            title="行末复制图标输出哪种语言的定位语句"
+          >
+            <button
+              type="button"
+              onClick={() => setCopyLang('java')}
+              style={{
+                border: 'none',
+                background: copyLang === 'java' ? 'var(--primary-bg, #efedff)' : 'transparent',
+                color: copyLang === 'java' ? 'var(--primary-text, #5b4dd6)' : 'var(--text-3)',
+                borderRadius: 4,
+                padding: '1px 6px',
+                fontSize: 11,
+                cursor: 'pointer'
+              }}
+            >
+              Java
+            </button>
+            <button
+              type="button"
+              onClick={() => setCopyLang('python')}
+              style={{
+                border: 'none',
+                background: copyLang === 'python' ? 'var(--primary-bg, #efedff)' : 'transparent',
+                color: copyLang === 'python' ? 'var(--primary-text, #5b4dd6)' : 'var(--text-3)',
+                borderRadius: 4,
+                padding: '1px 6px',
+                fontSize: 11,
+                cursor: 'pointer'
+              }}
+            >
+              Python
+            </button>
+          </span>
+        ) : null}
         {/* 表格上方的复制：复制的是可粘贴的纯文本（制表符分隔），不是 markdown 表格 */}
         {rows.length ? (
           <Button
@@ -764,13 +835,52 @@ export default function RecordDetail({ record, conf, linkMap, onClose, onEdit, o
                     {String(el.name || '').trim() || <span className="muted">-</span>}
                   </td>
                   <td className="mono" style={{ wordBreak: 'break-all' }}>
-                    {/* 语义化定位（mode ≠ css）给个小标签，一眼看出不是 CSS 选择器 */}
-                    {tag ? (
-                      <Tag bordered={false} color="blue" style={{ marginInlineEnd: 4, fontSize: 11 }} title="语义化定位（不是 CSS 选择器）">
-                        {tag}
-                      </Tag>
-                    ) : null}
-                    {String(el.selector || '').trim() || <span className="muted">-</span>}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>
+                        {/* 语义化定位（mode ≠ css）给个小标签，一眼看出不是 CSS 选择器 */}
+                        {tag ? (
+                          <Tag bordered={false} color="blue" style={{ marginInlineEnd: 4, fontSize: 11 }} title="语义化定位（不是 CSS 选择器）">
+                            {tag}
+                          </Tag>
+                        ) : null}
+                        {String(el.selector || '').trim() || <span className="muted">-</span>}
+                      </span>
+                      {/*
+                        v0.71：复制这一行的**定位语句**（不是原始选择器）。
+                        用户反馈：以前要复制单个元素的定位语句，得先进编辑页 hover 预览再划选，
+                        多一步且 tooltip 会消失 —— 这里给一键复制。
+                        图标本身 hover 时用 tooltip 显示「将复制什么」，省掉一个独立的预览区。
+                      */}
+                      {String(el.selector || '').trim() ? (
+                        <Tooltip
+                          placement="left"
+                          mouseEnterDelay={0.25}
+                          overlayStyle={{ maxWidth: 420 }}
+                          title={
+                            <div style={{ lineHeight: 1.6 }}>
+                              <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 2 }}>将复制这一段：</div>
+                              <code className="mono" style={{ fontSize: 11.5, wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>
+                                {locatorCodeOf(el) || '（这条定位值生成不出代码）'}
+                              </code>
+                            </div>
+                          }
+                        >
+                          <Button
+                            type="text"
+                            size="small"
+                            icon={<CopyOutlined />}
+                            aria-label="复制定位语句"
+                            disabled={!locatorCodeOf(el)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const code = locatorCodeOf(el);
+                              if (code) copy(code, false, '定位语句已复制');
+                            }}
+                            style={{ flex: 'none', paddingInline: 2 }}
+                          />
+                        </Tooltip>
+                      ) : null}
+                    </div>
                   </td>
                   <td style={{ wordBreak: 'break-all' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
