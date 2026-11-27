@@ -269,7 +269,21 @@ function elementRef(step, o, ctx, elName) {
 
   const code = previewLocatorCode(normalizeLocatorMode(mode), selector, lang);
   if (code) {
-    if (normalizeLocatorMode(mode) === 'role') ctx.usesRole = true;
+    /**
+     * v0.72：不只按 mode 判断要不要 import AriaRole。
+     *
+     * 以前是 `mode === 'role'` 才算，但 **raw（原生表达式）**模式的代码里
+     * 也可能出现 `AriaRole.BUTTON` —— 那种情况下不 import 就编译不过。
+     * 改成看**实际生成的代码**：里面有 AriaRole 就 import，比猜 mode 可靠。
+     */
+    if (/\bAriaRole\b/.test(code)) ctx.usesRole = true;
+    /**
+     * raw 不跨语言：java 写的表达式放进 python 文件里是语法错误。
+     * 不自动翻译（raw 就是整段直出，没有可靠翻译手段），但要**明确警告**。
+     */
+    if (normalizeLocatorMode(mode) === 'raw' && lang !== 'java') {
+      ctx.rawCrossLang = true;
+    }
     return code;
   }
 
@@ -350,6 +364,8 @@ function generateSteps(o) {
     pomVar,
     warnings,
     usesRole: false,
+    /** v0.72：出现过「原生表达式 + 非 Java」→ 产物里那段代码是原样直出的，要警告 */
+    rawCrossLang: false,
     /** 当前第几步（1 开始）：注释前缀用得到 */
     stepNo: 0,
     /** 同一句话只提示一次（同一个元素重复 3 次不必刷 3 遍） */
@@ -460,6 +476,24 @@ function generateSteps(o) {
   }
 
   const finalImports = Array.from(new Set(imports)).sort();
+
+  /**
+   * v0.72：raw 用在非 Java 目标下要警告。
+   *
+   * raw 存的是整段代码（通常从 codegen 抄的 Java 写法），切到 Python 时**原样输出** ——
+   * 生成的 .py 里会赫然出现 `page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions()...)`。
+   * 这是语法就错的代码，比报错更糟（报错至少让人停下来看）。
+   * 不自动翻译（raw 本来就是整段直出，没有可靠翻译手段），只警告。
+   */
+  if (ctx.rawCrossLang) {
+    warnings.push(
+      '有步骤用了「原生表达式」定位，内容是原样输出的 —— Java 写法放进 ' +
+        lang +
+        ' 文件里语法会错。请改用具体定位方式，或在 ' +
+        lang +
+        ' 下手写一遍。'
+    );
+  }
 
   /**
    * v0.65：同时给出 `fileCode` —— 一个**真正能编译的完整文件**。

@@ -203,6 +203,15 @@ export default function CodegenPage() {
   // 输出
   const [code, setCode] = useState('');
   const [filename, setFilename] = useState('');
+  /**
+   * 生成警告（v0.72）：代码出来了，但有你该知道的事。
+   *
+   * 典型是「页面里有 raw 原生表达式，而当前目标不是 Java」——
+   * raw 是整段代码原样直出，切语言不会翻译，产物语法就是错的。
+   * 以前这种问题**静默发生**（代码照样生成、照样能保存），
+   * 等你打开文件才发现编译不过，还以为是平台整体坏了。
+   */
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   const [busy, setBusy] = useState(false);
 
@@ -401,10 +410,13 @@ export default function CodegenPage() {
       if (!res.ok) {
         toast(res.message || '生成失败', 'error');
         setCode('');
+        setWarnings([]);
         return;
       }
       setCode(res.code);
       setFilename(res.filename);
+      // v0.72：把后端给的 warnings 透出来（空数组也要设，否则上一轮的警告会残留）
+      setWarnings(Array.isArray(res.warnings) ? res.warnings : []);
       /*
        * 生成成功 = 用户项目里（应该）已经有这个 POM 类了。
        * 积木区据此把「⚠ 需要先生成」换成「✅ 已生成过」——
@@ -611,6 +623,8 @@ export default function CodegenPage() {
             onChange={(v) => {
               setTargetKey(v);
               setCode('');
+              // 换目标 = 之前的警告不再适用（比如 Java 换 Python 会新出现跨语言警告）
+              setWarnings([]);
             }}
             style={{ width: 240 }}
             placeholder="选一个生成目标"
@@ -1172,6 +1186,31 @@ export default function CodegenPage() {
               </span>
             ) : null}
           </div>
+          {/*
+            v0.72：生成警告放在代码**上面**（不是下面）。
+            代码可能几百行，警告放在下面等于让人滚动到底才知道有问题。
+          */}
+          {warnings.length ? (
+            <div
+              style={{
+                marginBottom: 8,
+                padding: '8px 10px',
+                background: 'var(--warn-bg, #fffbe6)',
+                border: '1px solid var(--warn-line, #ffe58f)',
+                borderRadius: 6,
+                fontSize: 12,
+                lineHeight: 1.7,
+                color: 'var(--text-2)'
+              }}
+            >
+              {warnings.map((w, i) => (
+                <div key={i} style={{ display: 'flex', gap: 6 }}>
+                  <span style={{ flex: 'none' }}>⚠</span>
+                  <span style={{ flex: 1, minWidth: 0 }}>{w.replace(/\*\*/g, '')}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
           {code ? (
             renderCodePreview(code, previewLang)
           ) : (

@@ -337,14 +337,65 @@ class Test<%= className %>:
         # assert body["code"] == 0
 `;
 
+/**
+ * Playwright Java 里可能用到的类 → import 路径（v0.72）。
+ *
+ * 为什么需要这张表：以前只有「有 role 定位就 import AriaRole」一条规则，
+ * 但 v0.66 加的**原生表达式（raw）**模式可以写任意代码 ——
+ * 实测：
+ *   raw 写 `page.getByRole(AriaRole.BUTTON, ...)` → 没 import AriaRole → 编译不过
+ *   raw 写 `PlaywrightAssertions.assertThat(...)`  → 没 import → 编译不过
+ *
+ * 做法：扫所有元素的定位代码，出现哪个类就 import 哪个。
+ * 不用「全套 import」是因为那会生成一堆没用的 import（IDE 一片黄线）。
+ */
+const PLAYWRIGHT_IMPORTABLE = [
+  ['AriaRole', 'com.microsoft.playwright.options.AriaRole'],
+  ['PlaywrightAssertions', 'com.microsoft.playwright.assertions.PlaywrightAssertions'],
+  ['Playwright', 'com.microsoft.playwright.Playwright'],
+  ['BrowserType', 'com.microsoft.playwright.BrowserType'],
+  ['BrowserContext', 'com.microsoft.playwright.BrowserContext'],
+  ['Browser', 'com.microsoft.playwright.Browser'],
+  ['APIRequestContext', 'com.microsoft.playwright.APIRequestContext'],
+  ['APIResponse', 'com.microsoft.playwright.APIResponse'],
+  ['FrameLocator', 'com.microsoft.playwright.FrameLocator'],
+  ['Frame', 'com.microsoft.playwright.Frame'],
+  ['Selectors', 'com.microsoft.playwright.Selectors'],
+  ['ConsoleMessage', 'com.microsoft.playwright.ConsoleMessage'],
+  ['Dialog', 'com.microsoft.playwright.Dialog'],
+  ['Download', 'com.microsoft.playwright.Download'],
+  ['FileChooser', 'com.microsoft.playwright.FileChooser'],
+  ['Request', 'com.microsoft.playwright.Request'],
+  ['Response', 'com.microsoft.playwright.Response'],
+  ['Route', 'com.microsoft.playwright.Route'],
+  ['JSHandle', 'com.microsoft.playwright.JSHandle'],
+  ['ElementHandle', 'com.microsoft.playwright.ElementHandle'],
+  ['TimeoutError', 'com.microsoft.playwright.TimeoutError']
+];
+
+/**
+ * 扫一段/多段代码，算出额外需要 import 的 Playwright 类。
+ *
+ * Locator / Page 是模板固定 import 的，不在这里重复。
+ * `\b` 词边界是必须的：`BrowserContext` 里含 `Browser`，不加边界会多 import 一个。
+ */
+function collectPlaywrightImports(codes) {
+  const text = (Array.isArray(codes) ? codes : [codes]).map((c) => String(c || '')).join('\n');
+  const out = [];
+  for (const [cls, path] of PLAYWRIGHT_IMPORTABLE) {
+    if (new RegExp('\\b' + cls + '\\b').test(text)) out.push(path);
+  }
+  return out;
+}
+
 /** Playwright Page Object（Java） */
 const TPL_PLAYWRIGHT_JAVA = `package com.test.pages;
 
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
-<% if (hasRole) { -%>
-import com.microsoft.playwright.options.AriaRole;
-<% } -%>
+<% extraImports.forEach(function (p) { -%>
+import <%= p %>;
+<% }) -%>
 
 /**
  * <%= className %> 页面对象
@@ -382,6 +433,11 @@ const TPL_PLAYWRIGHT_PYTHON = `# -*- coding: utf-8 -*-
 
 由「测试工作台」生成骨架。
 元素定位器请在平台里维护后重新生成，或手动补充。
+<% if (rawCrossLang) { -%>
+
+⚠️ 注意：下面有 <%= rawCount %> 个元素用的是「原生表达式」，内容是**原样输出**的。
+   如果它们原本是 Java 写法，这里的语法就是错的 —— 请改写成 Python 或换成具体定位方式。
+<% } -%>
 """
 from playwright.sync_api import Page, Locator
 
@@ -936,12 +992,28 @@ function generate(targetKey, input = {}) {
         locator: previewLocatorCode(mode, selector, target.lang)
       };
     });
+
+    /**
+     * v0.72：原生表达式（raw）不跨语言，要**明确警告**而不是静默产出坏代码。
+     *
+     * 实测踩到的：raw 里存的是 Java 表达式，切到 Python 目标时被原样输出 ——
+     * 生成的 .py 文件里赫然是 `page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions()...)`。
+     * 这是**语法就错的代码**，比报错更糟（报错至少会让人停下来看）。
+     *
+     * 不自动翻译的理由：raw 本来就是「整段代码直出」，没有可靠的翻译手段。
+     * 能做的只有两件事：告诉用户 + 在产物里留一行显眼注释。
+     */
+    const rawEls = elements.filter((el) => el.mode === 'raw');
+    const rawCrossLang = rawEls.length > 0 && target.lang !== 'java';
+
     ctx = {
       className: pageBaseName(page, input.className),
       url: String(page.url || '/'),
       elements,
-      // 只有真的用到 role 才 import AriaRole，避免生成一堆没用的 import
-      hasRole: elements.some((el) => el.mode === 'role')
+      // v0.72：按实际用到的类补 import（raw 可能用 AriaRole / PlaywrightAssertions 等）
+      extraImports: collectPlaywrightImports(elements.map((el) => el.locator + ' ' + el.selector)),
+      rawCrossLang,
+      rawCount: rawEls.length
     };
   } else if (target.kind === 'model') {
     /**
@@ -1030,7 +1102,30 @@ function generate(targetKey, input = {}) {
     filename = `${ctx.className || 'DataModel'}${target.ext}`;
   }
 
-  return { ok: true, code, filename, target };
+  /**
+   * v0.72：生成结果的「警告」（不是错误，代码能出来，但有你该知道的事）。
+   *
+   * 目前只有一条：raw（原生表达式）用在非 Java 目标下 —— 那段代码是原样直出的，
+   * 而 raw 天生不跨语言（Java 的 AriaRole.BUTTON 和 Python 的 "button" 写法不同）。
+   * 不自动翻译：raw 就是「整段代码直出」，没有可靠的翻译手段。
+   * 所以只做两件事：告诉用户 + 在产物里留一行显眼注释（见模板里 rawCrossLang）。
+   */
+  const warnings = [];
+  if (ctx && ctx.rawCrossLang) {
+    warnings.push(
+      '这条页面里有 ' +
+        ctx.rawCount +
+        ' 个元素用了「原生表达式」，它会**原样输出**——' +
+        (target.lang === 'python' ? 'Java' : 'Java') +
+        ' 写法放进 ' +
+        target.lang +
+        ' 文件里语法是错的。请把这几个元素改成具体定位方式，或在 ' +
+        target.lang +
+        ' 下手写一遍。'
+    );
+  }
+
+  return { ok: true, code, filename, target, warnings };
 }
 
 /**

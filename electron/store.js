@@ -5,7 +5,7 @@ const path = require('path');
 const initSqlJs = require('sql.js');
 const { encrypt, decrypt, decryptResult } = require('./security');
 const { COLLECTION_MAP, SECRET_KEYS, OPTION_SETS } = require('../shared/collections');
-const { apiKey, diffApi: apiDiff } = require('./openapi');
+const { apiKey, diffApi: apiDiff, MAX_SKIP_DETAIL } = require('./openapi');
 const migrations = require('./migrations');
 
 let SQL = null;
@@ -1043,8 +1043,47 @@ function apiIndex() {
 
 function syncApis(input) {
   const items = Array.isArray(input && input.items) ? input.items : [];
+  /**
+   * 解析层去重掉的条目（openapi.parseOpenApi 的 stats.dupList / dup）。
+   *
+   * 为什么由调用方传进来：去重发生在解析层，走到这里那些条目已经不在 items 里了，
+   * 本函数自己重算不出来。dupList 已被解析层截断到 8 条，dup 才是准确总数。
+   */
+  const dupList = Array.isArray(input && input.dupList) ? input.dupList : [];
+  const dupTotal = Math.max(Number((input && input.dupCount) || 0) || 0, dupList.length);
   const now = Date.now();
   const stats = { total: items.length, added: 0, updated: 0, skipped: 0, unchanged: 0, invalid: 0, dupInBatch: 0, missingDesc: 0 };
+  /**
+   * 「没写进库的条目」明细：接口名 + method/url + 原因，最多 MAX_SKIP_DETAIL 条。
+   *
+   * 为什么加：结果卡片原来只报「跳过 2 / 缺描述 5」这样的数字，用户看到「跳过 2」
+   * 完全不知道跳过了哪两条、为什么跳过，只能去库里一条条猜。
+   * 这和信息不透明是同一类毛病（v0.69 在 playwright 录制那边修过：把「忽略 N 行」
+   * 改成列出每一行的原文 + 原因）。
+   *
+   * 为什么限条数：一次同步几百个接口时全塞进弹窗等于刷屏，
+   * 超出部分只留总数（skippedListTotal），界面显示「还有 N 条」。
+   */
+  const skippedList = [];
+  let skippedListTotal = 0;
+  /** 记一条明细：总数照加，明细只留前 MAX_SKIP_DETAIL 条 */
+  const putSkipped = (entry) => {
+    skippedListTotal++;
+    if (skippedList.length < MAX_SKIP_DETAIL) skippedList.push(entry);
+  };
+  // 解析层的重复：总数单独记（dupList 可能少于此数），明细按剩余名额补
+  skippedListTotal += dupTotal;
+  for (const d of dupList) {
+    if (skippedList.length >= MAX_SKIP_DETAIL) break;
+    const o = d && typeof d === 'object' ? d : {};
+    skippedList.push({
+      name: String(o.name || ''),
+      method: String(o.method || ''),
+      url: String(o.url || ''),
+      kind: 'dup',
+      reason: String(o.reason || '同一个文件里重复定义（同方法同地址）')
+    });
+  }
   const byKey = apiIndex();
   const seen = new Set();
   const changedList = [];
@@ -1054,17 +1093,34 @@ function syncApis(input) {
     for (const item of items) {
       if (!item || typeof item !== 'object') {
         stats.invalid++;
+        putSkipped({ name: '', method: '', url: '', kind: 'invalid', reason: '这一条不是接口对象，读不出方法/地址' });
         continue;
       }
       const key = apiKey(item.method, item.url);
       if (!key) {
         stats.invalid++;
+        const m = String(item.method || '').trim();
+        const u = String(item.url || '').trim();
+        putSkipped({
+          name: String(item.name || ''),
+          method: m,
+          url: u,
+          kind: 'invalid',
+          reason: !m && !u ? 'method 和 url 都是空的，算不出唯一键' : !m ? 'method 是空的，算不出唯一键' : 'url 是空的，算不出唯一键'
+        });
         continue;
       }
       // 同一批里重复：解析层已经去过一次，这里兜底（调用方可能直接塞原始数组）
       if (seen.has(key)) {
         stats.dupInBatch++;
         stats.skipped++;
+        putSkipped({
+          name: String(item.name || ''),
+          method: String(item.method || ''),
+          url: String(item.url || ''),
+          kind: 'dupInBatch',
+          reason: '这一批里又出现了一次（同方法同地址），只写了一条'
+        });
         continue;
       }
       seen.add(key);
@@ -1096,6 +1152,14 @@ function syncApis(input) {
       if (!changed) {
         stats.skipped++;
         stats.unchanged++;
+        // 没变化也记明细：用户的「跳过 2」十有八九就是这种，不列出来还是会问「跳过了谁」
+        putSkipped({
+          name: String(item.name || ''),
+          method: String(item.method || ''),
+          url: String(item.url || ''),
+          kind: 'unchanged',
+          reason: '库里已有这条且内容一致，没有要更新的字段'
+        });
         continue;
       }
 
@@ -1138,6 +1202,9 @@ function syncApis(input) {
   stats.changed = changedList.length;
   stats.affectedCases = affected;
   stats.changedList = changedList;
+  // 明细在后（结论在前）；skippedListTotal 是截断前的总数，界面用它显示「还有 N 条」
+  stats.skippedList = skippedList;
+  stats.skippedListTotal = skippedListTotal;
   stats.at = now;
   return stats;
 }

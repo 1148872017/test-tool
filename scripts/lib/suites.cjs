@@ -70,6 +70,7 @@ const unit = [
   'test-locator-refine.cjs',
   'test-snippet-multiline.cjs',
   'test-sniff-refine.cjs',
+  'test-codegen-alignment.cjs',
   'test-main.cjs',
   'test-metrics.cjs',
   'test-migrate.cjs',

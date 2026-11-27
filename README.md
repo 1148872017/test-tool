@@ -10,8 +10,8 @@
 
 | 项 | 值 |
 |---|---|
-| 当前版本 | **v0.71.0** |
-| 测试基线 | **68 个套件 / 5372 项**（unit 64 + env 4） |
+| 当前版本 | **v0.72.0** |
+| 测试基线 | **69 个套件 / 5396 项**（unit 65 + env 4） |
 | 运行环境 | Windows 10/11（x64），安装包约 120 MB |
 | 数据位置 | `%APPDATA%\测试工作台\` |
 
@@ -253,6 +253,10 @@ page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("登录").se
 
 > ⚠️ 这个模式**不跨语言**：Java 是 `getByRole(AriaRole.BUTTON, ...)`，
 > Python 是 `get_by_role("button", ...)`。切语言时要自己改，平台不翻译。
+>
+> **切到别的语言时平台会警告你**（v0.72）：生成结果上方会出现一条黄底提示，
+> Python 产物文件头也会留一行 ⚠️ 注释 —— 因为原样输出会产出**语法就错的代码**。
+> 该 import 的类会自动补齐（`AriaRole` / `PlaywrightAssertions` 这些），不用手加。
 
 **项目词表**：`新增` 旁的 `⋯ → 管理项目…`，小窗里增删改只影响「所属项目」这一套（v0.55 从设置页搬过来）。
 
@@ -404,6 +408,10 @@ page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("登录").se
 > - Swagger 2.0 会被拒并提示「请重新导出为 OpenAPI 3」。
 > - `headers` / `body` 支持「表格 / JSON」两种视图切换，超 5 行自动折叠。
 > - 重复导入同一份文件是安全的：接口不会翻倍，只会更新变化了的字段并列出变更。
+> - **「没写进库的 N 条」可以点开看是哪几条、为什么**（v0.72）：
+>   同步结果卡片上有一行可展开的灰字，列出被跳过的接口和原因 ——
+>   文件里重复定义 / 这一批里又出现 / 缺 method 或 url / 内容没变。
+>   以前只报一个数字，看到「跳过 2」根本不知道是哪两条。
 
 ### 测试执行（账本）
 
@@ -1154,7 +1162,7 @@ v0.56 修的就是这个：以前平台用「启动的进程是否还活着」�
 | 前端 | React 18.3 + antd 5.29 + TypeScript（esbuild 转译，不跑 tsc） |
 | 数据 | sql.js（WASM SQLite）→ `data.db`，整库重写 + tmp/fsync/rename |
 | 打包 | electron-builder（NSIS） |
-| 测试 | 自研轻量脚本，**68 套件 / 5372 项**，分 unit / env 两档 |
+| 测试 | 自研轻量脚本，**69 套件 / 5396 项**，分 unit / env 两档 |
 
 ### 常用命令
 
@@ -1165,9 +1173,9 @@ npm install
 node scripts/build.mjs        # 生产构建
 node scripts/build.mjs -- --preview   # 预览构建（含 mock，浏览器可开）
 
-npm test                      # unit 档 64 套件 / 5229 项（自检先跑）
+npm test                      # unit 档 65 套件 / 5253 项（自检先跑）
 npm run test:env              # env 档 4 套件 / 127 项（需设 4 个目录变量）
-npm run test:all              # 全量 68 套件 / 5372 项
+npm run test:all              # 全量 69 套件 / 5396 项
 npm run test:gui              # 只跑 GUI 冒烟（19 路由 + 5 类交互，约 26 秒）
 npm run check                 # 只跑提交前自检
 npm run dist:installer        # 打 NSIS 安装包

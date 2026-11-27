@@ -123,7 +123,13 @@ function register(deps) {
         return { ok: false, message: 'JSON 解析失败：' + ((err && err.message) || err) };
       }
       const parsed = openapi.parseOpenApi(doc);
-      const stats = store.syncApis({ items: parsed.items });
+      // 解析层去重掉的条目（同一个文件里同方法同地址）也要进 stats，
+      // 否则结果卡片只能报「重复 N 条」，说不出重复的是哪几个
+      const stats = store.syncApis({
+        items: parsed.items,
+        dupList: parsed.stats.dupList,
+        dupCount: parsed.stats.dup
+      });
       store.persist(); // 同步是个"大事"，立刻落盘，不等 400ms 防抖
       return { ok: true, file, doc: parsed.doc, stats, dup: parsed.stats.dup };
     } catch (err) {

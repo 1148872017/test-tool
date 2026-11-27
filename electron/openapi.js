@@ -17,6 +17,15 @@ const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'
 const MAX_SCHEMA_CHARS = 6000;
 const PARAM_ORDER = { path: 0, query: 1, header: 2, cookie: 3 };
 
+/**
+ * 「没写进库的条目」明细最多留几条（解析层和 store 层共用这一个数）。
+ *
+ * 为什么要限条数：一次同步几百个接口时，把每条「为什么没进库」都塞进结果卡片，
+ * 弹窗会被刷爆，用户真正要看的「影响面」反而被挤到看不见。
+ * 8 条够覆盖小项目里的全部异常；超出的只留总数，界面显示「还有 N 条」。
+ */
+const MAX_SKIP_DETAIL = 8;
+
 function isObj(v) {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
@@ -494,6 +503,14 @@ function parseOpenApi(doc) {
 
   const items = [];
   const seen = new Set();
+  /**
+   * 被去重掉的条目（最多 MAX_SKIP_DETAIL 条）。
+   *
+   * 原来这里只累加一个 div 计数（「重复 N 条」），用户永远不知道重复的是哪几个、
+   * 该去 Apifox 里改哪条 —— 和 v0.69 修的「忽略 N 行」是同一类信息不透明，
+   * 所以顺手把「接口名 + 同方法同地址」带上，界面上能直接指认。
+   */
+  const dupList = [];
   let dup = 0;
 
   for (const path of Object.keys(doc.paths)) {
@@ -522,6 +539,15 @@ function parseOpenApi(doc) {
       if (!key) continue;
       if (seen.has(key)) {
         dup++;
+        if (dupList.length < MAX_SKIP_DETAIL) {
+          dupList.push({
+            name,
+            method,
+            url,
+            kind: 'dup',
+            reason: '同一个文件里重复定义（同方法同地址），只留了第一条'
+          });
+        }
         continue;
       }
       seen.add(key);
@@ -565,7 +591,8 @@ function parseOpenApi(doc) {
   const info = isObj(doc.info) ? doc.info : {};
   return {
     items,
-    stats: { total: items.length, dup },
+    // dupList 是 dup 的明细（可能被截断）；dup 始终是准确总数，界面用「总数 + 前 8 条」
+    stats: { total: items.length, dup, dupList },
     doc: {
       title: String(info.title || ''),
       version: String(info.version || ''),
@@ -574,4 +601,4 @@ function parseOpenApi(doc) {
   };
 }
 
-module.exports = { parseOpenApi, apiKey, joinBase, buildUrl, diffApi, MAX_SCHEMA_CHARS };
+module.exports = { parseOpenApi, apiKey, joinBase, buildUrl, diffApi, MAX_SCHEMA_CHARS, MAX_SKIP_DETAIL };

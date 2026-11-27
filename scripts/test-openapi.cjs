@@ -630,6 +630,71 @@ function baseDoc() {
   check('锁定后读变更清单也被拒绝', !!(lockedLast && lockedLast.code === 'LOCKED'), lockedLast && lockedLast.code);
   await call('app:unlock', { pin: '2468' });
 
+  /**
+   * ================= v0.72：同步结果的「没写进库」明细 =================
+   *
+   * 用户反馈：结果卡片只报「跳过 2」，不知道跳过了哪两条、为什么跳过。
+   * 修法同 v0.69 的「忽略明细」：stats 带上 skippedList（带原因）+ 总数。
+   *
+   * 这一节是**永久断言** —— 之前只有临时脚本验过，容易被改回去（退回「只报数」）。
+   */
+  {
+    const syncResult = await call('apis:sync', { file: goodFile });
+    const st = (syncResult && syncResult.stats) || {};
+
+    // 1. 新字段存在
+    check('同步 stats 带 skippedList（明细数组）', Array.isArray(st.skippedList), typeof st.skippedList);
+    check('同步 stats 带 skippedListTotal（截断前总数）', typeof st.skippedListTotal === 'number', st.skippedListTotal);
+
+    // 2. 每条明细都有「谁 + 为什么」
+    const rows = Array.isArray(st.skippedList) ? st.skippedList : [];
+    check(
+      '明细每条都带 kind（能分清是重复 / 无效 / 没变）',
+      rows.length > 0 && rows.every((r) => r && typeof r.kind === 'string' && r.kind.length > 0),
+      rows.map((r) => r && r.kind)
+    );
+    check(
+      '明细每条都带 reason（中文原因，不是空）',
+      rows.length > 0 && rows.every((r) => r && typeof r.reason === 'string' && r.reason.length >= 4),
+      rows.map((r) => r && r.reason)
+    );
+
+    // 3. 限条数：不能一次列 200 条把卡片撑爆
+    check('明细最多 8 条（防刷屏）', rows.length <= 8, rows.length);
+    check(
+      '截断时 skippedListTotal 仍报真实总数（≥ 明细条数）',
+      st.skippedListTotal >= rows.length,
+      { total: st.skippedListTotal, listed: rows.length }
+    );
+
+    // 4. 原有口径不能变（added/updated/unchanged 三个数字必须仍在）
+    check(
+      '原有计数口径没被明细挤掉（added/updated/unchanged/skipped 都在）',
+      ['added', 'updated', 'unchanged', 'skipped'].every((k) => typeof st[k] === 'number'),
+      { added: st.added, updated: st.updated, unchanged: st.unchanged, skipped: st.skipped }
+    );
+
+    // 5. 用户资产不被同步覆盖（这条是模块底线，加明细时最容易顺手写坏）
+    const before = await call('records:list', { collection: 'apis' });
+    const firstApi = (before && before.rows && before.rows[0]) || null;
+    if (firstApi) {
+      const id = firstApi.id;
+      await call('records:save', {
+        collection: 'apis',
+        id,
+        data: Object.assign({}, firstApi.data, { myNote: '我的批注', favorite: true })
+      });
+      await call('apis:sync', { file: goodFile });
+      const after = await call('records:list', { collection: 'apis' });
+      const same = (after.rows || []).find((r) => r.id === id);
+      check(
+        '同步不会覆盖用户资产（myNote / favorite）',
+        !!same && same.data.myNote === '我的批注' && same.data.favorite === true,
+        same && { myNote: same.data.myNote, favorite: same.data.favorite }
+      );
+    }
+  }
+
   // ================= 汇总 =================
   const failed = results.filter((r) => !r.ok);
   for (const r of results) if (!r.ok) console.log('  ✗ ' + r.name + (r.extra ? '\n      ' + r.extra : ''));

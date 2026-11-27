@@ -1573,11 +1573,48 @@ const isTrashed = (id: string) => {
           updated: 6,
           skipped: 4,
           unchanged: 4,
-          invalid: 0,
+          invalid: 1,
+          dupInBatch: 0,
           missingDesc: 31,
           changed: impact.changed.length,
           affectedCases: impact.affectedCases,
           changedList: impact.changed,
+          /*
+           * v0.72：「没写进库的明细」。
+           * 预览模式也要有，否则在浏览器里跑 build -- --preview 时看不到这个新块，
+           * 改版效果没法自查（这个 mock 的职责就是「让界面上每块都能被看到」）。
+           */
+          skippedList: [
+            {
+              name: '创建退款单',
+              method: 'POST',
+              url: 'https://test.merchant.local/api/v1/refund/',
+              kind: 'dup',
+              reason: '同一个文件里重复定义（同方法同地址），只留了第一条'
+            },
+            {
+              name: '查询订单详情',
+              method: 'GET',
+              url: 'https://test.merchant.local/api/v1/order/{orderNo}',
+              kind: 'unchanged',
+              reason: '库里已有这条且内容一致，没有要更新的字段'
+            },
+            {
+              name: '发放优惠券',
+              method: 'POST',
+              url: 'https://test.merchant.local/api/v1/coupon',
+              kind: 'unchanged',
+              reason: '库里已有这条且内容一致，没有要更新的字段'
+            },
+            {
+              name: '',
+              method: 'GET',
+              url: '',
+              kind: 'invalid',
+              reason: 'url 是空的，算不出唯一键'
+            }
+          ],
+          skippedListTotal: 5,
           at: impact.at
         },
         dup: 2
