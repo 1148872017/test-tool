@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Input, Modal, Select, Space, Tag } from 'antd';
+import { Button, Input, Modal, Select, Space, Tag, Tooltip } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { LOCATOR_MODES, previewLocatorCode } from '../../shared/locatorModes';
 import api from '../api';
@@ -316,29 +316,18 @@ export function shouldAdoptIncoming(incoming: any, lastEmitted: string): boolean
   return s !== lastEmitted;
 }
 
-/** 预览行 / 提示行的统一样式（不用改 styles.css，就地内联，避免和别人的样式改动打架） */
-const PREVIEW_STYLE: React.CSSProperties = {
-  fontSize: 11,
-  lineHeight: '15px',
-  marginTop: 2,
-  color: 'var(--text-3)',
-  wordBreak: 'break-all'
-};
+/**
+ * 定位值下方「真警告」的样式（v0.67 之后这里只剩 XPath 误判这一种）。
+ *
+ * 生成的代码预览和过滤后缀说明都搬进了 hover 提示 —— 它们是「想确认时才看」的信息，
+ * 常驻会把表格撑高一倍。但 XPath 写错定位方式这种事必须一眼看见，所以留在这里。
+ */
 const XPATH_HINT_STYLE: React.CSSProperties = {
   fontSize: 11,
   lineHeight: '15px',
   marginTop: 2,
   // antd 的 orange-7，白底对比度 4.6:1，比 #fa8c16 看得清
   color: '#d46b08'
-};
-
-/** v0.66：过滤后缀提示（中性灰，别和 XPath 的橙色警告抢注意力） */
-const REFINE_HINT_STYLE: React.CSSProperties = {
-  fontSize: 11,
-  lineHeight: '16px',
-  marginTop: 3,
-  color: 'var(--text-3)',
-  wordBreak: 'break-word'
 };
 
 /** 顶部工具条（「按顺序校验」）的排版；样式内联，不动 styles.css */
@@ -925,9 +914,8 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
           {rows.map((r, i) => {
             const mode = normalizeMode(r.mode);
             // 编辑器里没有语言上下文，按 Java 语法预览（CodegenPage 会按当前生成目标预览）
+            // v0.67：这份预览只出现在 hover 提示里，不再占行高
             const preview = previewLocatorCode(mode, r.selector, 'java');
-            // 聚焦或已填内容才显示预览，否则每行两栏会把表格挤得很长
-            const showPreview = focusRow === i || String(r.selector || '').trim() !== '';
             // 正在校验的就是这一行 → 按钮转圈；其余行只是禁用（点下去锁住，bugD）
             const verifyingThis =
               !!sniff.target &&
@@ -955,33 +943,55 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
                   />
                 </td>
                 <td>
-                  <Input
-                    size="small"
-                    className="mono"
-                    value={r.selector}
-                    placeholder={LOCATOR_MODE_PLACEHOLDER[mode]}
-                    onChange={(e) => setRow(i, 'selector', e.target.value)}
-                    onFocus={() => setFocusRow(i)}
-                    onBlur={() => setFocusRow(-1)}
-                  />
+                  {/*
+                    v0.67：生成的代码塞进 hover 提示，不再占一行。
+                    以前每行下面都挂一句「→ page.getByRole(...)」，
+                    4 个元素就能把表格撑高一倍、还不齐整；它属于「想确认时才看」的信息。
+                    该定位方式可用的过滤后缀（v0.66 加的）也一起收进来 ——
+                    placeholder 里已经写了最常用的 |exact，细节悬停可看。
+                  */}
+                  <Tooltip
+                    placement="right"
+                    mouseEnterDelay={0.3}
+                    overlayStyle={{ maxWidth: 460 }}
+                    title={
+                      <div style={{ lineHeight: 1.65 }}>
+                        <div
+                          className="mono"
+                          style={{ fontSize: 11.5, wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}
+                        >
+                          {preview || '（等待输入定位值）'}
+                        </div>
+                        {LOCATOR_MODE_HELP[mode] ? (
+                          <div
+                            style={{
+                              marginTop: 6,
+                              paddingTop: 6,
+                              borderTop: '1px solid rgba(255,255,255,0.22)',
+                              fontSize: 11,
+                              opacity: 0.85
+                            }}
+                          >
+                            {LOCATOR_MODE_HELP[mode]}
+                          </div>
+                        ) : null}
+                      </div>
+                    }
+                  >
+                    <Input
+                      size="small"
+                      className="mono"
+                      value={r.selector}
+                      placeholder={LOCATOR_MODE_PLACEHOLDER[mode]}
+                      onChange={(e) => setRow(i, 'selector', e.target.value)}
+                      onFocus={() => setFocusRow(i)}
+                      onBlur={() => setFocusRow(-1)}
+                    />
+                  </Tooltip>
+                  {/* 这个是真警告（写错了定位方式），必须常驻可见，不能藏进 tooltip */}
                   {mode === 'css' && looksLikeXPath(r.selector) ? (
                     <div className="pe-el-xpath-hint" style={XPATH_HINT_STYLE}>
                       ⚠ 看起来像 XPath，建议把定位方式改成 XPath
-                    </div>
-                  ) : null}
-                  {/*
-                    v0.66：过滤后缀的完整写法。
-                    「|exact」这种能力光看 placeholder 一行装不下，而不知道就等于没有。
-                    只在选中该行时显示，避免整张表格到处都是灰字。
-                  */}
-                  {focusRow === i && LOCATOR_MODE_HELP[mode] ? (
-                    <div className="pe-el-refine-hint" style={REFINE_HINT_STYLE}>
-                      {LOCATOR_MODE_HELP[mode]}
-                    </div>
-                  ) : null}
-                  {showPreview ? (
-                    <div className="pe-el-preview mono" style={PREVIEW_STYLE}>
-                      {'→ ' + (preview || '（等待输入）')}
                     </div>
                   ) : null}
                 </td>

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Select, Button, Input, Tag, Space, Segmented, Empty } from 'antd';
+import { Select, Button, Input, Tag, Space, Segmented, Empty, Tooltip } from 'antd';
 import {
   CodeOutlined,
   SaveOutlined,
@@ -14,6 +14,7 @@ import {
   parseElements,
   LOCATOR_MODE_OPTIONS,
   LOCATOR_MODE_PLACEHOLDER,
+  LOCATOR_MODE_HELP,
   normalizeMode,
   looksLikeXPath,
   type LocatorMode,
@@ -938,8 +939,8 @@ export default function CodegenPage() {
                     {elements.map((el, i) => {
                       const mode = normalizeMode(el.mode);
                       // 和 PageElementsEditor 用同一个生成函数，只是这里知道目标语言
+                      // v0.67：这份预览只出现在 hover 提示里，不再靠 showPreview 控制显隐
                       const preview = previewLocatorCode(mode, el.selector, previewLang);
-                      const showPreview = focusEl === i || String(el.selector || '').trim() !== '';
                       return (
                         <tr key={i}>
                           <td>
@@ -961,35 +962,51 @@ export default function CodegenPage() {
                             />
                           </td>
                           <td>
-                            <Input
-                              size="small"
-                              className="mono"
-                              value={el.selector}
-                              placeholder={LOCATOR_MODE_PLACEHOLDER[mode]}
-                              onChange={(e) => setElement(i, 'selector', e.target.value)}
-                              onFocus={() => setFocusEl(i)}
-                              onBlur={() => setFocusEl(-1)}
-                            />
+                            {/* v0.67：生成的代码进 hover 提示，不再占行高（和「页面元素」页一致） */}
+                            <Tooltip
+                              placement="right"
+                              mouseEnterDelay={0.3}
+                              overlayStyle={{ maxWidth: 460 }}
+                              title={
+                                <div style={{ lineHeight: 1.65 }}>
+                                  <div
+                                    className="mono"
+                                    style={{ fontSize: 11.5, wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}
+                                  >
+                                    {preview || '（等待输入定位值）'}
+                                  </div>
+                                  {LOCATOR_MODE_HELP[mode] ? (
+                                    <div
+                                      style={{
+                                        marginTop: 6,
+                                        paddingTop: 6,
+                                        borderTop: '1px solid rgba(255,255,255,0.22)',
+                                        fontSize: 11,
+                                        opacity: 0.85
+                                      }}
+                                    >
+                                      {LOCATOR_MODE_HELP[mode]}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              }
+                            >
+                              <Input
+                                size="small"
+                                className="mono"
+                                value={el.selector}
+                                placeholder={LOCATOR_MODE_PLACEHOLDER[mode]}
+                                onChange={(e) => setElement(i, 'selector', e.target.value)}
+                                onFocus={() => setFocusEl(i)}
+                                onBlur={() => setFocusEl(-1)}
+                              />
+                            </Tooltip>
                             {mode === 'css' && looksLikeXPath(el.selector) ? (
                               <div
                                 className="pe-el-xpath-hint"
                                 style={{ fontSize: 11, lineHeight: '15px', marginTop: 2, color: '#d46b08' }}
                               >
                                 ⚠ 看起来像 XPath，建议把定位方式改成 XPath
-                              </div>
-                            ) : null}
-                            {showPreview ? (
-                              <div
-                                className="pe-el-preview mono"
-                                style={{
-                                  fontSize: 11,
-                                  lineHeight: '15px',
-                                  marginTop: 2,
-                                  color: 'var(--text-3)',
-                                  wordBreak: 'break-all'
-                                }}
-                              >
-                                {'→ ' + (preview || '（等待输入）')}
                               </div>
                             ) : null}
                           </td>

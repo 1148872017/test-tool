@@ -323,19 +323,59 @@ check('PageElementsEditor 的定位方式列在名称和定位值之间', editor
 check('PageElementsEditor 用下拉渲染定位方式', /<Select[\s\S]{0,200}options=\{LOCATOR_MODE_OPTIONS\}/.test(editorSrc), 'no Select');
 check('PageElementsEditor 的定位值 placeholder 跟着 mode 变', /placeholder=\{LOCATOR_MODE_PLACEHOLDER\[mode\]\}/.test(editorSrc), 'static placeholder');
 check('PageElementsEditor 预览复用 shared 的生成函数', /previewLocatorCode\(mode, r\.selector, 'java'\)/.test(editorSrc), 'duplicated preview logic');
-check('PageElementsEditor 聚焦时显示预览行', /focusRow === i \|\| String\(r\.selector \|\| ''\)\.trim\(\) !== ''/.test(editorSrc), 'no focus condition');
 check('PageElementsEditor 定位值输入框有 onFocus / onBlur', /onFocus=\{\(\) => setFocusRow\(i\)\}/.test(editorSrc) && /onBlur=\{\(\) => setFocusRow\(-1\)\}/.test(editorSrc), 'no focus handlers');
-check('PageElementsEditor 预览行字号 11px', /const PREVIEW_STYLE[\s\S]{0,160}fontSize: 11/.test(editorSrc) && /className="pe-el-preview mono" style=\{PREVIEW_STYLE\}/.test(editorSrc), 'preview font size');
-check('PageElementsEditor 预览行用 var(--text-3) 灰字', /const PREVIEW_STYLE[\s\S]{0,220}color: 'var\(--text-3\)'/.test(editorSrc), 'preview color');
-check('PageElementsEditor 预览行用等宽字体（mono）', /className="pe-el-preview mono"/.test(editorSrc), 'not mono');
-check('PageElementsEditor 空值时显示「（等待输入）」', /preview \|\| '（等待输入）'/.test(editorSrc), 'no waiting text');
+
+/**
+ * v0.67：生成的代码预览从「常驻一行灰字」改成 **hover 提示**。
+ * 起因：4 个元素就把表格撑高一倍，每行下面都挂一句 → page.getByRole(...)，很不规整。
+ * 现在守三件事：预览在 Tooltip 里、定位值输入框被 Tooltip 包住、不再有常驻的预览 div。
+ */
+check(
+  'PageElementsEditor 预览进了 hover 提示（Tooltip 里带生成代码）',
+  /<Tooltip[\s\S]{0,700}preview \|\| '（等待输入定位值）'/.test(editorSrc),
+  'preview not in tooltip'
+);
+/**
+ * 用「位置顺序」判断，别用 `[\s\S]{0,N}` 卡距离 ——
+ * Tooltip 的 title 块很长，N 稍微小一点就误报（第一次就写成 900 踩到了）。
+ */
+const wrappedBy = (src, open, inner, close) => {
+  const a = src.indexOf(open);
+  if (a < 0) return false;
+  const b = src.indexOf(inner, a);
+  if (b < 0) return false;
+  const c = src.indexOf(close, b);
+  return c > b;
+};
+check(
+  'PageElementsEditor 定位值输入框被 Tooltip 包住',
+  wrappedBy(editorSrc, '<Tooltip', 'value={r.selector}', '</Tooltip>'),
+  'input not wrapped'
+);
+check(
+  'PageElementsEditor 不再有常驻预览行（pe-el-preview 已移除）',
+  !/className="pe-el-preview/.test(editorSrc),
+  'preview div still there'
+);
+check(
+  'PageElementsEditor 过滤后缀提示也收进 hover（表格只留 XPath 真警告）',
+  !/REFINE_HINT_STYLE/.test(editorSrc) && /LOCATOR_MODE_HELP\[mode\]/.test(editorSrc),
+  'refine hint still inline'
+);
+check('PageElementsEditor 空值时提示「（等待输入定位值）」', /'（等待输入定位值）'/.test(editorSrc), 'no waiting text');
 check('PageElementsEditor 有橙色 XPath 提示文案', /⚠ 看起来像 XPath，建议把定位方式改成 XPath/.test(editorSrc), 'no xpath hint');
 check('PageElementsEditor 的 XPath 提示是橙色', /const XPATH_HINT_STYLE[\s\S]{0,200}color: '#d46b08'/.test(editorSrc) && /className="pe-el-xpath-hint" style=\{XPATH_HINT_STYLE\}/.test(editorSrc), 'hint color');
 
 check('CodegenPage 元素表格也有定位方式下拉', /<Select[\s\S]{0,220}options=\{LOCATOR_MODE_OPTIONS\}/.test(codegenSrc) && /定位方式<\/th>/.test(codegenSrc), 'no mode select in codegen page');
 check('CodegenPage 定位值 placeholder 也按 mode 变', /placeholder=\{LOCATOR_MODE_PLACEHOLDER\[mode\]\}/.test(codegenSrc), 'static placeholder');
 check('CodegenPage 预览按当前生成目标语言出', /previewLocatorCode\(mode, el\.selector, previewLang\)/.test(codegenSrc) && /current\.lang === 'python' \? 'python' : 'java'/.test(codegenSrc), 'no lang aware preview');
-check('CodegenPage 预览也是聚焦或非空才显示', /focusEl === i \|\| String\(el\.selector \|\| ''\)\.trim\(\) !== ''/.test(codegenSrc), 'codegen preview condition');
+check(
+  'CodegenPage 预览也进了 hover 提示（和「页面元素」页一致）',
+  /<Tooltip[\s\S]{0,700}preview \|\| '（等待输入定位值）'/.test(codegenSrc) &&
+    wrappedBy(codegenSrc, '<Tooltip', 'value={el.selector}', '</Tooltip>') &&
+    !/className="pe-el-preview/.test(codegenSrc),
+  'codegen preview not in tooltip'
+);
 check('CodegenPage 元素表格可横滑（多一列不把「说明」挤扁）', /className="codegen-el-scroll" style=\{\{ overflowX: 'auto' \}\}/.test(codegenSrc) && /className="jmx-table codegen-el-table" style=\{\{ minWidth: 560 \}\}/.test(codegenSrc), 'no scroll wrapper');
 check('CodegenPage 保留「载入页面时无条件覆盖元素」的修复', /setElements\(els\.length \? els : \[\{ name: '', selector: '', desc: '' \}\]\)/.test(codegenSrc), 'regression: conditional set');
 

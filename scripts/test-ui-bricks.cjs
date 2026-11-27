@@ -922,6 +922,8 @@ const nodesOf = (tree, type) => collect(tree).filter((n) => n.type === type);
     parseElements: () => [],
     LOCATOR_MODE_OPTIONS: [],
     LOCATOR_MODE_PLACEHOLDER: {},
+    // v0.67：CodegenPage 的元素表格把过滤后缀说明放进 hover 提示，会读这个表
+    LOCATOR_MODE_HELP: {},
     normalizeMode: (m) => (m ? m : 'css'),
     looksLikeXPath: () => false
   };
