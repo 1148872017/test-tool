@@ -10,8 +10,8 @@
 
 | 项 | 值 |
 |---|---|
-| 当前版本 | **v0.66.0** |
-| 测试基线 | **64 个套件 / 5269 项**（unit 62 + env 4） |
+| 当前版本 | **v0.67.0** |
+| 测试基线 | **66 个套件 / 5269 项**（unit 62 + env 4） |
 | 运行环境 | Windows 10/11（x64），安装包约 120 MB |
 | 数据位置 | `%APPDATA%\测试工作台\` |
 
@@ -1079,7 +1079,7 @@ v0.56 修的就是这个：以前平台用「启动的进程是否还活着」�
 | 前端 | React 18.3 + antd 5.29 + TypeScript（esbuild 转译，不跑 tsc） |
 | 数据 | sql.js（WASM SQLite）→ `data.db`，整库重写 + tmp/fsync/rename |
 | 打包 | electron-builder（NSIS） |
-| 测试 | 自研轻量脚本，**64 套件 / 5269 项**，分 unit / env 两档 |
+| 测试 | 自研轻量脚本，**66 套件 / 5269 项**，分 unit / env 两档 |
 
 ### 常用命令
 
@@ -1090,9 +1090,9 @@ npm install
 node scripts/build.mjs        # 生产构建
 node scripts/build.mjs -- --preview   # 预览构建（含 mock，浏览器可开）
 
-npm test                      # unit 档 60 套件 / 5126 项（自检先跑）
+npm test                      # unit 档 62 套件 / 5126 项（自检先跑）
 npm run test:env              # env 档 4 套件 / 127 项（需设 4 个目录变量）
-npm run test:all              # 全量 64 套件 / 5269 项
+npm run test:all              # 全量 66 套件 / 5269 项
 npm run test:gui              # 只跑 GUI 冒烟（19 路由 + 5 类交互，约 26 秒）
 npm run check                 # 只跑提交前自检
 npm run dist:installer        # 打 NSIS 安装包
@@ -1124,9 +1124,28 @@ electron/            主进程
   security.js        DPAPI 加解密 + PIN
 shared/              前后端共用（零 Node 依赖的才能进前端）
 src/                 前端（pages / components / mockApi.ts）
-scripts/             61 个测试套件（+2 个工具脚本）+ 构建脚本
+src/assets/brand.ts  侧栏品牌图标的**内联 base64**（换图要同时改 build/brand.png）
+build/               打包资源：icon.ico（窗口/安装包）、tray.png（托盘）、brand.png
+scripts/             62 个测试套件（+2 个工具脚本）+ 构建脚本
 docs/                接续指南（开发者必读）
 ```
+
+**换应用图标**（v0.67 做过一次，照这个来）：
+
+```powershell
+# 两个来源：应用图标（exe / 任务栏 / 安装包）· 应用内图标（侧栏左上角）
+# 改完重跑脚本，它会一次生成全部产物
+& "C:\Users\EDY\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe" `
+  _scratch\2026-11-27\icon-apply.py
+```
+
+| 产物 | 用途 | 注意 |
+|---|---|---|
+| `build/icon.ico` | 窗口 / 任务栏 / 开始菜单 / 安装包 | **混合 ICO**：16/24/32 用「去文字条」版，48+ 用完整版（否则托盘和任务栏的小图标会糊成黑块）|
+| `build/icon.png` | electron-builder 备选源 | 512×512 |
+| `build/tray.png` | 系统托盘（32px）| 同上，去底部文字条 |
+| `build/brand.png` | 应用内品牌图标的磁盘备份 | 128×128 |
+| `src/assets/brand.ts` | **界面真正显示的那个** | 内联 base64；换图必须和 `build/brand.png` 一起改，否则界面是旧的、磁盘是新的 |
 
 ### 发版流程
 
