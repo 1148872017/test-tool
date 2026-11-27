@@ -10,8 +10,8 @@
 
 | 项 | 值 |
 |---|---|
-| 当前版本 | **v0.68.1** |
-| 测试基线 | **66 个套件 / 5269 项**（unit 62 + env 4） |
+| 当前版本 | **v0.69.0** |
+| 测试基线 | **67 个套件 / 5298 项**（unit 63 + env 4） |
 | 运行环境 | Windows 10/11（x64），安装包约 120 MB |
 | 数据位置 | `%APPDATA%\测试工作台\` |
 
@@ -175,7 +175,16 @@ Playwright 定位器台账——表格里一行一个元素，生成 POM 时直�
 > **鼠标悬停在「定位值」上能看两样东西**（v0.68）：这一行会生成什么代码、
 > 这个定位方式支持哪些过滤后缀。常驻显示会把表格撑高一倍，所以收进了悬停提示。
 
-**10 种定位方式**：CSS、XPath、Role、Label、Placeholder、Text、AltText、Title、TestId、**原生表达式**。
+**10 种定位方式**（下拉里分三组，v0.69 起）：
+
+| 分组 | 里面有什么 |
+|---|---|
+| **CSS / XPath（写选择器）** | CSS 选择器、XPath |
+| **getBy 语法（按语义定位）** | Role、Label、Placeholder、Text、AltText、Title、TestId |
+| **其他** | 原生表达式（整段代码） |
+
+> 下拉可以直接打字过滤（10 项滚着找太累）。选好后鼠标悬停在「定位值」上，
+> 能看到这一行会生成什么代码、以及该定位方式支持哪些过滤后缀。
 
 #### 过滤后缀：把「这一类」收窄成「那一个」
 
@@ -294,20 +303,57 @@ page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("登录").se
 > - 面板上的「结束校验」= 关掉浏览器进程 + 收起面板（一次性收干净）。
 > - 只在**安装版**里可用：浏览器预览模式（`build -- --preview`）没有这套能力，会直接说明。
 
-#### 用 Playwright codegen 录制（录入交给它，平台负责入库）
+#### 快速识别：把定位器代码粘进来（录入交给录制器，平台负责入库）
 
-如果你更习惯用 Playwright 自带的录制器，那条路径也接好了。
+页面元素编辑器顶栏点 **⚡ 快速识别**。
+
+> 以前这个按钮叫「用 codegen 录制」，听着像必须先拉起录制器才能用。
+> 实际用法里绝大多数是**把代码贴进去识别** —— 代码从哪来都行：
+> Playwright codegen、IDEA/PyCharm 插件、SelectorsHub、同事发的片段。
 
 **怎么用**
 
-1. 页面元素编辑器顶栏点 **🎬 用 codegen 录制**
-2. 点「启动录制器」→ 平台用**「设置 → 开发环境」里配的那个 Python** 执行
-   `python -m playwright codegen <记录的 url>`
-3. 在录制器窗口里正常操作页面，它会实时生成定位器代码
-4. 点录制器里的 **Copy**，把代码粘回平台的小窗 → **识别并添加**
+1. 点 **⚡ 快速识别**
+2. 把定位器代码粘进框里 → **识别并添加**
+3. 要在这台机器上现场录，才点弹窗里的「启动录制器」：
+   平台用**「设置 → 开发环境」里配的那个 Python** 执行
+   `python -m playwright codegen <记录的 url>`，录完点 **Copy** 贴回来
 
 **它只认定位器**：`get_by_role / get_by_test_id / get_by_label / …` 会被解析成台账行，
 `click / fill / press` 这类动作忽略；同一行重复粘贴会去重。
+
+#### 能识别什么、不能识别什么
+
+弹窗标题旁有个 **?**，悬停就能看到这份清单（撞坑的时候不用去翻文档）。
+下面是同一份内容，给不开界面也想查的人：
+
+| | 说明 |
+|---|---|
+| ✅ | 三种语言的 `getBy*`：`getByRole` / `getByLabel` / `getByText` / `getByTestId` …（Python 的 `get_by_role` 同）|
+| ✅ | `page.locator("选择器")`：CSS、XPath（`xpath=` 前缀可省）、Playwright 的 `:has-text()` 伪类 |
+| ✅ | 链式过滤：`.filter(has_text=…)` / `.nth(n)` / `.first` / `.last` → 变成 `\|has-text=` / `\|nth=` / `\|first` / `\|last` |
+| ✅ | Java 的 options：`setName` / `setExact` / `setDisabled` / `setChecked` / `setDescription` |
+| ✅ | **跨行书写**：括号没闭合、或下一行以 `.` 开头，会自动拼成一条再解析 |
+| ❌ | 定位值是变量：`page.locator(mySelector)` —— 认得出 `locator`，但拿不到值 |
+| ❌ | `frameLocator` 里的内层定位器：只认外层 |
+| ❌ | 纯动作行：`page.keyboard.press()` / `page.waitForTimeout()` / `page.goto()`，本来就没有定位器 |
+| ❌ | `locator.all()` / `.count()` 这类遍历写法：只取第一个字面量选择器 |
+| ❌ | 拼接出来的选择器：`"#row-" + id`、模板字符串、`String.format(…)` —— 静态解析看不到运行时的值 |
+
+**认不出来的行会原样列出来**，附上原因，比如：
+
+```
+这些行没认出来（不影响上面已添加的）：
+  page.keyboard.press("Enter");   —— 没找到定位器（动作行 / 普通函数调用）
+  page.locator(mySelector);       —— 有 locator，但定位值是变量/表达式，不是字符串字面量
+```
+
+> 为什么非要列出来：以前只说「忽略 1 行」。实测过一次很坑的情况 ——
+> 一段跨行链式调用里 `.filter(...)` 被丢了，界面只报「忽略 1 行」，
+> 用户以为识别成功，结果入库的元素少了过滤条件（**比完全不识别更危险**，因为它看着是好的）。
+
+**转换思路**：遇到认不出的，把那行改写成「字面量 + 链式」就能认；
+实在复杂就把定位方式选「原生表达式」，直接存整段代码。
 
 **注意**
 
@@ -1092,7 +1138,7 @@ v0.56 修的就是这个：以前平台用「启动的进程是否还活着」�
 | 前端 | React 18.3 + antd 5.29 + TypeScript（esbuild 转译，不跑 tsc） |
 | 数据 | sql.js（WASM SQLite）→ `data.db`，整库重写 + tmp/fsync/rename |
 | 打包 | electron-builder（NSIS） |
-| 测试 | 自研轻量脚本，**66 套件 / 5269 项**，分 unit / env 两档 |
+| 测试 | 自研轻量脚本，**67 套件 / 5298 项**，分 unit / env 两档 |
 
 ### 常用命令
 
@@ -1103,9 +1149,9 @@ npm install
 node scripts/build.mjs        # 生产构建
 node scripts/build.mjs -- --preview   # 预览构建（含 mock，浏览器可开）
 
-npm test                      # unit 档 62 套件 / 5126 项（自检先跑）
+npm test                      # unit 档 63 套件 / 5155 项（自检先跑）
 npm run test:env              # env 档 4 套件 / 127 项（需设 4 个目录变量）
-npm run test:all              # 全量 66 套件 / 5269 项
+npm run test:all              # 全量 67 套件 / 5298 项
 npm run test:gui              # 只跑 GUI 冒烟（19 路由 + 5 类交互，约 26 秒）
 npm run check                 # 只跑提交前自检
 npm run dist:installer        # 打 NSIS 安装包

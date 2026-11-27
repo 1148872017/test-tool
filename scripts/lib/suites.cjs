@@ -68,6 +68,7 @@ const unit = [
   'test-links.cjs',
   'test-locator-mode.cjs',
   'test-locator-refine.cjs',
+  'test-snippet-multiline.cjs',
   'test-main.cjs',
   'test-metrics.cjs',
   'test-migrate.cjs',

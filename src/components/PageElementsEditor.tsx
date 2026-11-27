@@ -47,16 +47,127 @@ const MODE_LABEL: Record<string, string> = {
 };
 
 /**
- * 「定位方式」下拉选项。
+ * 「定位方式」下拉选项（扁平版）。
  *
  * 顺序是产品硬要求：CSS 第一（老数据默认值），TestId 最后
  * （实战里前端页面写 data-testid 的太少）。
  * 这里不自己排顺序，直接跟着 LOCATOR_MODES 走，避免两处漂移。
+ *
+ * v0.69：界面改用下面的 LOCATOR_MODE_GROUPS（二级分组），
+ * 这个扁平版保留给「按顺序遍历 / 测试断言 / 找不到分组时兜底」用。
  */
 export const LOCATOR_MODE_OPTIONS: { value: LocatorMode; label: string }[] = LOCATOR_MODES.map((m) => ({
   value: m as LocatorMode,
   label: MODE_LABEL[m] || m
 }));
+
+/**
+ * 「能识什么 / 不能识什么」的说明内容（v0.69）。
+ *
+ * 为什么放在弹窗里而不是只写 README（用户提的点子）：
+ *   识别不了的时候人就卡在这个弹窗上，跑去翻文档的路径太长。
+ *   做成标题旁的 ❓ 悬停提示，撞坑的当场就能看到。
+ * README 里另有一份（给不打开界面也想查的人），两处内容要一起更新。
+ */
+const PARSE_RULES: { ok: boolean; text: string }[] = [
+  { ok: true, text: '三种语言的 getBy*：getByRole / getByLabel / getByText / getByTestId …（Python 的 get_by_role 同）' },
+  { ok: true, text: 'page.locator("选择器")：CSS、XPath（xpath= 前缀可省）、Playwright 的 :has-text() 伪类' },
+  { ok: true, text: '链式过滤：.filter(has_text=…) / .nth(n) / .first / .last 会变成 |has-text= / |nth= / |first / |last' },
+  { ok: true, text: 'Java 的 options：setName / setExact / setDisabled / setChecked / setDescription' },
+  { ok: true, text: '跨行书写：括号没闭合、或下一行以 . 开头，会自动拼成一条再解析' },
+  { ok: false, text: '定位值是变量：page.locator(mySelector) —— 认得出 locator，但拿不到值' },
+  { ok: false, text: 'frameLocator 里的内层定位器：只认外层，内层会被当成普通行丢掉' },
+  { ok: false, text: '纯动作行：page.keyboard.press() / page.waitForTimeout() / page.goto()，本来就没有定位器' },
+  { ok: false, text: 'locator.all() / .count() 这类「遍历集合」的写法：只取第一个字面量选择器' },
+  { ok: false, text: '拼接出来的选择器："#row-" + id、模板字符串、String.format(…) —— 静态解析看不到运行时的值' }
+];
+
+function ParseRulesTip() {
+  return (
+    <Tooltip
+      placement="bottomLeft"
+      mouseEnterDelay={0.2}
+      overlayStyle={{ maxWidth: 560 }}
+      title={
+        <div style={{ lineHeight: 1.7, fontSize: 12 }}>
+          <div style={{ marginBottom: 4, opacity: 0.9 }}>能认出来的：</div>
+          {PARSE_RULES.filter((r) => r.ok).map((r, i) => (
+            <div key={'ok' + i} style={{ marginBottom: 2 }}>
+              ✓ {r.text}
+            </div>
+          ))}
+          <div style={{ marginTop: 8, marginBottom: 4, opacity: 0.9 }}>认不出来的（会被列在下面让你看到）：</div>
+          {PARSE_RULES.filter((r) => !r.ok).map((r, i) => (
+            <div key={'no' + i} style={{ marginBottom: 2, opacity: 0.85 }}>
+              ✗ {r.text}
+            </div>
+          ))}
+          <div style={{ marginTop: 8, paddingTop: 6, borderTop: '1px solid rgba(255,255,255,0.22)', opacity: 0.85 }}>
+            转换思路：遇到认不出的，把那行改写成「字面量 + 链式」就能认；
+            实在复杂就把定位方式选「原生表达式」，直接存整段代码。
+          </div>
+        </div>
+      }
+    >
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 16,
+          height: 16,
+          borderRadius: '50%',
+          border: '1px solid var(--line-soft, #d9dced)',
+          color: 'var(--text-3)',
+          fontSize: 11,
+          cursor: 'help',
+          marginInlineStart: 6,
+          verticalAlign: 'middle',
+          lineHeight: 1
+        }}
+      >
+        ?
+      </span>
+    </Tooltip>
+  );
+}
+
+/**
+ * 「定位方式」下拉的**二级分组**（v0.69）。
+ *
+ * 用户反馈：10 项平铺太长，滚着找很累。按「怎么定位的」分三组：
+ *   1. CSS / XPath —— 写选择器
+ *   2. getBy 语法 —— 按语义（角色 / 标签 / 文本…）找，Playwright 推荐的路子
+ *   3. 原生表达式 —— 逃生口，整段代码直出
+ *
+ * 顺序也是产品要求：CSS 第一、逃生口最后。以后新增定位方式要归到某一组里，
+ * 别再加第 4 个组（组越多越难扫）。
+ */
+export const LOCATOR_MODE_GROUPS: { label: string; options: { value: LocatorMode; label: string }[] }[] = [
+  {
+    label: 'CSS / XPath（写选择器）',
+    options: [
+      { value: 'css', label: MODE_LABEL.css },
+      { value: 'xpath', label: MODE_LABEL.xpath }
+    ]
+  },
+  {
+    label: 'getBy 语法（按语义定位）',
+    options: [
+      { value: 'role', label: MODE_LABEL.role },
+      { value: 'label', label: MODE_LABEL.label },
+      { value: 'placeholder', label: MODE_LABEL.placeholder },
+      { value: 'text', label: MODE_LABEL.text },
+      { value: 'alttext', label: MODE_LABEL.alttext },
+      { value: 'title', label: MODE_LABEL.title },
+      { value: 'testid', label: MODE_LABEL.testid }
+    ]
+  },
+  {
+    label: '其他',
+    options: [{ value: 'raw', label: MODE_LABEL.raw }]
+  }
+];
 
 /** 每种定位方式的「定位值」填法（placeholder） */
 export const LOCATOR_MODE_PLACEHOLDER: Record<LocatorMode, string> = {
@@ -473,6 +584,12 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
     command: string;
     /** 实际走通的录制器来源：python / m2-jar / maven / node（界面回显，省得用户猜） */
     route: string;
+    /**
+     * v0.69：这次识别里被忽略的行（原文 + 原因）。
+     * 以前只说「忽略动作 1 行」，用户不知道忽略了**哪一行** ——
+     * 图里那段跨行链式调用就吃过这个亏：以为全认了，其实 `.filter` 被丢了。
+     */
+    ignored: { text: string; reason: string }[];
   }>({
     open: false,
     busy: false,
@@ -480,7 +597,8 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
     msg: '',
     err: '',
     command: '',
-    route: ''
+    route: '',
+    ignored: []
   });
 
   /** 卸载时要不要顺手关浏览器：面板开着就说明这一轮还没收尾 */
@@ -720,7 +838,7 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
 
   /** 打开录制小窗（不自动拉起，用户先看清要做什么） */
   const openCodegen = () => {
-    setCodegen({ open: true, busy: false, text: '', msg: '', err: '', command: '', route: '' });
+    setCodegen({ open: true, busy: false, text: '', msg: '', err: '', command: '', route: '', ignored: [] });
   };
 
   /** 拉起录制器：Python 系用配置的 Python；Java 用本机 Node 版 Playwright（主进程先探测） */
@@ -780,10 +898,12 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
       Object.assign({}, s, {
         text: '',
         err: '',
+        // v0.69：把被忽略的行**原文**一起回传，用户才知道丢了什么
+        ignored: parsed.ignored || [],
         msg:
           '已添加 ' + added.length + ' 个元素' +
           (parsed.duplicates ? '，跳过重复 ' + parsed.duplicates + ' 个' : '') +
-          (parsed.skipped ? '，忽略动作 ' + parsed.skipped + ' 行' : '') +
+          (parsed.skipped ? '，忽略 ' + parsed.skipped + ' 行' : '') +
           '。可以继续贴，或直接关掉这个窗口。'
       })
     );
@@ -885,11 +1005,17 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
         <Button size="small" onClick={startSequence} loading={sniff.busy} disabled={sniff.busy}>
           ▶ 按顺序校验
         </Button>
+        {/*
+          v0.69：按钮改名「快速识别」。
+          原来叫「用 codegen 录制」，但实际用法里绝大多数是**把代码贴进去识别**，
+          启动录制器反而是少数（很多人用 IDEA/PyCharm 插件或浏览器扩展录）。
+          名字跟着主要用途走，否则用户会以为必须先点它拉起录制器才能用。
+        */}
         <Button size="small" onClick={openCodegen} disabled={sniff.busy}>
-          🎬 用 codegen 录制
+          ⚡ 快速识别
         </Button>
         <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-          校验：从第一行开始逐行高亮；录制：拉起 Playwright codegen，录完把代码贴回来自动入库
+          校验：从第一行开始逐行高亮；识别：粘一段定位器代码（或拉起录制器）自动入库
         </span>
         {String(pageUrl || '').trim() ? null : (
           <Tag color="orange" style={{ fontSize: 11 }}>
@@ -938,7 +1064,19 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
                     className="pe-mode-select"
                     style={{ width: '100%' }}
                     value={mode}
-                    options={LOCATOR_MODE_OPTIONS}
+                    // v0.69：二级分组（CSS / XPath · getBy 语法 · 其他），10 项平铺太长
+                    options={LOCATOR_MODE_GROUPS}
+                    // 允许直接打字找：HTML 原生元素按标签名、XPath 按路径，输入即过滤
+                    showSearch
+                    optionFilterProp="label"
+                    /*
+                      下拉不再跟随选择框宽度：
+                      这一列在表格里只有 100px 出头，分组标题和「Placeholder（占位文字）」
+                      都会被截成「Placeho...」，看不出是什么。
+                      也顺手放宽 search 输入框（showSearch 后框里会多一个放大镜）。
+                    */
+                    popupMatchSelectWidth={false}
+                    dropdownStyle={{ minWidth: 230 }}
                     onChange={(v) => setRow(i, 'mode', v)}
                   />
                 </td>
@@ -1081,23 +1219,27 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
       */}
       <Modal
         open={codegen.open}
-        title="用 Playwright codegen 录制元素"
+        title={
+          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+            快速识别元素
+            <ParseRulesTip />
+          </span>
+        }
         width={720}
         onCancel={() => setCodegen((s) => Object.assign({}, s, { open: false }))}
         footer={null}
         destroyOnClose
       >
         <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.9, marginBottom: 10 }}>
-          1. 点「启动录制器」→ 平台<b>自动挑一个能用的录制器</b>
-          （Python 录制器 → 本机 Maven 缓存里的 Playwright jar → 你的 Maven 项目 → Node 版）
+          <b>最常用：</b>把定位器代码粘到下面的框里 → 「识别并添加」，
+          不用先点录制器（代码可以从 codegen、IDEA/PyCharm 插件、SelectorsHub 任何地方来）
           <br />
-          2. 在录制器窗口里正常操作页面；<b>Inspector 右上角的 Target 可以切输出语言</b>
-          （Node / Python / Java…），录完点 <b>Copy</b>
-          <br />
-          3. 把复制的代码粘到下面的框里 → 「识别并添加」
+          要在这台机器上现场录：点「启动录制器」→ 平台<b>自动挑一个能用的</b>
+          （Python 录制器 → 本机 Maven 缓存里的 Playwright jar → 你的 Maven 项目 → Node 版），
+          <b>Inspector 右上角的 Target 可切输出语言</b>，录完点 <b>Copy</b> 贴回来
           <br />
           <span style={{ color: 'var(--text-2)' }}>
-            只会识别定位器，动作（click / fill / press…）会被忽略；Python、Java、JS 三种写法都认，不用事先声明语言。
+            只识别定位器，动作（click / fill / press…）会被忽略；Python、Java、JS 三种写法都认，不用事先声明语言。
             中文名称会先落成 el1/el2，你改个名字即可。
           </span>
         </div>
@@ -1156,6 +1298,45 @@ export default function PageElementsEditor({ value, onChange, placeholder, pageU
               </Tag>
             ) : null}
             {codegen.msg}
+            {/*
+              v0.69：把被忽略的行**原文贴出来**。
+              原来只说「忽略动作 N 行」，用户没法判断自己那段代码到底哪儿没认出来 ——
+              实测过：跨行链式调用里 `.filter(...)` 被丢了，界面只报「忽略 1 行」，
+              用户以为识别成功，结果入库的元素少了过滤条件（比不识别更危险）。
+            */}
+            {codegen.ignored.length ? (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: '8px 10px',
+                  background: 'var(--bg-subtle, #f6f7fb)',
+                  border: '1px solid var(--line-soft, #e8eaf2)',
+                  borderRadius: 6,
+                  lineHeight: 1.7
+                }}
+              >
+                <div style={{ color: 'var(--text-2)', marginBottom: 4 }}>这些行没认出来（不影响上面已添加的）：</div>
+                {codegen.ignored.map((ig, k) => (
+                  <div key={k} style={{ display: 'flex', gap: 6, alignItems: 'baseline', marginTop: 2 }}>
+                    <code
+                      style={{
+                        fontFamily: 'Consolas, Monaco, monospace',
+                        fontSize: 11.5,
+                        color: 'var(--text-2)',
+                        wordBreak: 'break-all',
+                        flex: '0 1 auto'
+                      }}
+                    >
+                      {ig.text}
+                    </code>
+                    <span style={{ color: 'var(--text-3)', fontSize: 11, flex: '0 0 auto' }}>—— {ig.reason}</span>
+                  </div>
+                ))}
+                <div style={{ color: 'var(--text-3)', fontSize: 11, marginTop: 6 }}>
+                  点标题旁的 <b>?</b> 看「能认什么、不能认什么」的完整说明。
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 

@@ -19,7 +19,84 @@
  */
 
 export type ParsedRow = { name: string; mode: string; selector: string; desc: string };
-export type ParseResult = { rows: ParsedRow[]; skipped: number; duplicates: number };
+/** 被忽略的一行：原文 + 为什么没认（v0.69 起回传给界面，不再只说「忽略 N 行」） */
+export type IgnoredLine = { text: string; reason: string };
+export type ParseResult = {
+  rows: ParsedRow[];
+  skipped: number;
+  duplicates: number;
+  /** 被忽略的行明细（最多 8 条，界面只展示这些） */
+  ignored: IgnoredLine[];
+};
+
+/**
+ * 统计一段代码里未闭合的圆括号数量（正数=还差这么多右括号）。
+ *
+ * 必须跳过字符串里的括号：`page.locator('[data-x="(1)"]')` 里的括号不能算。
+ * 这是「多行链式调用」能不能正确拼接的关键 —— v0.69 修的就是这个。
+ */
+function openParens(text: string): number {
+  const s = String(text || '');
+  let depth = 0;
+  let quote = '';
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s[i];
+    if (quote) {
+      if (c === '\\') {
+        i += 1;
+        continue;
+      }
+      if (c === quote) quote = '';
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      quote = c;
+      continue;
+    }
+    if (c === '(') depth += 1;
+    else if (c === ')') depth -= 1;
+  }
+  return depth;
+}
+
+/**
+ * 把源码切成「逻辑行」—— 跨行的链式调用合并成一条（v0.69）。
+ *
+ * 起因（用户实测）：
+ *   Locator loc2 = page.locator(".studyList a")
+ *        .filter(new Locator.FilterOptions().setHasText("面向对象"));
+ * 以前按物理行处理，第一行能认出 `.studyList a`，第二行的 `.filter(...)` 被当成
+ * 「动作」丢掉 —— 结果是**一个缺了过滤条件的元素**，比完全不识别更危险。
+ *
+ * 拼接规则（两条，任一成立就继续吃下一行）：
+ *   1. 当前累积的括号还没闭合；
+ *   2. 下一行以 `.` 开头（链式调用换行）。
+ */
+function joinLogicalLines(src: string): string[] {
+  const physical: string[] = [];
+  for (const raw of String(src || '').split(/\r?\n/)) {
+    const t = raw.trim();
+    if (!t || t.startsWith('#') || t.startsWith('//')) continue;
+    physical.push(t);
+  }
+
+  const out: string[] = [];
+  let i = 0;
+  while (i < physical.length) {
+    let buf = physical[i];
+    i += 1;
+    while (i < physical.length) {
+      const next = physical[i];
+      const needMore = openParens(buf) > 0 || next.startsWith('.');
+      if (!needMore) break;
+      buf += ' ' + next;
+      i += 1;
+    }
+    out.push(buf);
+  }
+  return out;
+}
+
 
 /** 定位方式 → 该方式在代码里的写法（Python 的 get_by_x 与 Node 的 getByX 都收） */
 const MODE_CALLS: Array<{ mode: string; re: RegExp }> = [
@@ -195,20 +272,26 @@ export function toIdentifier(raw: string, fallbackIndex: number): string {
  * 解析一段 codegen 代码。
  *
  * @param text 用户从 codegen 录制器里复制出来的代码
- * @returns rows（已去重）/ skipped（当成动作忽略掉的行）/ duplicates（重复的定位器）
+ * @returns rows（已去重）/ skipped（没认出来的行数）/ duplicates（重复的定位器）
+ *          / ignored（没认出来的行：原文 + 原因，界面用来告诉用户「忽略了什么」）
  */
 export function parsePlaywrightSnippet(text: string): ParseResult {
   const src = String(text || '');
   const rows: ParsedRow[] = [];
   const seen = new Set<string>();
+  const ignored: IgnoredLine[] = [];
   let duplicates = 0;
   let skipped = 0;
 
-  for (const rawLine of src.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#') || line.startsWith('//')) continue;
+  /** 记一条忽略明细（只留前 8 条：界面用不了更多，也不该刷屏） */
+  const noteIgnored = (line: string, reason: string) => {
+    if (ignored.length < 8) ignored.push({ text: line.slice(0, 160), reason });
+  };
 
+  for (const line of joinLogicalLines(src)) {
     let mode = '';
+    // 没认出定位值时，尽量给出**具体**原因（比统一一句「没找到定位器」有用得多）
+    let skipReason = '';
     for (const item of MODE_CALLS) {
       if (item.re.test(line)) {
         mode = item.mode;
@@ -250,11 +333,20 @@ export function parsePlaywrightSnippet(text: string): ParseResult {
       } else if (value) {
         mode = 'css';
         selector = value;
+      } else {
+        // 有 locator( 但第一个参数不是字符串字面量 —— 典型是 `locator(mySelector)` 这种变量
+        skipReason = '有 locator，但定位值是变量/表达式，不是字符串字面量';
       }
     }
 
     if (!mode || !selector) {
       skipped += 1;
+      // 说明白为什么没认：能给出具体原因，用户才知道该怎么改写
+      noteIgnored(
+        line,
+        skipReason ||
+          (mode ? '认出了定位方式，但取不到定位值（可能传的是变量）' : '没找到定位器（动作行 / 普通函数调用）')
+      );
       continue;
     }
 
@@ -280,5 +372,5 @@ export function parsePlaywrightSnippet(text: string): ParseResult {
     });
   }
 
-  return { rows, skipped, duplicates };
+  return { rows, skipped, duplicates, ignored };
 }

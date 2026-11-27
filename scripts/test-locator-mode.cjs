@@ -320,7 +320,45 @@ const codegenSrc = fs.readFileSync(CODEGEN_PAGE, 'utf8');
  */
 check('PageElementsEditor 有「定位方式」列', /<th[^>]*>定位方式<\/th>/.test(editorSrc), 'no mode column');
 check('PageElementsEditor 的定位方式列在名称和定位值之间', editorSrc.indexOf('>名称</th>') < editorSrc.indexOf('>定位方式</th>') && editorSrc.indexOf('>定位方式</th>') < editorSrc.indexOf('>定位值</th>'), 'column order');
-check('PageElementsEditor 用下拉渲染定位方式', /<Select[\s\S]{0,200}options=\{LOCATOR_MODE_OPTIONS\}/.test(editorSrc), 'no Select');
+/**
+ * v0.69：下拉改用二级分组（10 项平铺太长，用户反馈滚着找很累）。
+ * 顺序仍是产品硬要求：CSS / XPath → getBy 语法 → 其他（原生表达式）。
+ */
+check(
+  'PageElementsEditor 用下拉渲染定位方式（v0.69 分组版）',
+  /<Select[\s\S]{0,400}options=\{LOCATOR_MODE_GROUPS\}/.test(editorSrc),
+  'no grouped Select'
+);
+check(
+  '定位方式下拉分三组：CSS/XPath → getBy 语法 → 其他',
+  (() => {
+    const g = editorSrc.indexOf('LOCATOR_MODE_GROUPS');
+    if (g < 0) return false;
+    const css = editorSrc.indexOf("label: 'CSS / XPath", g);
+    const getBy = editorSrc.indexOf("label: 'getBy 语法", g);
+    const other = editorSrc.indexOf("label: '其他'", g);
+    return css > g && getBy > css && other > getBy;
+  })(),
+  'group order wrong'
+);
+check(
+  '分组里的十项一个不少（getBy 组含 7 项 + CSS/XPath 2 项 + raw 1 项）',
+  (() => {
+    // 用带冒号的 "LOCATOR_MODE_GROUPS:" 定位**定义处** ——
+    // 光写 LOCATOR_MODE_GROUPS 会先命中上面注释里提到的那个词，截取位置就错了
+    const g = editorSrc.indexOf('LOCATOR_MODE_GROUPS:');
+    if (g < 0) return false;
+    const seg = editorSrc.slice(g, g + 1600);
+    const modes = ['css', 'xpath', 'role', 'label', 'placeholder', 'text', 'alttext', 'title', 'testid', 'raw'];
+    return modes.every((m) => seg.indexOf("value: '" + m + "'") >= 0);
+  })(),
+  'missing mode in groups'
+);
+check(
+  '下拉可搜索（10 项分组后仍要能打字找）',
+  /LOCATOR_MODE_GROUPS\}/.test(editorSrc) && /showSearch/.test(editorSrc) && /optionFilterProp="label"/.test(editorSrc),
+  'no showSearch'
+);
 check('PageElementsEditor 的定位值 placeholder 跟着 mode 变', /placeholder=\{LOCATOR_MODE_PLACEHOLDER\[mode\]\}/.test(editorSrc), 'static placeholder');
 check('PageElementsEditor 预览复用 shared 的生成函数', /previewLocatorCode\(mode, r\.selector, 'java'\)/.test(editorSrc), 'duplicated preview logic');
 check('PageElementsEditor 定位值输入框有 onFocus / onBlur', /onFocus=\{\(\) => setFocusRow\(i\)\}/.test(editorSrc) && /onBlur=\{\(\) => setFocusRow\(-1\)\}/.test(editorSrc), 'no focus handlers');
@@ -366,7 +404,7 @@ check('PageElementsEditor 空值时提示「（等待输入定位值）」', /'�
 check('PageElementsEditor 有橙色 XPath 提示文案', /⚠ 看起来像 XPath，建议把定位方式改成 XPath/.test(editorSrc), 'no xpath hint');
 check('PageElementsEditor 的 XPath 提示是橙色', /const XPATH_HINT_STYLE[\s\S]{0,200}color: '#d46b08'/.test(editorSrc) && /className="pe-el-xpath-hint" style=\{XPATH_HINT_STYLE\}/.test(editorSrc), 'hint color');
 
-check('CodegenPage 元素表格也有定位方式下拉', /<Select[\s\S]{0,220}options=\{LOCATOR_MODE_OPTIONS\}/.test(codegenSrc) && /定位方式<\/th>/.test(codegenSrc), 'no mode select in codegen page');
+check('CodegenPage 元素表格也有定位方式下拉', /<Select[\s\S]{0,500}options=\{LOCATOR_MODE_GROUPS\}/.test(codegenSrc) && /定位方式<\/th>/.test(codegenSrc), 'no mode select in codegen page');
 check('CodegenPage 定位值 placeholder 也按 mode 变', /placeholder=\{LOCATOR_MODE_PLACEHOLDER\[mode\]\}/.test(codegenSrc), 'static placeholder');
 check('CodegenPage 预览按当前生成目标语言出', /previewLocatorCode\(mode, el\.selector, previewLang\)/.test(codegenSrc) && /current\.lang === 'python' \? 'python' : 'java'/.test(codegenSrc), 'no lang aware preview');
 check(

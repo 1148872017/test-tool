@@ -15,6 +15,7 @@ import {
   LOCATOR_MODE_OPTIONS,
   LOCATOR_MODE_PLACEHOLDER,
   LOCATOR_MODE_HELP,
+  LOCATOR_MODE_GROUPS,
   normalizeMode,
   looksLikeXPath,
   type LocatorMode,
@@ -956,7 +957,13 @@ export default function CodegenPage() {
                               size="small"
                               style={{ width: '100%' }}
                               value={mode}
-                              options={LOCATOR_MODE_OPTIONS}
+                              // v0.69：和「页面元素」保持同一套二级分组
+                              options={LOCATOR_MODE_GROUPS}
+                              showSearch
+                              optionFilterProp="label"
+                              // 下拉不跟随窄列宽，否则选项文字被截断
+                              popupMatchSelectWidth={false}
+                              dropdownStyle={{ minWidth: 230 }}
                               placeholder="定位方式"
                               onChange={(v) => setElement(i, 'mode', v as LocatorMode)}
                             />
