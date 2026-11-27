@@ -171,64 +171,6 @@ const COLLECTIONS = [
     ]
   },
   {
-    key: 'apis',
-    name: '接口记录',
-    group: '资产',
-    icon: 'ApiOutlined',
-    desc: '常用接口，一键复制成 cURL；可从 Apifox 导出文件同步',
-    titleField: 'name',
-    titlePlaceholder: '如：创建退款单',
-    listFields: ['method', 'url'],
-    actions: ['curl'],
-    sync: 'openapi',
-    capabilities: {
-      open: null,
-      copyKinds: ['curl', 'text'],
-      sync: 'openapi',
-      showRunLog: true,
-      favorite: true,
-      // impact = 「上次同步变更」入口，只有真的读到变更才显示
-      headerActions: ['importCurl', 'syncOpenApi', 'importData', 'importTemplate', 'exportData', 'refresh', 'impact'],
-      titleWidthPct: 50
-    },
-    fields: [
-      { key: 'name', label: '名称', type: 'text', required: true, placeholder: '如：创建退款单' },
-      { key: 'method', label: '方法', type: 'select', options: METHOD_OPTIONS, default: 'POST' },
-      { key: 'url', label: 'URL', type: 'url', required: true, placeholder: 'https://test.example.com/api/refund' },
-      // 模块 / 目录：Apifox 同步会写，用户也可以自己选或直接输入新名字（选项集 module）
-      {
-        key: 'module',
-        label: '模块 / 目录',
-        type: 'selectOrCreate',
-        optionsKey: 'module',
-        placeholder: '选一个模块，或直接输入新模块名'
-      },
-      // ---- 以下为同步镜像字段：详情里只读展示，编辑表单里不出现（formHidden） ----
-      // 每个 formHidden 都写明原因（formHiddenReason）：没有原因的 formHidden 会被
-      // scripts/test-module-field.cjs 的「详情/表单一致性」检查拦下来 —— 用户报的 bug 正是这个
-      { key: 'summary', label: '接口描述', type: 'textarea', formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
-      { key: 'params', label: '参数摘要', type: 'code', rows: 4, formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
-      // 参数的结构化快照：只给「变更 diff」用，界面上不出现
-      { key: 'paramSpec', label: '参数快照', type: 'code', formHidden: true, hideInDetail: true },
-      { key: 'paramTable', label: '参数', type: 'code', formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
-      { key: 'reqSchema', label: '请求 Schema', type: 'code', rows: 8, formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
-      { key: 'respSchema', label: '响应 Schema', type: 'code', rows: 8, formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
-      { key: 'respExample', label: '响应示例', type: 'code', rows: 8, formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
-      { key: 'completeness', label: '完整度', type: 'select', options: COMPLETENESS_OPTIONS, formHidden: true, formHiddenReason: '按导入内容自动判定，表单里不给改' },
-      { key: 'source', label: '来源', type: 'select', options: SOURCE_OPTIONS, default: 'manual', formHidden: true, formHiddenReason: '导入 / 同步时自动标记，表单里不给改' },
-      { key: 'syncedAt', label: '同步于', type: 'datetime', formHidden: true, formHiddenReason: '同步时自动记录时间，表单里不给改' },
-      // 上次同步的变更（只有真变过才有这行，空了整行不显示）
-      { key: 'lastChange', label: '上次同步变更', type: 'change', formHidden: true, hideEmpty: true, formHiddenReason: '同步时自动生成的 diff，表单里不给改' },
-      // ---- 以下是你自己的，同步永不覆盖 ----
-      { key: 'myNote', label: '我的备注', type: 'textarea', placeholder: '能不能测、坑在哪、要哪个账号 —— 这些 Apifox 里没有' },
-      { key: 'headers', label: 'Headers', type: 'code', rows: 5, placeholder: 'Content-Type: application/json\nAuthorization: Bearer {{token}}' },
-      { key: 'body', label: 'Body', type: 'code', rows: 8, placeholder: '{"orderNo": "{{orderNo}}"}' },
-      // body 的媒体类型（和 Apifox 的 Body 页签一致）
-      { key: 'bodyType', label: 'Body 类型', type: 'select', options: BODY_TYPE_OPTIONS, formHidden: true, formHiddenReason: '导入 / 同步时自动判定，表单里不给改' },
-      { key: 'note', label: '其他备注', type: 'textarea', placeholder: '前置条件、返回字段…' }
-    ]
-  },
-  {
     key: 'runs',
     name: '测试执行',
     group: '资产',
@@ -302,6 +244,64 @@ const COLLECTIONS = [
       // 压测指标汇总（详情页渲染成表格，字段本身不单独展示）
       { key: 'perfMetrics', label: '压测指标', type: 'metrics', onlyFor: { kind: 'perf' }, formHidden: true, hideEmpty: true, formHiddenReason: '详情页渲染成指标表格，表单里不给改' },
       { key: 'conclusion', label: '结论', type: 'textarea', placeholder: '达标没达标、瓶颈在哪、要不要跟进' }
+    ]
+  },
+  {
+    key: 'apis',
+    name: '接口记录',
+    group: '资产',
+    icon: 'ApiOutlined',
+    desc: '常用接口，一键复制成 cURL；可从 Apifox 导出文件同步',
+    titleField: 'name',
+    titlePlaceholder: '如：创建退款单',
+    listFields: ['method', 'url'],
+    actions: ['curl'],
+    sync: 'openapi',
+    capabilities: {
+      open: null,
+      copyKinds: ['curl', 'text'],
+      sync: 'openapi',
+      showRunLog: true,
+      favorite: true,
+      // impact = 「上次同步变更」入口，只有真的读到变更才显示
+      headerActions: ['importCurl', 'syncOpenApi', 'importData', 'importTemplate', 'exportData', 'refresh', 'impact'],
+      titleWidthPct: 50
+    },
+    fields: [
+      { key: 'name', label: '名称', type: 'text', required: true, placeholder: '如：创建退款单' },
+      { key: 'method', label: '方法', type: 'select', options: METHOD_OPTIONS, default: 'POST' },
+      { key: 'url', label: 'URL', type: 'url', required: true, placeholder: 'https://test.example.com/api/refund' },
+      // 模块 / 目录：Apifox 同步会写，用户也可以自己选或直接输入新名字（选项集 module）
+      {
+        key: 'module',
+        label: '模块 / 目录',
+        type: 'selectOrCreate',
+        optionsKey: 'module',
+        placeholder: '选一个模块，或直接输入新模块名'
+      },
+      // ---- 以下为同步镜像字段：详情里只读展示，编辑表单里不出现（formHidden） ----
+      // 每个 formHidden 都写明原因（formHiddenReason）：没有原因的 formHidden 会被
+      // scripts/test-module-field.cjs 的「详情/表单一致性」检查拦下来 —— 用户报的 bug 正是这个
+      { key: 'summary', label: '接口描述', type: 'textarea', formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
+      { key: 'params', label: '参数摘要', type: 'code', rows: 4, formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
+      // 参数的结构化快照：只给「变更 diff」用，界面上不出现
+      { key: 'paramSpec', label: '参数快照', type: 'code', formHidden: true, hideInDetail: true },
+      { key: 'paramTable', label: '参数', type: 'code', formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
+      { key: 'reqSchema', label: '请求 Schema', type: 'code', rows: 8, formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
+      { key: 'respSchema', label: '响应 Schema', type: 'code', rows: 8, formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
+      { key: 'respExample', label: '响应示例', type: 'code', rows: 8, formHidden: true, formHiddenReason: '同步镜像：Apifox 自动写入，表单里不给改' },
+      { key: 'completeness', label: '完整度', type: 'select', options: COMPLETENESS_OPTIONS, formHidden: true, formHiddenReason: '按导入内容自动判定，表单里不给改' },
+      { key: 'source', label: '来源', type: 'select', options: SOURCE_OPTIONS, default: 'manual', formHidden: true, formHiddenReason: '导入 / 同步时自动标记，表单里不给改' },
+      { key: 'syncedAt', label: '同步于', type: 'datetime', formHidden: true, formHiddenReason: '同步时自动记录时间，表单里不给改' },
+      // 上次同步的变更（只有真变过才有这行，空了整行不显示）
+      { key: 'lastChange', label: '上次同步变更', type: 'change', formHidden: true, hideEmpty: true, formHiddenReason: '同步时自动生成的 diff，表单里不给改' },
+      // ---- 以下是你自己的，同步永不覆盖 ----
+      { key: 'myNote', label: '我的备注', type: 'textarea', placeholder: '能不能测、坑在哪、要哪个账号 —— 这些 Apifox 里没有' },
+      { key: 'headers', label: 'Headers', type: 'code', rows: 5, placeholder: 'Content-Type: application/json\nAuthorization: Bearer {{token}}' },
+      { key: 'body', label: 'Body', type: 'code', rows: 8, placeholder: '{"orderNo": "{{orderNo}}"}' },
+      // body 的媒体类型（和 Apifox 的 Body 页签一致）
+      { key: 'bodyType', label: 'Body 类型', type: 'select', options: BODY_TYPE_OPTIONS, formHidden: true, formHiddenReason: '导入 / 同步时自动判定，表单里不给改' },
+      { key: 'note', label: '其他备注', type: 'textarea', placeholder: '前置条件、返回字段…' }
     ]
   }
   // 测试笔记已改成 md 只读索引（见 electron/notes.js + src/pages/NotesPage.tsx），

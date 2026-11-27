@@ -73,12 +73,68 @@ function expectedRoutes() {
 }
 
 /* ------------------------------------------------------------------ */
-/* 预览产物：不在就构建一次（不许静默跳过）                              */
+/* 预览产物：不在**或已过期**就构建一次（不许静默跳过）                  */
 /* ------------------------------------------------------------------ */
+
+/**
+ * 递归取一个目录里最新的文件修改时间。
+ *
+ * v0.70 加的：这里原来只判断「产物存不存在」，不看新旧 ——
+ * 于是改了 src/ 或 shared/ 但没重建 preview 时，GUI 冒烟会拿**旧产物**去跑，
+ * 结果是假红（源码已改、断言跟着改，产物还是老的）甚至假绿（新代码有 bug 但旧产物能过）。
+ * 实测踩到过一次：交换侧栏两项后，测试期望是新顺序、实际读到旧产物，报「第 3 项期望测试执行，实际接口记录」。
+ */
+function newestMtime(dir) {
+  let newest = 0;
+  const walk = (p) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(p, { withFileTypes: true });
+    } catch (e) {
+      return;
+    }
+    for (const e of entries) {
+      const full = path.join(p, e.name);
+      if (e.isDirectory()) {
+        if (e.name === 'node_modules' || e.name === 'assets') continue;
+        walk(full);
+      } else {
+        try {
+          const t = fs.statSync(full).mtimeMs;
+          if (t > newest) newest = t;
+        } catch (e2) {
+          /* 读不到就算了，不影响判断 */
+        }
+      }
+    }
+  };
+  walk(dir);
+  return newest;
+}
+
 function ensurePreviewBuild() {
   const js = path.join(FIX_DIR, 'preview.js');
-  if (fs.existsSync(js) && fs.existsSync(path.join(FIX_DIR, HTML))) return true;
-  console.log('  [build] dist/preview 不完整，先跑一次 preview 构建…');
+  const html = path.join(FIX_DIR, HTML);
+  const exists = fs.existsSync(js) && fs.existsSync(html);
+
+  let stale = false;
+  if (exists) {
+    // 产物时间 vs 源码时间：源码更新过就重建
+    const builtAt = Math.min(fs.statSync(js).mtimeMs, fs.statSync(html).mtimeMs);
+    const srcAt = Math.max(
+      newestMtime(path.join(ROOT, 'src')),
+      newestMtime(path.join(ROOT, 'shared')),
+      fs.existsSync(path.join(ROOT, 'src', 'styles.css'))
+        ? fs.statSync(path.join(ROOT, 'src', 'styles.css')).mtimeMs
+        : 0
+    );
+    stale = srcAt > builtAt;
+    if (stale) console.log('  [build] 源码比 dist/preview 新，先重建（避免拿旧产物测出假结果）…');
+  }
+
+  if (exists && !stale) return true;
+  if (!exists) console.log('  [build] dist/preview 不完整，先跑一次 preview 构建…');
+
   const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'build.mjs'), '--', '--preview'], {
     cwd: ROOT,
     encoding: 'utf8'
