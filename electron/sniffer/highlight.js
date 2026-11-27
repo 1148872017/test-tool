@@ -36,7 +36,7 @@
  * iframe 内 / shadow DOM 内的元素**不画框**（跨文档画不了，硬画会画错位置），只报 reason。
  */
 
-const { LOCATOR_MODES, normalizeLocatorMode, splitRoleSelector } = require('../../shared/locatorModes');
+const { LOCATOR_MODES, normalizeLocatorMode, splitRoleSelector, parseRefine } = require('../../shared/locatorModes');
 
 /** 高亮框的 DOM id（重新注入时靠它清场，测试也认这个常量） */
 const BOX_ID = 'tt-sniff-box';
@@ -91,13 +91,30 @@ function jsLiteral(value) {
  *   title        → [title]
  *   testid       → [data-testid]
  *
+ * ============================================================
+ * v0.71：过滤后缀（|exact / |has-text= / |nth= …）必须在这里处理
+ * ============================================================
+ * 起因（用户实测报错）：
+ *   定位值填 `.studyList a|has-text=面向对象` 点实时校验，浏览器报
+ *   `'.studyList a|has-text=面向对象' is not a valid selector`。
+ *
+ * 根因：v0.66 加 `|` 后缀时只改了**代码生成器**（locatorModes 的 previewLocatorCode），
+ * 忘了实时校验这条链路 —— 后缀被原样塞进 querySelectorAll。
+ * 「生成器」和「高亮器」两边的单元测试都是绿的，但它们之间的契约没人测。
+ *
+ * 修法分两层，缺一不可：
+ *   1. **剥掉后缀**再查（否则浏览器直接报错）；
+ *   2. **后缀要真的参与过滤** —— 只剥不滤的话，`.studyList a` 会命中 28 个、
+ *      框住第一个（HelloWorld），而代码里定位的是「面向对象」那个。
+ *      框错元素比报错更误导人。
+ *
  * @param {string} mode 定位方式
- * @param {string} selector 用户填的定位值
+ * @param {string} selector 用户填的定位值（可带 | 后缀）
  * @returns {string} JS 表达式源码（不含分号）
  */
 function locatorExpr(mode, selector) {
   const m = normalizeLocatorMode(mode);
-  const s = String(selector === undefined || selector === null ? '' : selector);
+  const raw = String(selector === undefined || selector === null ? '' : selector);
 
   /**
    * v0.66：原生表达式（raw）**没法在这里定位**。
@@ -110,19 +127,52 @@ function locatorExpr(mode, selector) {
    */
   if (m === 'raw') return '[]';
 
-  if (m === 'css') return '__ttFind.css(__ttScope, ' + jsLiteral(s) + ')';
-  if (m === 'xpath') return '__ttFind.xpath(__ttScope, ' + jsLiteral(s) + ')';
-  if (m === 'role') {
+  // v0.71：先把 | 后缀和主体拆开，DOM 查询只能用主体
+  const { base, refine } = parseRefine(raw);
+  const s = base;
+  const has = (k) => refine.find((r) => r.key === k);
+
+  /* ---------- 第一层：基础查询 ---------- */
+  let expr;
+  if (m === 'css') expr = '__ttFind.css(__ttScope, ' + jsLiteral(s) + ')';
+  else if (m === 'xpath') expr = '__ttFind.xpath(__ttScope, ' + jsLiteral(s) + ')';
+  else if (m === 'role') {
     const { role, name } = splitRoleSelector(s);
-    return '__ttFind.role(__ttScope, ' + jsLiteral(role) + ', ' + jsLiteral(name) + ')';
+    expr = '__ttFind.role(__ttScope, ' + jsLiteral(role) + ', ' + jsLiteral(name) + ')';
+  } else if (m === 'label') expr = '__ttFind.label(__ttScope, ' + jsLiteral(s) + ')';
+  else if (m === 'text') expr = '__ttFind.text(__ttScope, ' + jsLiteral(s) + ')';
+  else if (m === 'placeholder') expr = '__ttFind.byAttr(__ttScope, ' + jsLiteral('placeholder') + ', ' + jsLiteral(s) + ')';
+  else if (m === 'title') expr = '__ttFind.byAttr(__ttScope, ' + jsLiteral('title') + ', ' + jsLiteral(s) + ')';
+  else if (m === 'alttext') expr = '__ttFind.byAttr(__ttScope, ' + jsLiteral('alt') + ', ' + jsLiteral(s) + ')';
+  else expr = '__ttFind.byAttr(__ttScope, ' + jsLiteral('data-testid') + ', ' + jsLiteral(s) + ')';
+
+  /* ---------- 第二层：按后缀过滤（顺序与代码生成的 appendChain 一致） ---------- */
+  const exact = has('exact');
+  if (exact && m === 'role') {
+    // byRole 的 name 默认是「包含」，|exact 要收成精确
+    const nm = splitRoleSelector(s).name;
+    if (nm) expr = '__ttFind.exactName(' + expr + ', ' + jsLiteral(nm) + ')';
   }
-  if (m === 'label') return '__ttFind.label(__ttScope, ' + jsLiteral(s) + ')';
-  if (m === 'text') return '__ttFind.text(__ttScope, ' + jsLiteral(s) + ')';
-  if (m === 'placeholder') return '__ttFind.byAttr(__ttScope, ' + jsLiteral('placeholder') + ', ' + jsLiteral(s) + ')';
-  if (m === 'title') return '__ttFind.byAttr(__ttScope, ' + jsLiteral('title') + ', ' + jsLiteral(s) + ')';
-  if (m === 'alttext') return '__ttFind.byAttr(__ttScope, ' + jsLiteral('alt') + ', ' + jsLiteral(s) + ')';
-  // testid 落在最后：Playwright 默认的 data-testid
-  return '__ttFind.byAttr(__ttScope, ' + jsLiteral('data-testid') + ', ' + jsLiteral(s) + ')';
+  const desc = has('description');
+  if (desc) expr = '__ttFind.description(' + expr + ', ' + jsLiteral(desc.value) + ')';
+
+  for (const r of refine) {
+    if (r.key === 'checked' || r.key === 'disabled') {
+      expr = '__ttFind.flag(' + expr + ', ' + jsLiteral(r.key) + ', ' + (r.value ? 'true' : 'false') + ')';
+    }
+  }
+
+  const ht = has('has-text');
+  if (ht) expr = '__ttFind.hasText(' + expr + ', ' + jsLiteral(ht.value) + ')';
+  const hnt = has('has-not-text');
+  if (hnt) expr = '__ttFind.hasNotText(' + expr + ', ' + jsLiteral(hnt.value) + ')';
+
+  if (has('first')) expr = '__ttFind.first(' + expr + ')';
+  if (has('last')) expr = '__ttFind.last(' + expr + ')';
+  const nth = has('nth');
+  if (nth) expr = '__ttFind.nth(' + expr + ', ' + Number(nth.value) + ')';
+
+  return expr;
 }
 
 /**
@@ -410,13 +460,115 @@ const RUNTIME = String.raw`(function () {
     return out;
   }
 
+  /* ============================================================
+   * v0.71：过滤后缀在页面里的等价实现
+   *
+   * 这些函数让「实时校验框住的元素」和「生成的 Playwright 代码定位的元素」
+   * 是同一个。只剥离后缀不做过滤的话，.studyList a|has-text=面向对象
+   * 会命中 28 个、框住第一个 —— 框错比报错更误导人。
+   *
+   * 语义对齐 Playwright：
+   *   hasText     包含匹配、忽略大小写
+   *   nth         0 基，支持负数（-1 = 最后一个）
+   *   exactName   可访问名精确相等（byRole 默认是包含）
+   *
+   * ⚠ 本段在 String.raw 里，注释中不能用反引号（会提前收尾模板）。
+   * ============================================================ */
+
+  function keepNth(hits, n) {
+    if (!hits || !hits.length) return [];
+    var i = Number(n);
+    if (isNaN(i)) return hits;
+    if (i < 0) i = hits.length + i;
+    return i >= 0 && i < hits.length ? [hits[i]] : [];
+  }
+
+  function keepFirst(hits) {
+    return hits && hits.length ? [hits[0]] : [];
+  }
+
+  function keepLast(hits) {
+    return hits && hits.length ? [hits[hits.length - 1]] : [];
+  }
+
+  /** 归一化后的文本（小写 + 压空白），和 Playwright 的 hasText 口径一致 */
+  function flatText(el) {
+    if (!el) return '';
+    return norm(el.textContent || '').toLowerCase();
+  }
+
+  function keepHasText(hits, want) {
+    var w = norm(want).toLowerCase();
+    var out = [];
+    for (var i = 0; i < (hits ? hits.length : 0); i++) {
+      if (flatText(hits[i]).indexOf(w) >= 0) out.push(hits[i]);
+    }
+    return out;
+  }
+
+  function keepHasNotText(hits, want) {
+    var w = norm(want).toLowerCase();
+    var out = [];
+    for (var i = 0; i < (hits ? hits.length : 0); i++) {
+      if (flatText(hits[i]).indexOf(w) < 0) out.push(hits[i]);
+    }
+    return out;
+  }
+
+  function keepExactName(hits, want) {
+    var w = norm(want).toLowerCase();
+    var out = [];
+    for (var i = 0; i < (hits ? hits.length : 0); i++) {
+      if (norm(accName(hits[i])).toLowerCase() === w) out.push(hits[i]);
+    }
+    return out;
+  }
+
+  function keepDescription(hits, want) {
+    var w = norm(want).toLowerCase();
+    var out = [];
+    for (var i = 0; i < (hits ? hits.length : 0); i++) {
+      var el = hits[i];
+      var d = norm(el.getAttribute ? el.getAttribute('aria-description') || el.getAttribute('aria-describedby') || '' : '').toLowerCase();
+      if (d.indexOf(w) >= 0) out.push(el);
+    }
+    return out;
+  }
+
+  /** |checked / |disabled：原生属性 + aria-* 兜底 */
+  function keepFlag(hits, flag, want) {
+    var out = [];
+    for (var i = 0; i < (hits ? hits.length : 0); i++) {
+      var el = hits[i];
+      var on = false;
+      if (flag === 'checked') {
+        on =
+          !!el.checked ||
+          (el.getAttribute && el.getAttribute('aria-checked') === 'true') ||
+          (el.getAttribute && el.getAttribute('aria-selected') === 'true');
+      } else if (flag === 'disabled') {
+        on = !!el.disabled || (el.getAttribute && el.getAttribute('aria-disabled') === 'true');
+      }
+      if (on === !!want) out.push(el);
+    }
+    return out;
+  }
+
   var __ttFind = {
     css: css,
     xpath: byXpath,
     byAttr: byAttr,
     label: byLabel,
     text: byText,
-    role: byRole
+    role: byRole,
+    nth: keepNth,
+    first: keepFirst,
+    last: keepLast,
+    hasText: keepHasText,
+    hasNotText: keepHasNotText,
+    exactName: keepExactName,
+    description: keepDescription,
+    flag: keepFlag
   };
 
   /** 定位表达式（由生成器填入，引用 __ttScope） */
